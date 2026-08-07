@@ -4,7 +4,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 
 项目当前处于技术验证阶段。稳定、可构建的基线保存在 `master`，日常开发在长期分支 `dev` 上进行。
 
-## 当前范围
+## 产品目标范围
 
 - Windows x64，macOS Apple Silicon / Intel；
 - Windows 优先使用 Everything，失败时回退到 Suo 限定目录索引；
@@ -15,6 +15,19 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 内置主题与有限设计变量定制。
 
 详细产品边界和验收标准见 [产品需求文档](./docs/PRODUCT_REQUIREMENTS.md)，可交互视觉稿见 [HTML UI 原型](./docs/ui-prototype.html)。
+
+## `dev` 技术验证状态
+
+当前 `dev` 已实现 Windows 首轮可运行闭环：
+
+- `Alt+Space` 唤起/隐藏无边框窗口，`Esc` 关闭；macOS 源码默认使用 `Command+Space`；
+- 搜索开始菜单应用和桌面、文档、下载目录文件；
+- `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
+- `11+1` 本地计算，`ts 1786082576069` 安全执行示例 Python 脚本；
+- `google codex` 生成 HTTPS 查询地址并使用默认浏览器打开；
+- 查询取消、陈旧结果保护、3 秒脚本超时、1 MB 流式输出上限和 Windows Job Object 进程树终止。
+
+翻译 Provider、命令与网络搜索 CRUD、设置页、主题编辑和 macOS Spotlight 适配仍属于后续 MVP 工作，不应把当前技术验证版视为完整产品。
 
 ## 开发环境
 

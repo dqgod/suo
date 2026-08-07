@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../third_party/voidtools/es.exe": "tools/es.exe",
+      "../third_party/voidtools/LICENSE.txt": "licenses/voidtools-LICENSE.txt"
+    }
+  }
+}

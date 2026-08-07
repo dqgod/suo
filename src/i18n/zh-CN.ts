@@ -1,0 +1,16 @@
+export const zhCN = {
+  productName: "Suo / 梭启动器",
+  loading: "正在加载",
+  preparingIndex: "正在准备本地索引",
+  registeringHotkey: "正在注册 Alt+Space",
+  searchPlaceholder: "搜索应用、文件，或输入一个命令…",
+  rebuildIndex: "重建索引",
+  results: "搜索结果",
+  indexing: "正在建立限定目录索引",
+  noResults: "没有匹配结果",
+  tryCommands: "试试 11+1、ts 1786082576069、f report 或 google codex",
+  select: "选择",
+  open: "打开",
+  keepOpen: "保持窗口",
+  copied: "结果已复制",
+} as const;

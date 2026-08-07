@@ -13,11 +13,17 @@
     "windows": [
       {
         "title": "Suo / 梭",
-        "width": 720,
-        "height": 520,
+        "width": 760,
+        "height": 560,
         "minWidth": 560,
         "minHeight": 420,
-        "center": true
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "resizable": false
       }
     ],
     "security": {
@@ -27,6 +33,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../examples/timestamp.py": "examples/timestamp.py"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
