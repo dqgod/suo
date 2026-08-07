@@ -8,7 +8,8 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
 use crate::{
     catalog::{self, CatalogEntry},
     everything::{self, EverythingOutcome},
-    models::{ResultAction, SearchResponse, SearchResult},
+    i18n,
+    models::{LauncherPreferences, ResultAction, SearchResponse, SearchResult},
     scripts,
 };
 
@@ -19,6 +20,8 @@ pub struct LauncherState {
     hotkey_status: RwLock<String>,
     search_generation: AtomicU64,
     keep_visible_on_blur: AtomicBool,
+    close_on_blur: AtomicBool,
+    keep_last_input: AtomicBool,
 }
 
 impl LauncherState {
@@ -30,6 +33,8 @@ impl LauncherState {
             hotkey_status: RwLock::new("正在注册默认快捷键".into()),
             search_generation: AtomicU64::new(0),
             keep_visible_on_blur: AtomicBool::new(false),
+            close_on_blur: AtomicBool::new(true),
+            keep_last_input: AtomicBool::new(false),
         }
     }
 
@@ -79,6 +84,23 @@ impl LauncherState {
 
     pub fn consume_keep_visible_on_blur(&self) -> bool {
         self.keep_visible_on_blur.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn close_on_blur(&self) -> bool {
+        self.close_on_blur.load(Ordering::SeqCst)
+    }
+
+    fn preferences(&self) -> LauncherPreferences {
+        LauncherPreferences {
+            close_on_blur: self.close_on_blur.load(Ordering::SeqCst),
+            keep_last_input: self.keep_last_input.load(Ordering::SeqCst),
+        }
+    }
+
+    fn update_preferences(&self, close_on_blur: bool, keep_last_input: bool) {
+        self.close_on_blur.store(close_on_blur, Ordering::SeqCst);
+        self.keep_last_input
+            .store(keep_last_input, Ordering::SeqCst);
     }
 }
 
@@ -130,6 +152,18 @@ fn search_launcher_blocking(
                 })
             })
             .unwrap_or_default()
+    } else if is_settings_query(&query) {
+        provider = i18n::SETTINGS_PROVIDER.into();
+        provider_detail = i18n::SETTINGS_PROVIDER_DETAIL.into();
+        vec![SearchResult {
+            id: "settings:open".into(),
+            title: i18n::SETTINGS_RESULT_TITLE.into(),
+            subtitle: i18n::SETTINGS_RESULT_SUBTITLE.into(),
+            kind: "settings".into(),
+            badge: i18n::SETTINGS_BADGE.into(),
+            score: 2_100,
+            action: ResultAction::OpenSettings,
+        }]
     } else if let Some(value) = calculate(&query) {
         provider = "计算器".into();
         provider_detail = "本地计算，不访问网络".into();
@@ -288,13 +322,14 @@ fn cancelled_response(state: &LauncherState, query: String) -> SearchResponse {
 
 #[tauri::command]
 pub fn activate_result(
+    app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
     action: ResultAction,
     keep_open: bool,
 ) -> Result<(), String> {
     let may_move_focus = matches!(
         &action,
-        ResultAction::OpenPath { .. } | ResultAction::OpenUrl { .. }
+        ResultAction::OpenPath { .. } | ResultAction::OpenUrl { .. } | ResultAction::OpenSettings
     );
     state.keep_visible_on_next_blur(keep_open && may_move_focus);
 
@@ -313,12 +348,38 @@ pub fn activate_result(
             }
             open::that(parsed.as_str()).map_err(|error| error.to_string())
         }
+        ResultAction::OpenSettings => open_settings(app),
         ResultAction::CopyText { .. } | ResultAction::None => Ok(()),
     };
     if result.is_err() {
         state.keep_visible_on_next_blur(false);
     }
     result
+}
+
+#[tauri::command]
+pub fn open_settings(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("settings")
+        .ok_or_else(|| "找不到设置窗口".to_string())?;
+    window.center().map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_launcher_preferences(state: State<'_, Arc<LauncherState>>) -> LauncherPreferences {
+    state.preferences()
+}
+
+#[tauri::command]
+pub fn update_launcher_preferences(
+    state: State<'_, Arc<LauncherState>>,
+    close_on_blur: bool,
+    keep_last_input: bool,
+) -> LauncherPreferences {
+    state.update_preferences(close_on_blur, keep_last_input);
+    state.preferences()
 }
 
 #[tauri::command]
@@ -528,6 +589,12 @@ fn command_arguments<'a>(query: &'a str, command: &str) -> Option<&'a str> {
         .then(|| parts.next().unwrap_or("").trim())
 }
 
+fn is_settings_query(query: &str) -> bool {
+    query.eq_ignore_ascii_case("setting")
+        || query.eq_ignore_ascii_case("settings")
+        || query == "设置"
+}
+
 fn hint_result(title: &str, subtitle: &str) -> SearchResult {
     SearchResult {
         id: format!("hint:{title}"),
@@ -546,7 +613,7 @@ mod tests {
 
     use crate::catalog::CatalogEntry;
 
-    use super::{calculate, catalog_results, command_arguments, match_score};
+    use super::{calculate, catalog_results, command_arguments, is_settings_query, match_score};
 
     #[test]
     fn evaluates_basic_calculation() {
@@ -562,6 +629,10 @@ mod tests {
             Some("1786082576069")
         );
         assert_eq!(command_arguments("timestamp 1", "ts"), None);
+        assert!(is_settings_query("setting"));
+        assert!(is_settings_query("SETTINGS"));
+        assert!(is_settings_query("设置"));
+        assert!(!is_settings_query("setting extra"));
     }
 
     #[test]

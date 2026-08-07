@@ -18,7 +18,15 @@ pub enum ResultAction {
     OpenPath { path: String },
     OpenUrl { url: String },
     CopyText { text: String },
+    OpenSettings,
     None,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherPreferences {
+    pub close_on_blur: bool,
+    pub keep_last_input: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

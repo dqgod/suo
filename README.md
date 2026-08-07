@@ -25,9 +25,10 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
 - `11+1` 本地计算，`ts 1786082576069` 安全执行示例 Python 脚本；
 - `google codex` 生成 HTTPS 查询地址并使用默认浏览器打开；
+- `setting`、`settings` 或 `设置` 显示设置入口，按 Enter 打开设置窗口；
 - 查询取消、陈旧结果保护、3 秒脚本超时、1 MB 流式输出上限和 Windows Job Object 进程树终止。
 
-翻译 Provider、命令与网络搜索 CRUD、设置页、主题编辑和 macOS Spotlight 适配仍属于后续 MVP 工作，不应把当前技术验证版视为完整产品。
+翻译 Provider、命令与网络搜索 CRUD、完整设置页、主题编辑和 macOS Spotlight 适配仍属于后续 MVP 工作，不应把当前技术验证版视为完整产品。
 
 ## 开发环境
 

@@ -1,13 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
+import Settings from "./Settings";
 import { zhCN } from "./i18n/zh-CN";
+import { loadLauncherPreferences } from "./preferences";
 
 type ResultAction =
   | { type: "openPath"; path: string }
   | { type: "openUrl"; url: string }
   | { type: "copyText"; text: string }
+  | { type: "openSettings" }
   | { type: "none" };
 
 type SearchResult = {
@@ -46,11 +50,12 @@ const kindIcons: Record<string, string> = {
   calculator: "=",
   script: ">_",
   web: "↗",
+  settings: "⚙",
   hint: "?",
   error: "!",
 };
 
-function App() {
+function Launcher() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState<SearchResponse>(initialResponse);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -91,6 +96,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const preferences = loadLauncherPreferences();
+    void invoke("update_launcher_preferences", {
+      closeOnBlur: preferences.closeOnBlur,
+      keepLastInput: preferences.keepLastInput,
+    });
+  }, []);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => void search(query), query ? 90 : 0);
     return () => window.clearTimeout(timer);
   }, [query, search]);
@@ -101,7 +114,7 @@ function App() {
       void search(queryRef.current);
     });
     const hidden = listen("launcher-hidden", () => {
-      updateQuery("");
+      if (!loadLauncherPreferences().keepLastInput) updateQuery("");
       setSelectedIndex(0);
       setMessage("");
     });
@@ -119,9 +132,17 @@ function App() {
   }, [response.indexing, search]);
 
   const hide = useCallback(async () => {
-    updateQuery("");
     await invoke("hide_launcher");
-  }, [updateQuery]);
+  }, []);
+
+  const openSettings = useCallback(async () => {
+    try {
+      await invoke("open_settings");
+      await hide();
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }, [hide]);
 
   const activate = useCallback(
     async (result: SearchResult, keepOpen = false) => {
@@ -176,19 +197,8 @@ function App() {
 
   return (
     <main className="window-stage">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
       <section className="launcher" aria-label={zhCN.productName}>
-        <header className="titlebar" data-tauri-drag-region>
-          <span className="brand-mark" aria-hidden="true">◇</span>
-          <span className="brand" data-tauri-drag-region>Suo</span>
-          <span className="technical-badge">Windows Spike</span>
-          <button className="escape-button" type="button" onClick={() => void hide()}>
-            esc
-          </button>
-        </header>
-
-        <div className="search-box">
+        <div className="search-box" data-tauri-drag-region>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="10.8" cy="10.8" r="6.8" />
             <path d="m16 16 4.2 4.2" />
@@ -208,6 +218,15 @@ function App() {
               ×
             </button>
           )}
+          <button
+            className="brand-button"
+            type="button"
+            title={zhCN.openSettings}
+            aria-label={zhCN.openSettings}
+            onClick={() => void openSettings()}
+          >
+            <span aria-hidden="true">◇</span>
+          </button>
         </div>
 
         <div className="provider-row">
@@ -268,6 +287,10 @@ function App() {
       </section>
     </main>
   );
+}
+
+function App() {
+  return getCurrentWindow().label === "settings" ? <Settings /> : <Launcher />;
 }
 
 export default App;

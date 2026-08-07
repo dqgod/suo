@@ -1,6 +1,7 @@
 mod calculator;
 mod catalog;
 mod everything;
+mod i18n;
 mod launcher;
 mod models;
 mod scripts;
@@ -40,7 +41,9 @@ pub fn run() {
                 let event_state = state.clone();
                 window.on_window_event(move |event| match event {
                     WindowEvent::Focused(false) => {
-                        if event_state.consume_keep_visible_on_blur() {
+                        if event_state.consume_keep_visible_on_blur()
+                            || !event_state.close_on_blur()
+                        {
                             return;
                         }
                         let _ = event_window.hide();
@@ -55,6 +58,16 @@ pub fn run() {
                 });
             }
 
+            if let Some(window) = app.get_webview_window("settings") {
+                let event_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = event_window.hide();
+                    }
+                });
+            }
+
             let _ = position_launcher(app.handle());
             Ok(())
         })
@@ -63,6 +76,9 @@ pub fn run() {
             launcher::search_launcher,
             launcher::cancel_search,
             launcher::activate_result,
+            launcher::open_settings,
+            launcher::get_launcher_preferences,
+            launcher::update_launcher_preferences,
             launcher::rebuild_file_index,
             hide_launcher
         ])
