@@ -13,6 +13,8 @@ use crate::{
     scripts,
 };
 
+static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
+
 pub struct LauncherState {
     applications: RwLock<Vec<CatalogEntry>>,
     files: RwLock<Vec<CatalogEntry>>,
@@ -413,10 +415,39 @@ pub fn toggle_launcher(app: &AppHandle) {
         return;
     }
 
+    if let Err(error) = show_launcher(app) {
+        eprintln!("无法显示 Suo 主窗口：{error}");
+    }
+}
+
+pub fn request_show_launcher(app: &AppHandle) {
+    // 先记录请求再尝试消费，避免与应用 setup 创建主窗口的时序交错而丢失唤醒。
+    PENDING_SHOW.store(true, Ordering::SeqCst);
+    show_pending_launcher(app);
+}
+
+pub fn show_pending_launcher(app: &AppHandle) {
+    if app.get_webview_window("main").is_none() || !PENDING_SHOW.swap(false, Ordering::SeqCst) {
+        return;
+    }
+
+    if let Err(error) = show_launcher(app) {
+        PENDING_SHOW.store(true, Ordering::SeqCst);
+        eprintln!("无法响应第二实例的窗口唤醒请求：{error}");
+    }
+}
+
+pub fn show_launcher(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+
+    window.unminimize().map_err(|error| error.to_string())?;
     let _ = position_launcher(app);
-    let _ = window.show();
-    let _ = window.set_focus();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
     let _ = window.emit("launcher-shown", ());
+    Ok(())
 }
 
 pub fn position_launcher(app: &AppHandle) -> Result<(), String> {

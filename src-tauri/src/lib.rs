@@ -14,7 +14,15 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // 单实例插件必须最先注册，避免第二个进程初始化索引或抢占全局快捷键。
+    #[cfg(any(target_os = "macos", windows))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        launcher::request_show_launcher(app);
+    }));
+
+    builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -68,6 +76,7 @@ pub fn run() {
                 });
             }
 
+            launcher::show_pending_launcher(app.handle());
             let _ = position_launcher(app.handle());
             Ok(())
         })
