@@ -26,14 +26,21 @@ dirs = "6"
 open = "5"
 urlencoding = "2"
 walkdir = "2"
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
 ] }

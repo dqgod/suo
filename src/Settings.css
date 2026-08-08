@@ -1,8 +1,8 @@
 .settings-stage {
   width: 100%;
   height: 100%;
-  color: #eef1ff;
-  background: #0b1222;
+  color: var(--text);
+  background: var(--page);
 }
 
 .settings-titlebar {
@@ -12,7 +12,7 @@
   justify-content: space-between;
   padding: 0 14px 0 18px;
   border-bottom: 1px solid rgba(132, 145, 182, 0.14);
-  background: #0d1528;
+  background: var(--surface);
   user-select: none;
 }
 
@@ -67,14 +67,25 @@
   font-size: 12px;
 }
 
-.settings-layout aside span {
+.settings-layout aside button {
+  width: 100%;
   padding: 9px 11px;
+  border: 0;
   border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-layout aside button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .settings-layout aside .settings-nav-active {
   color: #e8eaff;
-  background: rgba(105, 91, 224, 0.2);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .settings-content {
@@ -221,4 +232,228 @@
 
 .settings-note strong {
   color: #929db6;
+}
+
+.settings-titlebar,
+.settings-layout aside,
+.settings-card,
+.editor-card {
+  border-color: var(--line);
+}
+
+.settings-titlebar button:hover {
+  color: var(--text);
+}
+
+.settings-layout aside {
+  background: color-mix(in srgb, var(--surface) 86%, var(--page));
+}
+
+.settings-card,
+.editor-card {
+  background: var(--surface-strong);
+}
+
+.settings-heading h1,
+.setting-row strong,
+.editor-card strong,
+.settings-layout aside .settings-nav-active {
+  color: var(--text);
+}
+
+.settings-heading p,
+.setting-row small,
+.editor-card small,
+.form-field > span {
+  color: var(--subtle);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button,
+.add-button {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 82%, var(--accent));
+  cursor: pointer;
+}
+
+.primary-button {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 34%, var(--surface-strong));
+}
+
+.danger-button {
+  color: #e68a96;
+  background: transparent;
+}
+
+.add-button {
+  align-self: flex-start;
+  color: var(--accent);
+  background: transparent;
+}
+
+.add-button.small {
+  min-height: 26px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.compact-card .setting-row {
+  min-height: 84px;
+}
+
+.editor-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.editor-card-heading,
+.subsection-heading,
+.credential-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.editor-card-heading {
+  margin-bottom: 12px;
+}
+
+.editor-card-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inline-toggle,
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px 12px;
+}
+
+.form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field.wide,
+.checkbox-field {
+  grid-column: 1 / -1;
+}
+
+.form-field > span {
+  font-size: 10px;
+}
+
+.form-field input,
+.form-field select,
+.setting-select {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  outline: 0;
+  color: var(--text);
+  background: var(--field);
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.setting-select:focus {
+  border-color: var(--accent);
+}
+
+.credential-row input {
+  flex: 1 1 auto;
+}
+
+.credential-ok,
+.credential-missing {
+  font-size: 9px;
+}
+
+.credential-ok {
+  color: #58c995;
+}
+
+.credential-missing {
+  color: #c98d58;
+}
+
+.subsection-heading {
+  margin-top: 6px;
+}
+
+.color-input {
+  width: 44px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--field);
+}
+
+.settings-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(224, 96, 113, 0.35);
+  border-radius: 8px;
+  color: #ed9daa;
+  background: rgba(153, 53, 70, 0.12);
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .settings-layout {
+    grid-template-columns: 130px minmax(0, 1fr);
+  }
+
+  .settings-content {
+    padding: 20px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-field.wide,
+  .checkbox-field {
+    grid-column: auto;
+  }
 }

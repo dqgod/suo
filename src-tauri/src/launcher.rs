@@ -1,16 +1,17 @@
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc, RwLock,
+    Arc, Mutex, RwLock,
 };
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
 
 use crate::{
     catalog::{self, CatalogEntry},
-    everything::{self, EverythingOutcome},
+    config::{AppConfig, ConfigState, ScriptCommandConfig, TranslationConfig, WebSearchConfig},
+    file_search::{self, FileSearchOutcome},
     i18n,
-    models::{LauncherPreferences, ResultAction, SearchResponse, SearchResult},
-    scripts,
+    models::{CancelStatus, IndexStatus, ResultAction, SearchResponse, SearchResult},
+    scripts, translator,
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
@@ -21,6 +22,9 @@ pub struct LauncherState {
     indexing: AtomicBool,
     hotkey_status: RwLock<String>,
     search_generation: AtomicU64,
+    action_generation: AtomicU64,
+    action_epoch: AtomicU64,
+    action_gate: Mutex<()>,
     keep_visible_on_blur: AtomicBool,
     close_on_blur: AtomicBool,
     keep_last_input: AtomicBool,
@@ -34,6 +38,9 @@ impl LauncherState {
             indexing: AtomicBool::new(false),
             hotkey_status: RwLock::new("正在注册默认快捷键".into()),
             search_generation: AtomicU64::new(0),
+            action_generation: AtomicU64::new(0),
+            action_epoch: AtomicU64::new(0),
+            action_gate: Mutex::new(()),
             keep_visible_on_blur: AtomicBool::new(false),
             close_on_blur: AtomicBool::new(true),
             keep_last_input: AtomicBool::new(false),
@@ -70,13 +77,75 @@ impl LauncherState {
         self.files.read().map(|files| files.len()).unwrap_or(0)
     }
 
-    fn advance_search_generation(&self, generation: u64) {
-        self.search_generation
-            .fetch_max(generation, Ordering::SeqCst);
-    }
-
     fn search_is_cancelled(&self, generation: u64) -> bool {
         self.search_generation.load(Ordering::SeqCst) != generation
+    }
+
+    fn begin_search(&self, generation: u64) -> u64 {
+        let Ok(_gate) = self.action_gate.lock() else {
+            return self.action_epoch.load(Ordering::SeqCst);
+        };
+        if generation > self.search_generation.load(Ordering::SeqCst) {
+            self.search_generation.store(generation, Ordering::SeqCst);
+            self.cancel_actions();
+            self.action_epoch.fetch_add(1, Ordering::SeqCst);
+        }
+        self.action_epoch.load(Ordering::SeqCst)
+    }
+
+    fn begin_action(&self, expected_epoch: u64) -> Result<u64, String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "脚本执行锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("查询已取消，未启动脚本".into());
+        }
+        Ok(self.action_generation.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn ensure_action_epoch(&self, expected_epoch: u64) -> Result<(), String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "操作授权锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("结果已失效，请重新搜索".into());
+        }
+        Ok(())
+    }
+
+    fn cancel_actions(&self) {
+        self.action_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn action_is_cancelled(&self, generation: u64) -> bool {
+        self.action_generation.load(Ordering::SeqCst) != generation
+    }
+
+    fn cancel_search_and_actions(&self, generation: u64) -> u64 {
+        if let Ok(_gate) = self.action_gate.lock() {
+            if generation > self.search_generation.load(Ordering::SeqCst) {
+                self.search_generation.store(generation, Ordering::SeqCst);
+                self.cancel_actions();
+                self.action_epoch.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        self.action_epoch.load(Ordering::SeqCst)
+    }
+
+    fn action_epoch(&self) -> u64 {
+        self.action_epoch.load(Ordering::SeqCst)
+    }
+
+    pub fn invalidate_provider_results(&self) {
+        if let Ok(_gate) = self.action_gate.lock() {
+            let generation = self.search_generation.load(Ordering::SeqCst);
+            self.search_generation
+                .store(generation.saturating_add(1), Ordering::SeqCst);
+            self.cancel_actions();
+            self.action_epoch.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     pub fn keep_visible_on_next_blur(&self, keep_visible: bool) {
@@ -92,14 +161,7 @@ impl LauncherState {
         self.close_on_blur.load(Ordering::SeqCst)
     }
 
-    fn preferences(&self) -> LauncherPreferences {
-        LauncherPreferences {
-            close_on_blur: self.close_on_blur.load(Ordering::SeqCst),
-            keep_last_input: self.keep_last_input.load(Ordering::SeqCst),
-        }
-    }
-
-    fn update_preferences(&self, close_on_blur: bool, keep_last_input: bool) {
+    pub fn update_preferences(&self, close_on_blur: bool, keep_last_input: bool) {
         self.close_on_blur.store(close_on_blur, Ordering::SeqCst);
         self.keep_last_input
             .store(keep_last_input, Ordering::SeqCst);
@@ -115,13 +177,15 @@ pub fn app_version() -> &'static str {
 pub async fn search_launcher(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
+    config: State<'_, Arc<ConfigState>>,
     query: String,
     generation: u64,
 ) -> Result<SearchResponse, String> {
     let state = state.inner().clone();
-    state.advance_search_generation(generation);
+    let config = config.snapshot();
+    state.begin_search(generation);
     tauri::async_runtime::spawn_blocking(move || {
-        search_launcher_blocking(app, state, query, generation)
+        search_launcher_blocking(app, state, config, query, generation)
     })
     .await
     .map_err(|error| format!("搜索任务异常结束：{error}"))
@@ -130,6 +194,7 @@ pub async fn search_launcher(
 fn search_launcher_blocking(
     app: AppHandle,
     state: Arc<LauncherState>,
+    config: AppConfig,
     query: String,
     generation: u64,
 ) -> SearchResponse {
@@ -178,46 +243,103 @@ fn search_launcher_blocking(
             score: 2_000,
             action: ResultAction::CopyText { text: value },
         }]
-    } else if let Some(arguments) = command_arguments(&query, "ts") {
-        provider = "脚本命令 · ts".into();
-        provider_detail = "Python · 参数数组模式 · 立即执行".into();
-        let args = arguments
-            .split_whitespace()
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        match scripts::run_timestamp(&app, &args, || state.search_is_cancelled(generation)) {
-            Ok(output) => vec![SearchResult {
-                id: format!("script:ts:{arguments}"),
-                title: output.clone(),
-                subtitle: format!("timestamp.py {arguments}"),
+    } else if let Some((translation, arguments, explicit_target)) =
+        translation_command(&config.translation, &query)
+    {
+        provider = "微软翻译".into();
+        provider_detail = "输入停顿 50 ms 后翻译；结果可直接复制".into();
+        if arguments.is_empty() {
+            vec![hint_result(
+                &format!("{}[:目标语言] <文本>", translation.keyword),
+                "例如：fy hello 或 fy:ja hello",
+            )]
+        } else {
+            let target = explicit_target
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| translator::target_language(translation, arguments));
+            match translator::translate(translation, arguments, &target, || {
+                state.search_is_cancelled(generation)
+            }) {
+                Ok(output) => vec![SearchResult {
+                    id: format!("translate:{target}:{arguments}"),
+                    title: output.clone(),
+                    subtitle: format!("微软翻译 · → {target} · {arguments}"),
+                    kind: "translation".into(),
+                    badge: "翻译".into(),
+                    score: 2_050,
+                    action: ResultAction::CopyText { text: output },
+                }],
+                Err(error) => vec![SearchResult {
+                    id: "translate:error".into(),
+                    title: error.clone(),
+                    subtitle: if error.contains("尚未配置") {
+                        "按 Enter 打开设置并配置翻译服务".into()
+                    } else {
+                        "检查网络、区域或微软翻译配置".into()
+                    },
+                    kind: "error".into(),
+                    badge: "翻译".into(),
+                    score: 2_050,
+                    action: if error.contains("尚未配置") {
+                        ResultAction::OpenSettings
+                    } else {
+                        ResultAction::None
+                    },
+                }],
+            }
+        }
+    } else if let Some((command, arguments)) = script_command(&config, &query) {
+        provider = format!("脚本命令 · {}", command.keyword);
+        provider_detail = if command.immediate {
+            "参数数组模式 · 输入停顿 50 ms 后执行".into()
+        } else {
+            "参数数组模式 · 按 Enter 执行".into()
+        };
+        match scripts::parse_arguments(arguments) {
+            Err(error) => vec![error_result(
+                format!("script:{}:args-error", command.id),
+                error,
+                "请检查参数引号",
+            )],
+            Ok(args) if command.immediate => {
+                match scripts::run_configured(&app, command, &args, || {
+                    state.search_is_cancelled(generation)
+                }) {
+                    Ok(output) => vec![script_output_result(command, arguments, output)],
+                    Err(error) => vec![error_result(
+                        format!("script:{}:error", command.id),
+                        error,
+                        "检查参数、脚本路径或解释器",
+                    )],
+                }
+            }
+            Ok(args) => vec![SearchResult {
+                id: format!("script:{}:{arguments}", command.id),
+                title: format!("运行 {}", command.name),
+                subtitle: format!("{} {}", command.script_path, arguments),
                 kind: "script".into(),
-                badge: "脚本".into(),
+                badge: "按 Enter".into(),
                 score: 2_000,
-                action: ResultAction::CopyText { text: output },
-            }],
-            Err(error) => vec![SearchResult {
-                id: "script:ts:error".into(),
-                title: error,
-                subtitle: "检查参数或 Python 解释器".into(),
-                kind: "error".into(),
-                badge: "错误".into(),
-                score: 2_000,
-                action: ResultAction::None,
+                action: ResultAction::RunScript {
+                    command_id: command.id.clone(),
+                    args,
+                },
             }],
         }
-    } else if let Some(arguments) = command_arguments(&query, "google") {
-        provider = "自定义网络搜索".into();
+    } else if let Some((search, arguments)) = web_search_command(&config, &query) {
+        provider = format!("自定义网络搜索 · {}", search.name);
         provider_detail = "按 Enter 使用系统默认浏览器打开".into();
         if arguments.is_empty() {
-            vec![hint_result("google <关键词>", "请输入要搜索的内容")]
+            vec![hint_result(
+                &format!("{} <关键词>", search.keyword),
+                "请输入要搜索的内容",
+            )]
         } else {
-            let url = format!(
-                "https://www.google.com.hk/search?q={}",
-                urlencoding::encode(arguments)
-            );
+            let url = expand_web_url(&search.url_template, arguments);
             vec![SearchResult {
-                id: format!("web:google:{arguments}"),
-                title: format!("Google 搜索：{arguments}"),
+                id: format!("web:{}:{arguments}", search.id),
+                title: format!("{} 搜索：{arguments}", search.name),
                 subtitle: url.clone(),
                 kind: "web".into(),
                 badge: "网络".into(),
@@ -228,22 +350,29 @@ fn search_launcher_blocking(
     } else if let Some(arguments) = command_arguments(&query, "f") {
         if arguments.is_empty() {
             provider = "全盘文件搜索".into();
-            provider_detail = "优先 Everything，失败时回退限定目录索引".into();
+            provider_detail = file_search::provider_hint().into();
             vec![hint_result("f <文件名或路径>", "输入关键词开始搜索")]
         } else {
-            match everything::search(&app, arguments, 12, || {
+            match file_search::search(&app, arguments, 12, || {
                 state.search_is_cancelled(generation)
             }) {
-                EverythingOutcome::Available(entries) => {
-                    provider = "Everything".into();
-                    provider_detail = "已连接 Everything IPC".into();
-                    catalog_results(&entries, arguments, "file", "Everything", 12, 900, || {
+                FileSearchOutcome::Available {
+                    provider: source,
+                    detail,
+                    entries,
+                } => {
+                    provider = source.into();
+                    provider_detail = detail.into();
+                    catalog_results(&entries, arguments, "file", source, 12, 900, || {
                         state.search_is_cancelled(generation)
                     })
                 }
-                EverythingOutcome::Unavailable(reason) => {
+                FileSearchOutcome::Unavailable(reason) => {
+                    if state.file_count() == 0 {
+                        LauncherState::start_file_index(state.clone());
+                    }
                     provider = "Suo 限定目录索引".into();
-                    provider_detail = format!("Everything 不可用：{reason}");
+                    provider_detail = format!("系统索引不可用：{reason}");
                     state
                         .files
                         .read()
@@ -254,7 +383,7 @@ fn search_launcher_blocking(
                         })
                         .unwrap_or_default()
                 }
-                EverythingOutcome::Cancelled => {
+                FileSearchOutcome::Cancelled => {
                     provider = "搜索已取消".into();
                     provider_detail = "正在处理更新的查询".into();
                     Vec::new()
@@ -306,6 +435,7 @@ fn search_launcher_blocking(
         hotkey_status: state.hotkey_status(),
         indexing: state.indexing.load(Ordering::SeqCst),
         indexed_file_count: state.file_count(),
+        action_epoch: state.action_epoch(),
         results,
     }
 }
@@ -318,17 +448,20 @@ fn cancelled_response(state: &LauncherState, query: String) -> SearchResponse {
         hotkey_status: state.hotkey_status(),
         indexing: state.indexing.load(Ordering::SeqCst),
         indexed_file_count: state.file_count(),
+        action_epoch: state.action_epoch(),
         results: Vec::new(),
     }
 }
 
 #[tauri::command]
-pub fn activate_result(
+pub async fn activate_result(
     app: AppHandle,
     state: State<'_, Arc<LauncherState>>,
+    config: State<'_, Arc<ConfigState>>,
     action: ResultAction,
     keep_open: bool,
-) -> Result<(), String> {
+    action_epoch: u64,
+) -> Result<Option<SearchResult>, String> {
     let may_move_focus = matches!(
         &action,
         ResultAction::OpenPath { .. } | ResultAction::OpenUrl { .. } | ResultAction::OpenSettings
@@ -337,21 +470,52 @@ pub fn activate_result(
 
     let result = match action {
         ResultAction::OpenPath { path } => {
+            state.ensure_action_epoch(action_epoch)?;
             let path = std::path::PathBuf::from(path);
             if !path.exists() {
                 return Err("目标已不存在".into());
             }
-            open::that(path).map_err(|error| error.to_string())
+            open::that(path)
+                .map(|_| None)
+                .map_err(|error| error.to_string())
         }
         ResultAction::OpenUrl { url } => {
+            state.ensure_action_epoch(action_epoch)?;
             let parsed = tauri::Url::parse(&url).map_err(|error| error.to_string())?;
             if !matches!(parsed.scheme(), "http" | "https") {
                 return Err("只允许打开 HTTP/HTTPS 地址".into());
             }
-            open::that(parsed.as_str()).map_err(|error| error.to_string())
+            open::that(parsed.as_str())
+                .map(|_| None)
+                .map_err(|error| error.to_string())
         }
-        ResultAction::OpenSettings => open_settings(app),
-        ResultAction::CopyText { .. } | ResultAction::None => Ok(()),
+        ResultAction::RunScript { command_id, args } => {
+            let Some(command) = config
+                .snapshot()
+                .script_commands
+                .into_iter()
+                .find(|command| command.id == command_id && command.enabled)
+            else {
+                return Err("脚本命令已被删除或禁用".into());
+            };
+            let script_state = state.inner().clone();
+            let generation = script_state.begin_action(action_epoch)?;
+            let script_app = app.clone();
+            let output = tauri::async_runtime::spawn_blocking(move || {
+                scripts::run_configured(&script_app, &command, &args, || {
+                    script_state.action_is_cancelled(generation)
+                })
+                .map(|output| script_output_result(&command, &args.join(" "), output))
+            })
+            .await
+            .map_err(|error| format!("脚本任务异常结束：{error}"))??;
+            Ok(Some(output))
+        }
+        ResultAction::OpenSettings => {
+            state.ensure_action_epoch(action_epoch)?;
+            open_settings(app).map(|_| None)
+        }
+        ResultAction::CopyText { .. } | ResultAction::None => Ok(None),
     };
     if result.is_err() {
         state.keep_visible_on_next_blur(false);
@@ -371,29 +535,29 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_launcher_preferences(state: State<'_, Arc<LauncherState>>) -> LauncherPreferences {
-    state.preferences()
+pub fn cancel_search(state: State<'_, Arc<LauncherState>>, generation: u64) -> CancelStatus {
+    CancelStatus {
+        action_epoch: state.cancel_search_and_actions(generation),
+    }
 }
 
 #[tauri::command]
-pub fn update_launcher_preferences(
-    state: State<'_, Arc<LauncherState>>,
-    close_on_blur: bool,
-    keep_last_input: bool,
-) -> LauncherPreferences {
-    state.update_preferences(close_on_blur, keep_last_input);
-    state.preferences()
-}
-
-#[tauri::command]
-pub fn cancel_search(state: State<'_, Arc<LauncherState>>, generation: u64) {
-    state.advance_search_generation(generation);
-}
-
-#[tauri::command]
-pub fn rebuild_file_index(state: State<'_, Arc<LauncherState>>) -> Result<(), String> {
+pub fn rebuild_file_index(app: AppHandle, state: State<'_, Arc<LauncherState>>) -> IndexStatus {
     LauncherState::start_file_index(state.inner().clone());
-    Ok(())
+    let _ = app.emit("file-index-started", ());
+    index_status(state)
+}
+
+#[tauri::command]
+pub fn get_index_status(state: State<'_, Arc<LauncherState>>) -> IndexStatus {
+    index_status(state)
+}
+
+fn index_status(state: State<'_, Arc<LauncherState>>) -> IndexStatus {
+    IndexStatus {
+        indexing: state.indexing.load(Ordering::SeqCst),
+        indexed_file_count: state.file_count(),
+    }
 }
 
 #[tauri::command]
@@ -621,6 +785,93 @@ fn command_arguments<'a>(query: &'a str, command: &str) -> Option<&'a str> {
         .then(|| parts.next().unwrap_or("").trim())
 }
 
+fn query_command_parts(query: &str) -> (&str, &str) {
+    let mut parts = query.splitn(2, char::is_whitespace);
+    let keyword = parts.next().unwrap_or("");
+    let arguments = parts.next().unwrap_or("").trim();
+    (keyword, arguments)
+}
+
+fn keyword_matches(keyword: &str, primary: &str, aliases: &[String]) -> bool {
+    keyword.eq_ignore_ascii_case(primary)
+        || aliases
+            .iter()
+            .any(|alias| keyword.eq_ignore_ascii_case(alias))
+}
+
+fn translation_command<'config, 'query>(
+    config: &'config TranslationConfig,
+    query: &'query str,
+) -> Option<(&'config TranslationConfig, &'query str, Option<&'query str>)> {
+    if !config.enabled {
+        return None;
+    }
+    let (token, arguments) = query_command_parts(query);
+    let (keyword, target) = token
+        .split_once(':')
+        .map_or((token, None), |(keyword, target)| (keyword, Some(target)));
+    keyword_matches(keyword, &config.keyword, &config.aliases)
+        .then_some((config, arguments, target))
+}
+
+fn script_command<'config, 'query>(
+    config: &'config AppConfig,
+    query: &'query str,
+) -> Option<(&'config ScriptCommandConfig, &'query str)> {
+    let (keyword, arguments) = query_command_parts(query);
+    config.script_commands.iter().find_map(|command| {
+        (command.enabled && keyword_matches(keyword, &command.keyword, &command.aliases))
+            .then_some((command, arguments))
+    })
+}
+
+fn web_search_command<'config, 'query>(
+    config: &'config AppConfig,
+    query: &'query str,
+) -> Option<(&'config WebSearchConfig, &'query str)> {
+    let (keyword, arguments) = query_command_parts(query);
+    config.web_searches.iter().find_map(|search| {
+        (search.enabled && keyword_matches(keyword, &search.keyword, &search.aliases))
+            .then_some((search, arguments))
+    })
+}
+
+fn expand_web_url(template: &str, query: &str) -> String {
+    template.replace("{query}", urlencoding::encode(query).as_ref())
+}
+
+fn script_output_result(
+    command: &ScriptCommandConfig,
+    arguments: &str,
+    output: String,
+) -> SearchResult {
+    SearchResult {
+        id: format!("script:{}:{arguments}:output", command.id),
+        title: if output.is_empty() {
+            "脚本执行完成（无输出）".into()
+        } else {
+            output.clone()
+        },
+        subtitle: format!("{} {}", command.script_path, arguments),
+        kind: "script".into(),
+        badge: "脚本".into(),
+        score: 2_000,
+        action: ResultAction::CopyText { text: output },
+    }
+}
+
+fn error_result(id: String, title: String, subtitle: &str) -> SearchResult {
+    SearchResult {
+        id,
+        title,
+        subtitle: subtitle.into(),
+        kind: "error".into(),
+        badge: "错误".into(),
+        score: 2_000,
+        action: ResultAction::None,
+    }
+}
+
 fn is_settings_query(query: &str) -> bool {
     query.eq_ignore_ascii_case("setting")
         || query.eq_ignore_ascii_case("settings")
@@ -645,7 +896,10 @@ mod tests {
 
     use crate::catalog::CatalogEntry;
 
-    use super::{calculate, catalog_results, command_arguments, is_settings_query, match_score};
+    use super::{
+        calculate, catalog_results, command_arguments, expand_web_url, is_settings_query,
+        match_score,
+    };
 
     #[test]
     fn evaluates_basic_calculation() {
@@ -665,6 +919,14 @@ mod tests {
         assert!(is_settings_query("SETTINGS"));
         assert!(is_settings_query("设置"));
         assert!(!is_settings_query("setting extra"));
+    }
+
+    #[test]
+    fn encodes_web_search_query() {
+        assert_eq!(
+            expand_web_url("https://example.com/?q={query}", "codex 中文"),
+            "https://example.com/?q=codex%20%E4%B8%AD%E6%96%87"
+        );
     }
 
     #[test]
@@ -688,5 +950,26 @@ mod tests {
         assert_eq!(results.len(), 8);
         assert_eq!(results[0].title, "item-000");
         assert_eq!(results[7].title, "item-007");
+    }
+
+    #[test]
+    fn action_cancellation_is_independent_from_search_generation() {
+        let state = super::LauncherState::new();
+        let epoch = state.begin_search(42);
+        let action = state.begin_action(epoch).unwrap();
+        assert!(!state.action_is_cancelled(action));
+        let next_epoch = state.cancel_search_and_actions(43);
+        assert!(state.action_is_cancelled(action));
+        assert_ne!(epoch, next_epoch);
+        assert!(state.begin_action(epoch).is_err());
+        assert!(state.begin_action(next_epoch).is_ok());
+    }
+
+    #[test]
+    fn stale_cancellation_cannot_invalidate_a_newer_search() {
+        let state = super::LauncherState::new();
+        let epoch = state.begin_search(10);
+        assert_eq!(state.cancel_search_and_actions(9), epoch);
+        assert_eq!(state.action_epoch(), epoch);
     }
 }

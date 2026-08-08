@@ -13,22 +13,99 @@ use std::{
 
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
-const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const SCRIPT_TIMEOUT: Duration = Duration::from_secs(3);
+use crate::config::{ScriptCommandConfig, ScriptRuntime};
 
-pub fn run_timestamp<F>(app: &AppHandle, args: &[String], is_cancelled: F) -> Result<String, String>
+const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+pub fn parse_arguments(arguments: &str) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut characters = arguments.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        if let Some(active_quote) = quote {
+            if character == active_quote {
+                quote = None;
+            } else if character == '\\' && characters.peek() == Some(&active_quote) {
+                current.push(characters.next().expect("peeked quote remains available"));
+            } else {
+                current.push(character);
+            }
+            started = true;
+        } else if character.is_whitespace() {
+            if started {
+                values.push(std::mem::take(&mut current));
+                started = false;
+            }
+        } else if matches!(character, '\'' | '"') {
+            quote = Some(character);
+            started = true;
+        } else if character == '\\'
+            && characters
+                .peek()
+                .is_some_and(|next| matches!(next, '\'' | '"'))
+        {
+            current.push(characters.next().expect("peeked quote remains available"));
+            started = true;
+        } else {
+            current.push(character);
+            started = true;
+        }
+    }
+    if quote.is_some() {
+        return Err("命令参数中的引号没有闭合".into());
+    }
+    if started {
+        values.push(current);
+    }
+    Ok(values)
+}
+
+pub fn run_configured<F>(
+    app: &AppHandle,
+    config: &ScriptCommandConfig,
+    args: &[String],
+    is_cancelled: F,
+) -> Result<String, String>
 where
     F: Fn() -> bool,
 {
-    if args.is_empty() {
-        return Err("用法：ts <毫秒时间戳> [更多时间戳]".into());
-    }
-
-    let script = find_script(app).ok_or_else(|| "找不到 examples/timestamp.py".to_string())?;
+    ensure_unprivileged()?;
+    let script = find_script(app, &config.script_path)
+        .ok_or_else(|| format!("找不到脚本：{}", config.script_path))?;
+    let timeout = Duration::from_millis(config.timeout_ms);
+    let interpreters: &[&str] = match config.runtime {
+        ScriptRuntime::Python => &["python", "python3"],
+        #[cfg(target_os = "windows")]
+        ScriptRuntime::PowerShell => &["powershell.exe", "pwsh"],
+        #[cfg(not(target_os = "windows"))]
+        ScriptRuntime::PowerShell => &["pwsh"],
+        ScriptRuntime::Bash => &["bash"],
+        ScriptRuntime::Executable => &[],
+    };
     let mut last_not_found = None;
 
-    for python in ["python", "python3"] {
-        let mut command = Command::new(python);
+    if matches!(config.runtime, ScriptRuntime::Executable) {
+        let mut command = Command::new(&script);
+        command.args(args);
+        if let Some(parent) = script.parent() {
+            command.current_dir(parent);
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_process_group(&mut command);
+        hide_console(&mut command);
+        let child = command
+            .spawn()
+            .map_err(|error| format!("无法执行 {}：{error}", script.display()))?;
+        return collect_output(child, &is_cancelled, timeout);
+    }
+
+    for interpreter in interpreters {
+        let mut command = Command::new(interpreter);
+        if matches!(config.runtime, ScriptRuntime::PowerShell) {
+            command.args(["-NoProfile", "-NonInteractive", "-File"]);
+        }
         command.arg(&script).args(args);
         if let Some(parent) = script.parent() {
             command.current_dir(parent);
@@ -36,18 +113,17 @@ where
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
         configure_process_group(&mut command);
         hide_console(&mut command);
-
         match command.spawn() {
-            Ok(child) => return collect_output(child, &is_cancelled, SCRIPT_TIMEOUT),
+            Ok(child) => return collect_output(child, &is_cancelled, timeout),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 last_not_found = Some(error);
             }
-            Err(error) => return Err(format!("无法执行 {python}：{error}")),
+            Err(error) => return Err(format!("无法执行 {interpreter}：{error}")),
         }
     }
 
     Err(format!(
-        "未找到 Python 解释器：{}",
+        "未找到脚本解释器：{}",
         last_not_found
             .map(|error| error.to_string())
             .unwrap_or_else(|| "未知错误".into())
@@ -105,7 +181,10 @@ where
             process_tree.terminate(&mut child);
             drain_reader(&stdout_reader);
             drain_reader(&stderr_reader);
-            return Err("脚本执行超过 3 秒，已终止进程树".into());
+            return Err(format!(
+                "脚本执行超过 {} ms，已终止进程树",
+                timeout.as_millis()
+            ));
         }
 
         if status.is_none() {
@@ -235,6 +314,10 @@ impl ProcessTree {
                 let _ = CloseHandle(job);
                 return Err(format!("无法隔离脚本进程树：{error}"));
             }
+            if let Err(error) = resume_suspended_child(child.id()) {
+                let _ = CloseHandle(job);
+                return Err(error);
+            }
             Ok(Self { job })
         }
     }
@@ -247,6 +330,54 @@ impl ProcessTree {
         let _ = child.kill();
         let _ = child.wait();
     }
+}
+
+#[cfg(target_os = "windows")]
+fn resume_suspended_child(process_id: u32) -> Result<(), String> {
+    use std::mem::size_of;
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+                THREADENTRY32,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+
+    // SAFETY: snapshot/thread handles are owned locally and closed once;
+    // THREADENTRY32 has the required dwSize before enumeration.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+            .map_err(|error| format!("无法枚举脚本线程：{error}"))?;
+        let mut entry = THREADENTRY32 {
+            dwSize: size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let mut next = Thread32First(snapshot, &mut entry);
+        while next.is_ok() {
+            if entry.th32OwnerProcessID == process_id {
+                let thread = match OpenThread(THREAD_SUSPEND_RESUME, false, entry.th32ThreadID) {
+                    Ok(thread) => thread,
+                    Err(error) => {
+                        let _ = CloseHandle(snapshot);
+                        return Err(format!("无法打开脚本主线程：{error}"));
+                    }
+                };
+                let previous_count = ResumeThread(thread);
+                let _ = CloseHandle(thread);
+                let _ = CloseHandle(snapshot);
+                if previous_count == u32::MAX {
+                    return Err("无法恢复已隔离的脚本进程".into());
+                }
+                return Ok(());
+            }
+            next = Thread32Next(snapshot, &mut entry);
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    Err("找不到已挂起的脚本主线程".into())
 }
 
 #[cfg(target_os = "windows")]
@@ -305,15 +436,35 @@ fn configure_process_group(command: &mut Command) {
 #[cfg(not(unix))]
 fn configure_process_group(_command: &mut Command) {}
 
-fn find_script(app: &AppHandle) -> Option<PathBuf> {
-    let resource = app
+fn find_script(app: &AppHandle, configured_path: &str) -> Option<PathBuf> {
+    let configured_path = configured_path.trim();
+    let expanded = if configured_path == "~" {
+        dirs::home_dir()
+    } else if let Some(relative) = configured_path
+        .strip_prefix("~/")
+        .or_else(|| configured_path.strip_prefix("~\\"))
+    {
+        dirs::home_dir().map(|home| home.join(relative))
+    } else {
+        Some(PathBuf::from(configured_path))
+    }?;
+    if expanded.is_absolute() {
+        return expanded.is_file().then_some(expanded);
+    }
+
+    let resource = app.path().resolve(&expanded, BaseDirectory::Resource).ok();
+    let config_relative = app
         .path()
-        .resolve("examples/timestamp.py", BaseDirectory::Resource)
-        .ok();
-    let source_tree = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/timestamp.py");
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join(&expanded));
+    let source_tree = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(&expanded);
 
     resource
         .into_iter()
+        .chain(config_relative)
         .chain([source_tree])
         .find(|path| path.is_file())
 }
@@ -322,11 +473,62 @@ fn find_script(app: &AppHandle) -> Option<PathBuf> {
 fn hide_console(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+    const CREATE_SUSPENDED: u32 = 0x0000_0004;
+    // Suspending before spawn returns closes the gap in which a script could
+    // create descendants before it is assigned to the Job Object.
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
 }
 
 #[cfg(not(target_os = "windows"))]
 fn hide_console(_command: &mut Command) {}
+
+#[cfg(target_os = "windows")]
+fn ensure_unprivileged() -> Result<(), String> {
+    use std::{ffi::c_void, mem::size_of};
+    use windows::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    // SAFETY: token is initialized by OpenProcessToken; the elevation buffer
+    // is valid for GetTokenInformation and the owned token is closed once.
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+            .map_err(|error| format!("无法检查当前进程权限：{error}"))?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut returned = 0;
+        let result = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut c_void),
+            size_of::<TOKEN_ELEVATION>() as u32,
+            &mut returned,
+        );
+        let _ = CloseHandle(token);
+        result.map_err(|error| format!("无法检查当前进程权限：{error}"))?;
+        if elevation.TokenIsElevated != 0 {
+            return Err("Suo 正以管理员权限运行，已拒绝执行自定义脚本".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_unprivileged() -> Result<(), String> {
+    // SAFETY: geteuid has no preconditions and does not dereference pointers.
+    if unsafe { libc::geteuid() } == 0 {
+        Err("Suo 正以 root 权限运行，已拒绝执行自定义脚本".into())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn ensure_unprivileged() -> Result<(), String> {
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -340,7 +542,22 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{collect_output, hide_console, spawn_capped_reader, MAX_OUTPUT_BYTES};
+    use super::{
+        collect_output, hide_console, parse_arguments, spawn_capped_reader, MAX_OUTPUT_BYTES,
+    };
+
+    #[test]
+    fn parses_quoted_arguments_without_a_shell() {
+        assert_eq!(
+            parse_arguments(r#"one "two words" three"#).unwrap(),
+            ["one", "two words", "three"]
+        );
+        assert!(parse_arguments("one \"").is_err());
+        assert_eq!(
+            parse_arguments(r#"C:\tmp\a.txt "D:\two words\b.txt""#).unwrap(),
+            [r#"C:\tmp\a.txt"#, r#"D:\two words\b.txt"#]
+        );
+    }
 
     #[test]
     fn reader_caps_output_while_streaming() {

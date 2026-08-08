@@ -4,6 +4,37 @@
   background: #0b1222;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --accent: #8a78ff;
+  --page: #0b1222;
+  --surface: #0c1326;
+  --surface-strong: #101a30;
+  --field: #161f39;
+  --text: #f5f7ff;
+  --muted: #91a0c7;
+  --subtle: #687590;
+  --line: rgba(132, 145, 182, 0.14);
+}
+
+:root[data-theme="paper"] {
+  --page: #e9e5dd;
+  --surface: #f8f5ee;
+  --surface-strong: #ffffff;
+  --field: #eee9df;
+  --text: #272b35;
+  --muted: #596378;
+  --subtle: #70778a;
+  --line: rgba(71, 77, 91, 0.18);
+}
+
+:root[data-theme="forest"] {
+  --page: #071610;
+  --surface: #0b1f17;
+  --surface-strong: #102b20;
+  --field: #142f25;
+  --text: #eefaf3;
+  --muted: #91b5a2;
+  --subtle: #668b78;
+  --line: rgba(121, 170, 143, 0.17);
 }
 
 * {
@@ -375,4 +406,71 @@ footer {
   background: rgba(19, 28, 51, 0.96);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   font-size: 10px;
+}
+
+/* Theme variables intentionally override the static fallback palette above. */
+html,
+body,
+#root,
+.window-stage,
+.settings-stage {
+  color: var(--text);
+  background: var(--page);
+}
+
+.launcher {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.search-box {
+  border-color: var(--line);
+  background: var(--field);
+}
+
+.search-box:focus-within {
+  border-color: var(--accent);
+}
+
+.search-box input,
+.result-copy strong {
+  color: var(--text);
+}
+
+.search-box svg,
+.result-copy small,
+.provider-copy > span:last-child,
+.index-button,
+footer,
+.hotkey {
+  color: var(--subtle);
+}
+
+.brand-button,
+.settings-brand span {
+  color: var(--accent);
+}
+
+.provider-row,
+footer {
+  border-color: var(--line);
+}
+
+.provider-copy strong,
+.result-badge,
+kbd,
+.clear-button {
+  color: var(--muted);
+}
+
+.result-badge,
+kbd {
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--field) 78%, transparent);
+}
+
+.result.selected {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--accent);
 }

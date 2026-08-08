@@ -4,13 +4,14 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./Settings";
+import { AppConfig, applyAppearance, loadAppConfig } from "./config";
 import { zhCN } from "./i18n/zh-CN";
-import { loadLauncherPreferences } from "./preferences";
 
 type ResultAction =
   | { type: "openPath"; path: string }
   | { type: "openUrl"; url: string }
   | { type: "copyText"; text: string }
+  | { type: "runScript"; commandId: string; args: string[] }
   | { type: "openSettings" }
   | { type: "none" };
 
@@ -31,7 +32,17 @@ type SearchResponse = {
   hotkeyStatus: string;
   indexing: boolean;
   indexedFileCount: number;
+  actionEpoch: number;
   results: SearchResult[];
+};
+
+type CancelStatus = {
+  actionEpoch: number;
+};
+
+type IndexStatus = {
+  indexing: boolean;
+  indexedFileCount: number;
 };
 
 const initialResponse: SearchResponse = {
@@ -41,6 +52,7 @@ const initialResponse: SearchResponse = {
   hotkeyStatus: zhCN.registeringHotkey,
   indexing: true,
   indexedFileCount: 0,
+  actionEpoch: 0,
   results: [],
 };
 
@@ -50,6 +62,7 @@ const kindIcons: Record<string, string> = {
   calculator: "=",
   script: ">_",
   web: "↗",
+  translation: "译",
   settings: "⚙",
   hint: "?",
   error: "!",
@@ -60,30 +73,52 @@ function Launcher() {
   const [response, setResponse] = useState<SearchResponse>(initialResponse);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [message, setMessage] = useState("");
+  const [composing, setComposing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
+  const completedRequestIdRef = useRef(-1);
+  const actionEpochRef = useRef(0);
+  const activationReadyRef = useRef(false);
+  const preserveCancellationRef = useRef<number | null>(null);
+  const keepLastInputRef = useRef(false);
+
+  const cancelPending = useCallback(() => {
+    const generation = ++requestId.current;
+    activationReadyRef.current = false;
+    return {
+      generation,
+      promise: invoke<CancelStatus>("cancel_search", { generation }),
+    };
+  }, []);
 
   const updateQuery = useCallback((value: string) => {
-    const generation = ++requestId.current;
+    preserveCancellationRef.current = null;
     queryRef.current = value;
     setQuery(value);
     setResponse((current) => ({
       ...current,
       query: value.trim(),
+      provider: zhCN.loading,
+      providerDetail: zhCN.waitingForInput,
       results: [],
     }));
-    void invoke("cancel_search", { generation });
-  }, []);
+    const cancellation = cancelPending();
+    void cancellation.promise.catch(() => undefined);
+  }, [cancelPending]);
 
   const search = useCallback(async (value: string) => {
     const currentRequest = ++requestId.current;
+    activationReadyRef.current = false;
     try {
       const next = await invoke<SearchResponse>("search_launcher", {
         query: value,
         generation: currentRequest,
       });
       if (currentRequest === requestId.current) {
+        actionEpochRef.current = next.actionEpoch;
+        activationReadyRef.current = true;
+        completedRequestIdRef.current = currentRequest;
         setResponse(next);
         setSelectedIndex(0);
         setMessage("");
@@ -96,40 +131,119 @@ function Launcher() {
   }, []);
 
   useEffect(() => {
-    const preferences = loadLauncherPreferences();
-    void invoke("update_launcher_preferences", {
-      closeOnBlur: preferences.closeOnBlur,
-      keepLastInput: preferences.keepLastInput,
+    void loadAppConfig()
+      .then((view) => {
+        keepLastInputRef.current = view.config.launcher.keepLastInput;
+        applyAppearance(view.config.appearance);
+        if (view.configLoadWarning) setMessage(view.configLoadWarning);
+      })
+      .catch((error) => setMessage(String(error)));
+    const updated = listen<AppConfig>("app-config-updated", (event) => {
+      keepLastInputRef.current = event.payload.launcher.keepLastInput;
+      applyAppearance(event.payload.appearance);
     });
-  }, []);
+    const providersUpdated = listen("provider-config-updated", () => {
+      updateQuery(queryRef.current);
+    });
+    return () => {
+      void updated.then((unlisten) => unlisten());
+      void providersUpdated.then((unlisten) => unlisten());
+    };
+  }, [updateQuery]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void search(query), query ? 90 : 0);
+    if (composing) return;
+    const timer = window.setTimeout(() => void search(query), query ? 50 : 0);
     return () => window.clearTimeout(timer);
-  }, [query, search]);
+  }, [composing, query, search]);
 
   useEffect(() => {
     const shown = listen("launcher-shown", () => {
       window.setTimeout(() => inputRef.current?.focus(), 0);
-      void search(queryRef.current);
     });
     const hidden = listen("launcher-hidden", () => {
-      if (!loadLauncherPreferences().keepLastInput) updateQuery("");
+      const queryCompleted = completedRequestIdRef.current === requestId.current;
+      if (
+        keepLastInputRef.current &&
+        (queryCompleted || preserveCancellationRef.current !== null)
+      ) {
+        if (queryCompleted && preserveCancellationRef.current === null) {
+          const cancellation = cancelPending();
+          preserveCancellationRef.current = cancellation.generation;
+          void cancellation.promise
+            .then((status) => {
+              if (
+                requestId.current !== cancellation.generation ||
+                preserveCancellationRef.current !== cancellation.generation
+              ) return;
+              actionEpochRef.current = status.actionEpoch;
+              activationReadyRef.current = true;
+              completedRequestIdRef.current = cancellation.generation;
+              setResponse((current) => ({
+                ...current,
+                actionEpoch: status.actionEpoch,
+              }));
+            })
+            .catch((error) => {
+              if (
+                requestId.current === cancellation.generation &&
+                preserveCancellationRef.current === cancellation.generation
+              ) {
+                completedRequestIdRef.current = -1;
+                setMessage(String(error));
+              }
+            })
+            .finally(() => {
+              if (preserveCancellationRef.current === cancellation.generation) {
+                preserveCancellationRef.current = null;
+              }
+            });
+        }
+      } else {
+        updateQuery("");
+      }
       setSelectedIndex(0);
       setMessage("");
+    });
+    const indexStarted = listen("file-index-started", () => {
+      setResponse((current) => ({ ...current, indexing: true }));
     });
     window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => {
       void shown.then((unlisten) => unlisten());
       void hidden.then((unlisten) => unlisten());
+      void indexStarted.then((unlisten) => unlisten());
     };
-  }, [search, updateQuery]);
+  }, [cancelPending, updateQuery]);
 
   useEffect(() => {
     if (!response.indexing) return;
-    const timer = window.setInterval(() => void search(queryRef.current), 1000);
+    const timer = window.setInterval(() => {
+      const polledQuery = queryRef.current;
+      const polledRequest = requestId.current;
+      const polledProvider = response.provider;
+      void invoke<IndexStatus>("get_index_status")
+        .then((status) => {
+          if (
+            response.indexing &&
+            !status.indexing &&
+            polledProvider.includes("限定目录索引") &&
+            polledRequest === requestId.current &&
+            polledQuery === queryRef.current
+          ) {
+            void search(polledQuery);
+            return;
+          }
+          setResponse((current) => ({
+            ...current,
+            indexing: status.indexing,
+            indexedFileCount: status.indexedFileCount,
+          }));
+        })
+        .catch((error) => setMessage(String(error)));
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [response.indexing, search]);
+  }, [response.indexing, response.provider, search]);
 
   const hide = useCallback(async () => {
     await invoke("hide_launcher");
@@ -153,7 +267,20 @@ function Launcher() {
           return;
         }
         if (result.action.type === "none") return;
-        await invoke("activate_result", { action: result.action, keepOpen });
+        if (result.action.type === "runScript" && !activationReadyRef.current) {
+          setMessage("正在恢复命令状态，请稍候");
+          return;
+        }
+        const output = await invoke<SearchResult | null>("activate_result", {
+          action: result.action,
+          keepOpen,
+          actionEpoch: actionEpochRef.current,
+        });
+        if (output) {
+          setResponse((current) => ({ ...current, results: [output] }));
+          setSelectedIndex(0);
+          return;
+        }
         if (!keepOpen) await hide();
       } catch (error) {
         setMessage(String(error));
@@ -191,8 +318,12 @@ function Launcher() {
   };
 
   const rebuildIndex = async () => {
-    await invoke("rebuild_file_index");
-    await search(queryRef.current);
+    const status = await invoke<IndexStatus>("rebuild_file_index");
+    setResponse((current) => ({
+      ...current,
+      indexing: status.indexing,
+      indexedFileCount: status.indexedFileCount,
+    }));
   };
 
   return (
@@ -207,6 +338,14 @@ function Launcher() {
             ref={inputRef}
             value={query}
             onChange={(event) => updateQuery(event.target.value)}
+            onCompositionStart={(event) => {
+              setComposing(true);
+              updateQuery(event.currentTarget.value);
+            }}
+            onCompositionEnd={(event) => {
+              setComposing(false);
+              updateQuery(event.currentTarget.value);
+            }}
             onKeyDown={onKeyDown}
             placeholder={zhCN.searchPlaceholder}
             spellCheck={false}

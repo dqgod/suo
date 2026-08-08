@@ -1,10 +1,16 @@
 mod calculator;
 mod catalog;
+mod config;
+#[cfg(target_os = "windows")]
 mod everything;
+mod file_search;
 mod i18n;
 mod launcher;
 mod models;
 mod scripts;
+#[cfg(target_os = "macos")]
+mod spotlight;
+mod translator;
 mod tray;
 
 use std::sync::Arc;
@@ -36,8 +42,19 @@ pub fn run() {
         .setup(|app| {
             tray::create(app)?;
 
+            let config_state = Arc::new(config::ConfigState::load(app.handle()));
+            let initial_config = config_state.snapshot();
+            app.manage(config_state);
+
             let state = Arc::new(LauncherState::new());
+            state.update_preferences(
+                initial_config.launcher.close_on_blur,
+                initial_config.launcher.keep_last_input,
+            );
             app.manage(state.clone());
+            // macOS protected folders can trigger privacy prompts. Defer the
+            // fallback scan until the user explicitly requests a file search.
+            #[cfg(not(target_os = "macos"))]
             LauncherState::start_file_index(state.clone());
 
             let (shortcut, shortcut_label) = default_shortcut();
@@ -89,10 +106,13 @@ pub fn run() {
             launcher::cancel_search,
             launcher::activate_result,
             launcher::open_settings,
-            launcher::get_launcher_preferences,
-            launcher::update_launcher_preferences,
             launcher::rebuild_file_index,
-            hide_launcher
+            launcher::get_index_status,
+            hide_launcher,
+            config::get_app_config,
+            config::save_app_config,
+            config::set_translation_api_key,
+            config::clear_translation_api_key
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Suo");
