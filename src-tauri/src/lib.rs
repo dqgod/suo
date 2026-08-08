@@ -117,7 +117,8 @@ pub fn run() {
             config::get_app_config,
             config::save_app_config,
             config::set_translation_api_key,
-            config::clear_translation_api_key
+            config::clear_translation_api_key,
+            scripts::reveal_script_in_folder
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Suo");

@@ -1,6 +1,6 @@
 use std::{
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -16,6 +16,47 @@ use tauri::{path::BaseDirectory, AppHandle, Manager};
 use crate::config::{ScriptCommandConfig, ScriptRuntime};
 
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+
+#[tauri::command]
+pub fn reveal_script_in_folder(app: AppHandle, configured_path: String) -> Result<(), String> {
+    let script = find_script(&app, &configured_path)
+        .ok_or_else(|| format!("找不到脚本：{}", configured_path.trim()))?;
+    let mut command = reveal_command(&script)?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法在文件夹中显示 {}：{error}", script.display()))?;
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_command(script: &Path) -> Result<Command, String> {
+    let mut command = Command::new("/usr/bin/open");
+    command.arg("-R").arg(script);
+    Ok(command)
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_command(script: &Path) -> Result<Command, String> {
+    use std::ffi::OsString;
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut selection = OsString::from("/select,");
+    selection.push(script.as_os_str());
+    let mut command = Command::new("explorer.exe");
+    command.arg(selection);
+    command.creation_flags(CREATE_NO_WINDOW);
+    Ok(command)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn reveal_command(_script: &Path) -> Result<Command, String> {
+    Err("当前平台不支持在文件夹中显示脚本".into())
+}
+
 pub fn run_configured<F>(
     app: &AppHandle,
     config: &ScriptCommandConfig,
@@ -502,6 +543,30 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::hide_console;
     use super::{collect_output, configure_process_group, spawn_capped_reader, MAX_OUTPUT_BYTES};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn finder_reveal_command_selects_the_script() {
+        let command = super::reveal_command(std::path::Path::new("/tmp/example script.py"))
+            .expect("macOS reveal command should be available");
+        assert_eq!(command.get_program(), "/usr/bin/open");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-R", "/tmp/example script.py"]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn explorer_reveal_command_selects_the_script() {
+        let command = super::reveal_command(std::path::Path::new(r"C:\scripts\example script.py"))
+            .expect("Windows reveal command should be available");
+        assert_eq!(command.get_program(), "explorer.exe");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [r"/select,C:\scripts\example script.py"]
+        );
+    }
 
     #[test]
     fn reader_caps_output_while_streaming() {

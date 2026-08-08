@@ -66,6 +66,7 @@ export const zhCN = {
     unnamed: "未命名配置",
     runtime: "运行时",
     scriptPath: "本地脚本路径",
+    revealScript: "在文件夹中显示",
     immediate: "无需 Enter，按配置的输入停顿时间执行",
     executionMode: "执行方式",
     immediateMode: "输入停顿后执行",

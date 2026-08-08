@@ -175,8 +175,9 @@
 
 .hotkey-value {
   height: 26px;
-  color: #cbd2eb;
-  background: rgba(67, 78, 111, 0.3);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  color: var(--text);
+  background: color-mix(in srgb, var(--field) 84%, var(--accent));
   white-space: nowrap;
 }
 
@@ -402,6 +403,22 @@ button:disabled {
 
 .credential-row input {
   flex: 1 1 auto;
+}
+
+.script-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.script-path-row input {
+  flex: 1 1 auto;
+}
+
+.reveal-script-button {
+  min-width: 106px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .credential-ok,

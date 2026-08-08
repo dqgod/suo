@@ -27,7 +27,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
 - macOS 的 `f <关键词>` 通过 Spotlight 文件名索引搜索，失败时同样回退限定目录索引；
 - 非空输入默认采用 50 ms 尾沿防抖，并取消/丢弃过期查询；即时脚本可逐项配置 20–60000 ms 执行延迟；
-- `11+1` 本地计算；脚本命令可在设置中增删改，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；参数数量与含义由脚本决定；
+- `11+1` 本地计算；脚本命令可在设置中增删改，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
 - 网络搜索可在设置中增删改；`{query}` 表示无需引号的整段参数，`{query0}`、`{query1}`…表示位置参数；模板必须以规范的 `http://` 或 `https://` 开头，按 Enter 后才打开浏览器；
 - `fy hello` 使用 Microsoft Translator，支持 `fy:ja hello`，API Key 存入系统凭据库而非 JSON；
 - 提供午夜、纸张、森林三套主题和自定义强调色；
