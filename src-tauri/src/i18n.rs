@@ -3,3 +3,7 @@ pub const SETTINGS_PROVIDER_DETAIL: &str = "按 Enter 打开 Suo 设置";
 pub const SETTINGS_RESULT_TITLE: &str = "打开设置";
 pub const SETTINGS_RESULT_SUBTITLE: &str = "快捷键、窗口行为与搜索偏好";
 pub const SETTINGS_BADGE: &str = "设置";
+pub const TRAY_TOOLTIP: &str = "Suo / 梭启动器";
+pub const TRAY_SHOW: &str = "显示 Suo";
+pub const TRAY_SETTINGS: &str = "设置";
+pub const TRAY_QUIT: &str = "退出";

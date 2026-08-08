@@ -364,6 +364,7 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("settings")
         .ok_or_else(|| "找不到设置窗口".to_string())?;
+    window.unminimize().map_err(|error| error.to_string())?;
     window.center().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())

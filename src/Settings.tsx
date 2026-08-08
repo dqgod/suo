@@ -120,8 +120,8 @@ function Settings() {
 
             <div className="setting-row">
               <div>
-                <strong>{zhCN.taskbarIcon}</strong>
-                <small>{zhCN.taskbarIconDescription}</small>
+                <strong>{zhCN.trayIcon}</strong>
+                <small>{zhCN.trayIconDescription}</small>
               </div>
               <span className="setting-status">{zhCN.enabled}</span>
             </div>

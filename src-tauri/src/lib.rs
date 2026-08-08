@@ -5,6 +5,7 @@ mod i18n;
 mod launcher;
 mod models;
 mod scripts;
+mod tray;
 
 use std::sync::Arc;
 
@@ -33,6 +34,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            tray::create(app)?;
+
             let state = Arc::new(LauncherState::new());
             app.manage(state.clone());
             LauncherState::start_file_index(state.clone());
