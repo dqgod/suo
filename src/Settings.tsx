@@ -14,6 +14,7 @@ import {
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 import { SuoIcon } from "./SuoIcon";
+import AppearanceEditor from "./AppearanceEditor";
 import "./Settings.css";
 
 const settingsWindow = getCurrentWindow();
@@ -374,6 +375,40 @@ function Settings() {
     setEditor(null);
   };
 
+  const setScriptEnabled = (id: string, enabled: boolean) => {
+    setDraft((current) => current ? {
+      ...current,
+      scriptCommands: current.scriptCommands.map((command) => (
+        command.id === id ? { ...command, enabled } : command
+      )),
+    } : current);
+    setEditor((current) => current?.kind === "script" && current.id === id
+      ? { ...current, value: { ...current.value, enabled } }
+      : current);
+  };
+
+  const setWebSearchEnabled = (id: string, enabled: boolean) => {
+    setDraft((current) => current ? {
+      ...current,
+      webSearches: current.webSearches.map((search) => (
+        search.id === id ? { ...search, enabled } : search
+      )),
+    } : current);
+    setEditor((current) => current?.kind === "web" && current.id === id
+      ? { ...current, value: { ...current.value, enabled } }
+      : current);
+  };
+
+  const setTranslationEnabled = (enabled: boolean) => {
+    setDraft((current) => current ? {
+      ...current,
+      translation: { ...current.translation, enabled },
+    } : current);
+    setEditor((current) => current?.kind === "translation"
+      ? { ...current, value: { ...current.value, enabled } }
+      : current);
+  };
+
   const updateAppearance = (appearance: AppConfig["appearance"]) => {
     applyAppearance(appearance);
     setDraft((current) => (current ? { ...current, appearance } : current));
@@ -495,11 +530,12 @@ function Settings() {
                               description={summary.description}
                               badges={[runtimeLabels[summary.runtime], summary.immediate ? `${summary.debounceMs} ms ${t.immediateBadge}` : t.enterBadge]}
                               onToggle={() => openScript(command)}
+                              onEnabledChange={(enabled) => setScriptEnabled(command.id, enabled)}
+                              readOnly={Boolean(view?.configReadOnly)}
                             >
                               {activeEditor && (
                                 <>
                                   <div className="configuration-editor-header">
-                                    <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
                                     <span>{t.pageDraftHint}</span>
                                   </div>
                                   <div className="form-grid">
@@ -545,11 +581,12 @@ function Settings() {
                               description={summary.description}
                               badges={[t.browserBadge]}
                               onToggle={() => openWebSearch(search)}
+                              onEnabledChange={(enabled) => setWebSearchEnabled(search.id, enabled)}
+                              readOnly={Boolean(view?.configReadOnly)}
                             >
                               {activeEditor && (
                                 <>
                                   <div className="configuration-editor-header">
-                                    <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
                                     <span>{t.pageDraftHint}</span>
                                   </div>
                                   <div className="form-grid">
@@ -581,11 +618,12 @@ function Settings() {
                           description={summary.description}
                           badges={[t.microsoftProvider, view?.translationApiKeyConfigured ? t.apiKeyConfiguredBadge : t.apiKeyMissingBadge]}
                           onToggle={openTranslation}
+                          onEnabledChange={setTranslationEnabled}
+                          readOnly={Boolean(view?.configReadOnly)}
                         >
                           {activeEditor && (
                             <>
                               <div className="configuration-editor-header">
-                                <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
                                 <span>{t.pageDraftHint}</span>
                               </div>
                               <div className="form-grid">
@@ -609,10 +647,11 @@ function Settings() {
               )}
 
               {section === "appearance" && (
-                <div className="settings-card compact-card">
-                  <label className="setting-row"><div><strong>{t.theme}</strong><small>{t.appearanceDescription}</small></div><select className="setting-select" value={draft.appearance.theme} onChange={(event) => updateAppearance({ ...draft.appearance, theme: event.target.value as AppConfig["appearance"]["theme"] })}><option value="midnight">{t.midnight}</option><option value="paper">{t.paper}</option><option value="forest">{t.forest}</option></select></label>
-                  <label className="setting-row"><div><strong>{t.accent}</strong><small>{draft.appearance.accentColor}</small></div><input className="color-input" type="color" value={draft.appearance.accentColor} onChange={(event) => updateAppearance({ ...draft.appearance, accentColor: event.target.value })} /></label>
-                </div>
+                <AppearanceEditor
+                  appearance={draft.appearance}
+                  onChange={updateAppearance}
+                  readOnly={Boolean(view?.configReadOnly)}
+                />
               )}
             </>
           )}
@@ -634,6 +673,8 @@ function ConfigurationItem({
   description,
   badges,
   onToggle,
+  onEnabledChange,
+  readOnly,
   children,
 }: {
   panelId: string;
@@ -644,19 +685,35 @@ function ConfigurationItem({
   description: string;
   badges: string[];
   onToggle: () => void;
+  onEnabledChange: (enabled: boolean) => void;
+  readOnly: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <article className={`configuration-item ${open ? "open" : ""}`}>
-      <button className="configuration-summary" type="button" aria-expanded={open} aria-controls={panelId} onClick={onToggle}>
-        <span className={`configuration-status-dot ${enabled ? "" : "off"}`} aria-hidden="true" />
-        <span className="configuration-summary-copy">
-          <span className="configuration-title-line"><strong>{name || t.unnamed}</strong><code>{keyword || "—"}</code></span>
-          <span className={`configuration-description ${description ? "" : "empty"}`}>{description || t.noDescription}</span>
-        </span>
-        <span className="configuration-badges">{badges.map((badge) => <span className="configuration-badge" key={badge}>{badge}</span>)}</span>
-        <span className="configuration-chevron" aria-hidden="true">⌄</span>
-      </button>
+    <article className={`configuration-item ${open ? "open" : ""} ${enabled ? "" : "disabled"}`}>
+      <div className="configuration-summary">
+        <button className="configuration-summary-main" type="button" aria-expanded={open} aria-controls={panelId} onClick={onToggle}>
+          <span className={`configuration-status-dot ${enabled ? "" : "off"}`} aria-hidden="true" />
+          <span className="configuration-summary-copy">
+            <span className="configuration-title-line"><strong>{name || t.unnamed}</strong><code>{keyword || "—"}</code></span>
+            <span className={`configuration-description ${description ? "" : "empty"}`}>{description || t.noDescription}</span>
+          </span>
+          <span className="configuration-badges">{badges.map((badge) => <span className="configuration-badge" key={badge}>{badge}</span>)}</span>
+        </button>
+        <label className="configuration-enable-switch">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={readOnly}
+            aria-label={(enabled ? t.disableItem : t.enableItem).replace("{name}", name || t.unnamed)}
+            onChange={(event) => onEnabledChange(event.target.checked)}
+          />
+          <span aria-hidden="true" />
+        </label>
+        <button className="configuration-chevron-button" type="button" aria-expanded={open} aria-controls={panelId} aria-label={open ? t.collapseItem : t.expandItem} onClick={onToggle}>
+          <span className="configuration-chevron" aria-hidden="true">⌄</span>
+        </button>
+      </div>
       {open && <div className="configuration-editor" id={panelId}>{children}</div>}
     </article>
   );

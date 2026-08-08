@@ -6,18 +6,25 @@ use walkdir::{DirEntry, WalkDir};
 pub struct CatalogEntry {
     pub name: String,
     pub path: PathBuf,
+    pub is_directory: bool,
     pub normalized_name: String,
     pub normalized_path: String,
 }
 
 impl CatalogEntry {
     pub fn from_path(path: PathBuf) -> Self {
+        let is_directory = path.is_dir();
+        Self::from_path_with_type(path, is_directory)
+    }
+
+    pub fn from_path_with_type(path: PathBuf, is_directory: bool) -> Self {
         let name = display_name(&path);
         let normalized_name = name.to_lowercase();
         let normalized_path = path.to_string_lossy().to_lowercase();
         Self {
             name,
             path,
+            is_directory,
             normalized_name,
             normalized_path,
         }
@@ -51,7 +58,7 @@ fn discover_windows_applications() -> Vec<CatalogEntry> {
         roots.push(PathBuf::from(program_data).join("Microsoft/Windows/Start Menu/Programs"));
     }
 
-    collect_entries(roots, 10, 10_000, |entry| {
+    collect_entries(roots, 10, 10_000, true, |entry| {
         matches!(
             entry
                 .path()
@@ -74,7 +81,7 @@ fn discover_macos_applications() -> Vec<CatalogEntry> {
         roots.push(home.join("Applications"));
     }
 
-    collect_entries(roots, 4, 10_000, |entry| {
+    collect_entries(roots, 4, 10_000, true, |entry| {
         entry.file_type().is_dir()
             && entry
                 .path()
@@ -99,13 +106,16 @@ pub fn build_limited_file_index() -> Vec<CatalogEntry> {
         }
     }
 
-    collect_entries(roots, 8, 50_000, |entry| entry.file_type().is_file())
+    collect_entries(roots, 8, 50_000, false, |entry| {
+        entry.depth() > 0 && (entry.file_type().is_file() || entry.file_type().is_dir())
+    })
 }
 
 fn collect_entries<F>(
     roots: Vec<PathBuf>,
     max_depth: usize,
     max_entries: usize,
+    skip_included_directories: bool,
     include: F,
 ) -> Vec<CatalogEntry>
 where
@@ -138,11 +148,11 @@ where
             if !seen.insert(key) {
                 continue;
             }
-            entries.push(CatalogEntry::from_path(path));
+            entries.push(CatalogEntry::from_path_with_type(path, is_directory));
 
             // Application bundles are directories. Once included, their
             // internal files are not useful launcher results.
-            if is_directory {
+            if is_directory && skip_included_directories {
                 walker.skip_current_dir();
             }
         }
@@ -170,4 +180,38 @@ pub fn display_name(path: &std::path::Path) -> String {
         .or_else(|| path.file_name())
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn indexing_a_directory_does_not_skip_its_children() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("suo-catalog-tree-{}-{nonce}", std::process::id()));
+        let nested = root.join("folder").join("nested");
+        fs::create_dir_all(&nested).expect("create nested directory");
+        fs::write(nested.join("report.txt"), b"report").expect("create nested file");
+
+        let entries = collect_entries(vec![root.clone()], 8, 100, false, |entry| {
+            entry.depth() > 0 && (entry.file_type().is_file() || entry.file_type().is_dir())
+        });
+        assert!(entries
+            .iter()
+            .any(|entry| entry.is_directory && entry.path.ends_with("folder")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.is_directory && entry.path.ends_with("nested")));
+        assert!(entries
+            .iter()
+            .any(|entry| !entry.is_directory && entry.path.ends_with("report.txt")));
+
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
 }

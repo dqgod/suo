@@ -9,7 +9,7 @@ use tauri::State;
 
 use crate::launcher::LauncherState;
 
-const ICON_SIZE: u16 = 32;
+const ICON_SIZE: u16 = 48;
 const CACHE_CAPACITY: usize = 256;
 
 #[derive(Clone, Debug, Serialize)]

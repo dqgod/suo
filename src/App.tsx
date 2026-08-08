@@ -87,7 +87,6 @@ function queryDebounceMs(query: string, commands: ScriptCommandConfig[]) {
 
 const kindIcons: Record<string, string> = {
   app: "◆",
-  file: "▱",
   calculator: "=",
   script: ">_",
   web: "↗",
@@ -96,6 +95,27 @@ const kindIcons: Record<string, string> = {
   hint: "?",
   error: "!",
 };
+
+function PathResultIcon({ kind }: { kind: string }) {
+  if (kind === "folder") {
+    return (
+      <svg className="path-result-icon" viewBox="0 0 24 24" fill="none">
+        <path d="M3.5 7.4A2.4 2.4 0 0 1 5.9 5h4l2 2h6.2a2.4 2.4 0 0 1 2.4 2.4v7.2a2.4 2.4 0 0 1-2.4 2.4H5.9a2.4 2.4 0 0 1-2.4-2.4V7.4Z" fill="currentColor" opacity=".95" />
+        <path d="M3.8 9h16.4" stroke="rgba(255,255,255,.42)" strokeWidth="1.2" />
+      </svg>
+    );
+  }
+  if (kind === "file") {
+    return (
+      <svg className="path-result-icon" viewBox="0 0 24 24" fill="none">
+        <path d="M6 3.5h7.1L18 8.4v12.1H6v-17Z" fill="currentColor" opacity=".22" />
+        <path d="M13 3.5v5h5M6 3.5h7l5 5v12H6v-17Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M9 13h6M9 16h4.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity=".72" />
+      </svg>
+    );
+  }
+  return <>{kindIcons[kind] ?? "·"}</>;
+}
 
 const appIconCache = new Map<string, string | null>();
 const appIconRequests = new Map<string, Promise<string | null>>();
@@ -237,7 +257,7 @@ function ResultIcon({
       className={`result-icon ${result.kind} ${icon ? "native-icon" : ""}`}
       aria-hidden="true"
     >
-      {icon ? <img src={icon} alt="" draggable={false} /> : kindIcons[result.kind] ?? "·"}
+      {icon ? <img src={icon} alt="" draggable={false} /> : <PathResultIcon kind={result.kind} />}
     </span>
   );
 }
@@ -251,6 +271,7 @@ function Launcher() {
   const [launcherVisible, setLauncherVisible] = useState(false);
   const [compactWhenEmpty, setCompactWhenEmpty] = useState(false);
   const [configReady, setConfigReady] = useState(false);
+  const [appearanceLayoutRevision, setAppearanceLayoutRevision] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
@@ -318,6 +339,7 @@ function Launcher() {
       scriptCommandsRef.current = config.scriptCommands;
       setCompactWhenEmpty(config.launcher.compactWhenEmpty);
       applyAppearance(config.appearance);
+      setAppearanceLayoutRevision((current) => current + 1);
       setConfigReady(true);
     };
     const updated = listen<AppConfig>("app-config-updated", (event) => {
@@ -384,7 +406,7 @@ function Launcher() {
       .catch((error) => {
         if (compactDesiredRef.current === requested) setMessage(String(error));
       });
-  }, [compactEmpty]);
+  }, [appearanceLayoutRevision, compactEmpty]);
 
   useEffect(() => {
     const shown = listen("launcher-shown", () => {

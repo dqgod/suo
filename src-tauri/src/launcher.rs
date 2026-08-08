@@ -20,7 +20,7 @@ use crate::{
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
-const LAUNCHER_WIDTH: f64 = 720.0;
+const DEFAULT_LAUNCHER_WIDTH: f64 = 720.0;
 const LAUNCHER_FULL_HEIGHT: f64 = 520.0;
 const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
 
@@ -227,6 +227,7 @@ fn search_launcher_blocking(
         return cancelled_response(&state, query);
     }
     let mut provider = "本地应用 + 限定目录索引".to_string();
+    let max_results = config.appearance.max_results();
     let mut provider_detail = if state.indexing.load(Ordering::SeqCst) {
         "正在后台建立限定目录索引".to_string()
     } else {
@@ -238,7 +239,7 @@ fn search_launcher_blocking(
             .applications
             .read()
             .map(|apps| {
-                catalog_results(&apps, "", "app", "应用", 8, 500, || {
+                catalog_results(&apps, "", "app", "应用", max_results, 500, || {
                     state.search_is_cancelled(generation)
                 })
             })
@@ -383,7 +384,7 @@ fn search_launcher_blocking(
             provider_detail = file_search::provider_hint().into();
             vec![hint_result("f <文件名或路径>", "输入关键词开始搜索")]
         } else {
-            match file_search::search(&app, arguments, 12, || {
+            match file_search::search(&app, arguments, max_results, || {
                 state.search_is_cancelled(generation)
             }) {
                 FileSearchOutcome::Available {
@@ -393,9 +394,15 @@ fn search_launcher_blocking(
                 } => {
                     provider = source.into();
                     provider_detail = detail.into();
-                    catalog_results(&entries, arguments, "file", source, 12, 900, || {
-                        state.search_is_cancelled(generation)
-                    })
+                    catalog_results(
+                        &entries,
+                        arguments,
+                        "file",
+                        source,
+                        max_results,
+                        900,
+                        || state.search_is_cancelled(generation),
+                    )
                 }
                 FileSearchOutcome::Unavailable(reason) => {
                     if state.file_count() == 0 {
@@ -407,9 +414,15 @@ fn search_launcher_blocking(
                         .files
                         .read()
                         .map(|files| {
-                            catalog_results(&files, arguments, "file", "文件", 12, 700, || {
-                                state.search_is_cancelled(generation)
-                            })
+                            catalog_results(
+                                &files,
+                                arguments,
+                                "file",
+                                "文件",
+                                max_results,
+                                700,
+                                || state.search_is_cancelled(generation),
+                            )
                         })
                         .unwrap_or_default()
                 }
@@ -425,7 +438,7 @@ fn search_launcher_blocking(
             .applications
             .read()
             .map(|apps| {
-                catalog_results(&apps, &query, "app", "应用", 8, 800, || {
+                catalog_results(&apps, &query, "app", "应用", max_results, 800, || {
                     state.search_is_cancelled(generation)
                 })
             })
@@ -436,7 +449,7 @@ fn search_launcher_blocking(
                 &query,
                 "file",
                 "文件",
-                8,
+                max_results,
                 500,
                 || state.search_is_cancelled(generation),
             ));
@@ -447,7 +460,7 @@ fn search_launcher_blocking(
                 .cmp(&left.score)
                 .then(left.title.cmp(&right.title))
         });
-        combined.truncate(8);
+        combined.truncate(max_results);
         combined
     };
 
@@ -600,7 +613,11 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn set_launcher_compact(app: AppHandle, compact: bool) -> Result<(), String> {
+pub fn set_launcher_compact(
+    app: AppHandle,
+    config: State<'_, Arc<ConfigState>>,
+    compact: bool,
+) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
@@ -614,11 +631,12 @@ pub fn set_launcher_compact(app: AppHandle, compact: bool) -> Result<(), String>
     } else {
         LAUNCHER_FULL_HEIGHT
     };
-    if (current.height - target_height).abs() < 0.5 {
+    let target_width = config.snapshot().appearance.launcher_width();
+    if (current.height - target_height).abs() < 0.5 && (current.width - target_width).abs() < 0.5 {
         return Ok(());
     }
     window
-        .set_size(LogicalSize::new(current.width, target_height))
+        .set_size(LogicalSize::new(target_width, target_height))
         .map_err(|error| error.to_string())
 }
 
@@ -684,7 +702,11 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
     // the current compact height here would make later invocations drift down.
     // Use the destination monitor's DPI because the hidden window may still
     // belong to a different monitor when this position is calculated.
-    let positioning_width = (LAUNCHER_WIDTH * monitor.scale_factor()).round() as u32;
+    let launcher_width = app
+        .try_state::<Arc<ConfigState>>()
+        .map(|config| config.snapshot().appearance.launcher_width())
+        .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+    let positioning_width = (launcher_width * monitor.scale_factor()).round() as u32;
     let positioning_height = (LAUNCHER_FULL_HEIGHT * monitor.scale_factor()).round() as u32;
 
     let x = monitor_position.x + (monitor_size.width.saturating_sub(positioning_width) / 2) as i32;
@@ -746,12 +768,17 @@ where
     best.into_iter()
         .map(|(score, entry)| {
             let path = entry.path.to_string_lossy().into_owned();
+            let (result_kind, result_badge) = if kind == "file" && entry.is_directory {
+                ("folder", "文件夹")
+            } else {
+                (kind, badge)
+            };
             SearchResult {
-                id: format!("{kind}:{path}"),
+                id: format!("{result_kind}:{path}"),
                 title: entry.name.clone(),
                 subtitle: path.clone(),
-                kind: kind.into(),
-                badge: badge.into(),
+                kind: result_kind.into(),
+                badge: result_badge.into(),
                 score,
                 action: ResultAction::OpenPath { path },
             }
@@ -948,9 +975,12 @@ fn hint_result(title: &str, subtitle: &str) -> SearchResult {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::catalog::CatalogEntry;
+    use crate::{catalog::CatalogEntry, config::AppConfig};
 
-    use super::{calculate, catalog_results, command_arguments, is_settings_query, match_score};
+    use super::{
+        calculate, catalog_results, command_arguments, is_settings_query, match_score,
+        script_command, translation_command, web_search_command,
+    };
 
     #[test]
     fn evaluates_basic_calculation() {
@@ -993,6 +1023,32 @@ mod tests {
         assert_eq!(results.len(), 8);
         assert_eq!(results[0].title, "item-000");
         assert_eq!(results[7].title, "item-007");
+    }
+
+    #[test]
+    fn catalog_results_distinguish_folders_from_files() {
+        let entries = vec![
+            CatalogEntry::from_path_with_type(PathBuf::from("C:/files/folder"), true),
+            CatalogEntry::from_path_with_type(PathBuf::from("C:/files/report.txt"), false),
+        ];
+
+        let results = catalog_results(&entries, "", "file", "文件", 8, 0, || false);
+        assert_eq!(results[0].kind, "folder");
+        assert_eq!(results[0].badge, "文件夹");
+        assert_eq!(results[1].kind, "file");
+        assert_eq!(results[1].badge, "文件");
+    }
+
+    #[test]
+    fn disabled_commands_and_services_do_not_match() {
+        let mut config = AppConfig::default();
+        config.translation.enabled = false;
+        config.script_commands[0].enabled = false;
+        config.web_searches[0].enabled = false;
+
+        assert!(translation_command(&config.translation, "fy hello").is_none());
+        assert!(script_command(&config, "ts 123456").is_none());
+        assert!(web_search_command(&config, "google codex").is_none());
     }
 
     #[test]

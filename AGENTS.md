@@ -35,7 +35,7 @@ Before pushing, run the frontend build and Rust tests. When platform integration
 
 ## macOS Apple Silicon Handoff
 
-The Windows technical baseline is verified; macOS source paths are implemented but still require the first Apple Silicon hardware pass. Work from `dev`, do not use `sudo`, and do not commit `node_modules/`, `dist/`, `target/`, `.app`, or `.dmg` artifacts.
+The first Apple Silicon hardware pass was completed on 2026-08-08. Treat the commands and scenarios below as the regression checklist for later cross-platform changes. Work from `dev`, do not use `sudo`, and do not commit `node_modules/`, `dist/`, `target/`, `.app`, or `.dmg` artifacts.
 
 Record the environment first:
 
@@ -87,6 +87,8 @@ For each failure, preserve the exact command, exit code, stderr, macOS version, 
 - Script argument count and meaning are owned by the script; Suo only performs quote-aware argv splitting and does not declare a parameter schema in the current MVP.
 - Query scripts may run immediately with a per-command 20–60000 ms debounce (default 50 ms); action scripts run on Enter by default. Both must support timeout and process-tree cancellation.
 - Web search `{query}` expands the complete post-keyword text without requiring quotes. `{query0}`, `{query1}`… expand quote-aware positional arguments; missing arguments must produce a non-actionable error result.
+- Custom themes use the strict `suo-theme-v1` JSON contract. Only fixed CSS variables may be populated; wallpaper input is limited to local PNG/JPEG/WebP data URLs and must never load remote content or execute code.
+- Launcher result icons follow a stable type contract: discovered applications may request whitelisted native icons, directories use the built-in folder icon, and other files use the built-in file icon.
 - `suo-json-v1` is UTF-8. Plain text output may use a configured encoding and is capped independently for stdout/stderr.
 
 ## Security and Privacy

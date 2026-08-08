@@ -10,10 +10,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 4;
+const CONFIG_VERSION: u32 = 5;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
+const MAX_CUSTOM_THEMES: usize = 12;
+const MAX_THEME_WALLPAPER_BYTES: usize = 1_572_864;
 const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
 const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
@@ -98,11 +100,87 @@ pub struct WebSearchConfig {
     pub url_template: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppearanceConfig {
     pub theme: String,
     pub accent_color: String,
+    #[serde(default)]
+    pub custom_themes: Vec<CustomThemeConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomThemeConfig {
+    pub id: String,
+    pub name: String,
+    pub window_color: String,
+    pub panel_color: String,
+    pub field_color: String,
+    pub text_color: String,
+    pub muted_color: String,
+    pub accent_color: String,
+    pub selection_color: String,
+    pub border_color: String,
+    pub window_opacity: u8,
+    pub blur_px: u8,
+    pub shadow_percent: u8,
+    #[serde(default)]
+    pub wallpaper_data_url: String,
+    pub wallpaper_opacity: u8,
+    pub radius_px: u8,
+    pub font_family: String,
+    pub font_size_px: u8,
+    pub launcher_width_px: u16,
+    pub result_density: String,
+    pub max_results: u8,
+    pub icon_size_px: u8,
+    pub show_source_badge: bool,
+    #[serde(default)]
+    pub platform_overrides: PlatformThemeOverrides,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformThemeOverrides {
+    pub enabled: bool,
+    pub windows_blur_px: u8,
+    pub windows_opacity: u8,
+    pub macos_blur_px: u8,
+    pub macos_opacity: u8,
+}
+
+impl Default for PlatformThemeOverrides {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            windows_blur_px: 18,
+            windows_opacity: 94,
+            macos_blur_px: 18,
+            macos_opacity: 94,
+        }
+    }
+}
+
+impl AppearanceConfig {
+    pub fn active_custom_theme(&self) -> Option<&CustomThemeConfig> {
+        let id = self.theme.strip_prefix("custom:")?;
+        self.custom_themes
+            .iter()
+            .find(|theme| theme.id.eq_ignore_ascii_case(id))
+    }
+
+    pub fn max_results(&self) -> usize {
+        self.active_custom_theme()
+            .map(|theme| usize::from(theme.max_results))
+            .unwrap_or(8)
+    }
+
+    pub fn launcher_width(&self) -> f64 {
+        self.active_custom_theme()
+            .map(|theme| f64::from(theme.launcher_width_px))
+            .unwrap_or(720.0)
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -168,6 +246,7 @@ impl Default for AppConfig {
             appearance: AppearanceConfig {
                 theme: "midnight".into(),
                 accent_color: "#8a78ff".into(),
+                custom_themes: Vec::new(),
             },
         }
     }
@@ -410,7 +489,7 @@ fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
     for search in &mut config.web_searches {
         normalize_web_search(search)?;
     }
-    validate_appearance(&config.appearance)?;
+    normalize_appearance(&mut config.appearance)?;
     validate_keyword_namespace(&config)?;
     validate_unique_ids(&config)?;
     Ok(config)
@@ -426,9 +505,10 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
 
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
-        // and v4 adds per-script debounce. Serde defaults keep migrations safe.
-        0 | 1 | 2 | 3 => config.version = 4,
-        4 => {}
+        // v4 adds per-script debounce, and v5 adds custom themes. Serde defaults
+        // keep older configurations safe during migration.
+        0 | 1 | 2 | 3 | 4 => config.version = 5,
+        5 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -510,15 +590,210 @@ fn normalize_web_search(search: &mut WebSearchConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_appearance(appearance: &AppearanceConfig) -> Result<(), String> {
-    if !matches!(appearance.theme.as_str(), "midnight" | "paper" | "forest") {
-        return Err("主题必须是 midnight、paper 或 forest".into());
+fn normalize_appearance(appearance: &mut AppearanceConfig) -> Result<(), String> {
+    appearance.theme = required_trimmed(&appearance.theme, "当前主题", 80)?;
+    validate_hex_color(&appearance.accent_color, "强调色")?;
+    if appearance.custom_themes.len() > MAX_CUSTOM_THEMES {
+        return Err(format!("自定义皮肤最多允许 {MAX_CUSTOM_THEMES} 个"));
     }
-    let accent = appearance.accent_color.as_bytes();
-    if accent.len() != 7 || accent[0] != b'#' || !accent[1..].iter().all(u8::is_ascii_hexdigit) {
-        return Err("强调色必须是 #RRGGBB 格式".into());
+
+    let mut ids = HashMap::<String, String>::new();
+    for theme in &mut appearance.custom_themes {
+        theme.id = required_trimmed(&theme.id, "皮肤 ID", 64)?;
+        if !theme
+            .id
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
+        {
+            return Err(format!(
+                "皮肤 {} 的 ID 只能包含字母、数字、- 和 _",
+                theme.id
+            ));
+        }
+        theme.name = required_trimmed(&theme.name, "皮肤名称", 40)?;
+        if let Some(existing) = ids.insert(theme.id.to_ascii_lowercase(), theme.name.clone()) {
+            return Err(format!(
+                "皮肤 ID {} 同时属于 {} 和 {}",
+                theme.id, existing, theme.name
+            ));
+        }
+        validate_custom_theme(theme)?;
+    }
+
+    if !matches!(appearance.theme.as_str(), "midnight" | "paper" | "forest") {
+        let selected = appearance
+            .theme
+            .strip_prefix("custom:")
+            .ok_or_else(|| "主题必须是内置主题或 custom:<id>".to_string())?;
+        let canonical_id = appearance
+            .custom_themes
+            .iter()
+            .find(|theme| theme.id.eq_ignore_ascii_case(selected))
+            .map(|theme| theme.id.clone())
+            .ok_or_else(|| format!("当前自定义皮肤不存在：{selected}"))?;
+        appearance.theme = format!("custom:{canonical_id}");
     }
     Ok(())
+}
+
+fn validate_custom_theme(theme: &CustomThemeConfig) -> Result<(), String> {
+    for (value, label) in [
+        (&theme.window_color, "窗口背景"),
+        (&theme.panel_color, "卡片与面板"),
+        (&theme.field_color, "输入框"),
+        (&theme.text_color, "主文字"),
+        (&theme.muted_color, "次要文字"),
+        (&theme.accent_color, "强调色"),
+        (&theme.selection_color, "选中项背景"),
+        (&theme.border_color, "边框"),
+    ] {
+        validate_hex_color(value, &format!("皮肤 {} 的{label}", theme.name))?;
+    }
+
+    validate_range(theme.window_opacity, 70, 100, &theme.name, "窗口透明度")?;
+    validate_range(theme.blur_px, 0, 40, &theme.name, "背景模糊")?;
+    validate_range(theme.shadow_percent, 0, 80, &theme.name, "阴影强度")?;
+    validate_range(theme.wallpaper_opacity, 0, 60, &theme.name, "背景图强度")?;
+    validate_range(theme.radius_px, 0, 28, &theme.name, "圆角")?;
+    validate_range(theme.font_size_px, 12, 18, &theme.name, "字体大小")?;
+    if !(620..=900).contains(&theme.launcher_width_px) {
+        return Err(format!(
+            "皮肤 {} 的启动器宽度必须在 620–900 px 之间",
+            theme.name
+        ));
+    }
+    if !matches!(theme.font_family.as_str(), "system" | "cjk" | "mono") {
+        return Err(format!("皮肤 {} 的字体族无效", theme.name));
+    }
+    if !matches!(
+        theme.result_density.as_str(),
+        "compact" | "comfortable" | "loose"
+    ) {
+        return Err(format!("皮肤 {} 的结果密度无效", theme.name));
+    }
+    if !matches!(theme.max_results, 6 | 8 | 10 | 12) {
+        return Err(format!(
+            "皮肤 {} 最多只能显示 6、8、10 或 12 项结果",
+            theme.name
+        ));
+    }
+    validate_range(theme.icon_size_px, 28, 48, &theme.name, "图标尺寸")?;
+    validate_range(
+        theme.platform_overrides.windows_blur_px,
+        0,
+        40,
+        &theme.name,
+        "Windows 模糊",
+    )?;
+    validate_range(
+        theme.platform_overrides.windows_opacity,
+        70,
+        100,
+        &theme.name,
+        "Windows 透明度",
+    )?;
+    validate_range(
+        theme.platform_overrides.macos_blur_px,
+        0,
+        40,
+        &theme.name,
+        "macOS 模糊",
+    )?;
+    validate_range(
+        theme.platform_overrides.macos_opacity,
+        70,
+        100,
+        &theme.name,
+        "macOS 透明度",
+    )?;
+    validate_wallpaper_data_url(&theme.wallpaper_data_url, &theme.name)
+}
+
+fn validate_hex_color(value: &str, label: &str) -> Result<(), String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7 || bytes[0] != b'#' || !bytes[1..].iter().all(u8::is_ascii_hexdigit) {
+        return Err(format!("{label}必须是 #RRGGBB 格式"));
+    }
+    Ok(())
+}
+
+fn validate_range<T>(
+    value: T,
+    minimum: T,
+    maximum: T,
+    name: &str,
+    label: &str,
+) -> Result<(), String>
+where
+    T: PartialOrd + std::fmt::Display,
+{
+    if value < minimum || value > maximum {
+        return Err(format!(
+            "皮肤 {name} 的{label}必须在 {minimum}–{maximum} 之间"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    let payload = [
+        "data:image/png;base64,",
+        "data:image/jpeg;base64,",
+        "data:image/webp;base64,",
+    ]
+    .iter()
+    .find_map(|prefix| value.strip_prefix(prefix))
+    .ok_or_else(|| format!("皮肤 {name} 的背景图只允许 PNG、JPEG 或 WebP"))?;
+    if payload.is_empty() || payload.len() % 4 != 0 {
+        return Err(format!("皮肤 {name} 的背景图数据无效"));
+    }
+    let padding = if payload.ends_with("==") {
+        2
+    } else if payload.ends_with('=') {
+        1
+    } else {
+        0
+    };
+    let content_len = payload.len() - padding;
+    if !payload[..content_len]
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        || !payload[content_len..].bytes().all(|byte| byte == b'=')
+    {
+        return Err(format!("皮肤 {name} 的背景图数据无效"));
+    }
+    let last_sextet = payload[..content_len]
+        .bytes()
+        .next_back()
+        .and_then(base64_sextet)
+        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
+    if (padding == 2 && last_sextet & 0x0f != 0) || (padding == 1 && last_sextet & 0x03 != 0) {
+        return Err(format!("皮肤 {name} 的背景图数据无效"));
+    }
+    let decoded_bytes = payload
+        .len()
+        .checked_div(4)
+        .and_then(|groups| groups.checked_mul(3))
+        .and_then(|bytes| bytes.checked_sub(padding))
+        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
+    if decoded_bytes > MAX_THEME_WALLPAPER_BYTES {
+        return Err(format!("皮肤 {name} 的背景图不能超过 1.5 MB"));
+    }
+    Ok(())
+}
+
+fn base64_sextet(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => Some(byte - b'A'),
+        b'a'..=b'z' => Some(byte - b'a' + 26),
+        b'0'..=b'9' => Some(byte - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
 }
 
 fn validate_keyword_namespace(config: &AppConfig) -> Result<(), String> {
@@ -698,6 +973,43 @@ mod tests {
         }
     }
 
+    fn custom_theme(id: &str) -> CustomThemeConfig {
+        CustomThemeConfig {
+            id: id.into(),
+            name: "测试皮肤".into(),
+            window_color: "#0b1222".into(),
+            panel_color: "#101a30".into(),
+            field_color: "#161f39".into(),
+            text_color: "#f5f7ff".into(),
+            muted_color: "#91a0c7".into(),
+            accent_color: "#8a78ff".into(),
+            selection_color: "#302b63".into(),
+            border_color: "#343d5a".into(),
+            window_opacity: 94,
+            blur_px: 18,
+            shadow_percent: 45,
+            wallpaper_data_url: String::new(),
+            wallpaper_opacity: 18,
+            radius_px: 18,
+            font_family: "system".into(),
+            font_size_px: 14,
+            launcher_width_px: 720,
+            result_density: "comfortable".into(),
+            max_results: 8,
+            icon_size_px: 36,
+            show_source_badge: true,
+            platform_overrides: PlatformThemeOverrides::default(),
+        }
+    }
+
+    fn wallpaper_data_url(decoded_bytes: usize) -> String {
+        let encoded_len = 4 * ((decoded_bytes + 2) / 3);
+        let padding = (3 - decoded_bytes % 3) % 3;
+        let mut payload = "A".repeat(encoded_len - padding);
+        payload.push_str(&"=".repeat(padding));
+        format!("data:image/png;base64,{payload}")
+    }
+
     #[test]
     fn defaults_are_valid() {
         normalize_and_validate(AppConfig::default()).expect("default config should be valid");
@@ -713,6 +1025,10 @@ mod tests {
         let mut provider_change = original.clone();
         provider_change.web_searches[0].description = "更新后的说明".into();
         assert!(provider_settings_changed(&original, &provider_change));
+
+        let mut enabled_change = original.clone();
+        enabled_change.script_commands[0].enabled = false;
+        assert!(provider_settings_changed(&original, &enabled_change));
     }
 
     #[test]
@@ -828,6 +1144,82 @@ mod tests {
             migrated.script_commands[0].debounce_ms,
             default_script_debounce_ms()
         );
+    }
+
+    #[test]
+    fn migrates_v4_without_custom_themes() {
+        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
+        legacy["version"] = serde_json::json!(4);
+        legacy["appearance"]
+            .as_object_mut()
+            .expect("appearance object")
+            .remove("customThemes");
+
+        let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v4");
+        let migrated = normalize_and_validate(config).expect("migrate legacy v4");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(migrated.appearance.custom_themes.is_empty());
+        assert_eq!(migrated.appearance.theme, "midnight");
+    }
+
+    #[test]
+    fn validates_custom_theme_selection_and_ranges() {
+        let mut valid = AppConfig::default();
+        valid.appearance.theme = "custom:nebula".into();
+        valid.appearance.custom_themes.push(custom_theme("nebula"));
+        let normalized = normalize_and_validate(valid).expect("valid custom theme");
+        assert_eq!(normalized.appearance.max_results(), 8);
+        assert_eq!(normalized.appearance.launcher_width(), 720.0);
+
+        let mut differently_cased = AppConfig::default();
+        differently_cased.appearance.theme = "custom:NEBULA".into();
+        differently_cased
+            .appearance
+            .custom_themes
+            .push(custom_theme("nebula"));
+        let normalized = normalize_and_validate(differently_cased)
+            .expect("custom theme selection should be canonicalized");
+        assert_eq!(normalized.appearance.theme, "custom:nebula");
+
+        let mut missing = AppConfig::default();
+        missing.appearance.theme = "custom:missing".into();
+        assert!(normalize_and_validate(missing).is_err());
+
+        let mut invalid_color = AppConfig::default();
+        let mut theme = custom_theme("bad-color");
+        theme.text_color = "red".into();
+        invalid_color.appearance.custom_themes.push(theme);
+        assert!(normalize_and_validate(invalid_color).is_err());
+
+        let mut invalid_width = AppConfig::default();
+        let mut theme = custom_theme("bad-width");
+        theme.launcher_width_px = 901;
+        invalid_width.appearance.custom_themes.push(theme);
+        assert!(normalize_and_validate(invalid_width).is_err());
+
+        let mut remote_wallpaper = AppConfig::default();
+        let mut theme = custom_theme("bad-wallpaper");
+        theme.wallpaper_data_url = "https://example.com/background.png".into();
+        remote_wallpaper.appearance.custom_themes.push(theme);
+        assert!(normalize_and_validate(remote_wallpaper).is_err());
+    }
+
+    #[test]
+    fn enforces_wallpaper_decoded_byte_limit_and_base64_padding() {
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url(MAX_THEME_WALLPAPER_BYTES),
+            "边界皮肤"
+        )
+        .is_ok());
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url(MAX_THEME_WALLPAPER_BYTES + 1),
+            "超限皮肤"
+        )
+        .is_err());
+        assert!(validate_wallpaper_data_url("data:image/png;base64,A=AA", "错误填充").is_err());
+        assert!(validate_wallpaper_data_url("data:image/png;base64,AAA", "错误长度").is_err());
+        assert!(validate_wallpaper_data_url("data:image/png;base64,AB==", "非规范填充").is_err());
+        assert!(validate_wallpaper_data_url("data:image/png;base64,AAB=", "非规范尾位").is_err());
     }
 
     #[test]

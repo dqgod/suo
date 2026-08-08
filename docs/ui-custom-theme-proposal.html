@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="zh-CN" data-ui-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Suo 自定义皮肤 UI 方案</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --page: #091121;
+      --surface: #0d172a;
+      --surface-strong: #111d34;
+      --field: #151f38;
+      --text: #f2f5ff;
+      --muted: #94a1bf;
+      --subtle: #697792;
+      --line: rgba(139, 153, 190, .16);
+      --accent: #8a78ff;
+      --success: #65dca9;
+      --warning: #f2bf67;
+      --danger: #f28598;
+
+      --skin-window: #0b1325;
+      --skin-panel: #101b31;
+      --skin-field: #17213b;
+      --skin-text: #f5f7ff;
+      --skin-muted: #91a0c7;
+      --skin-accent: #8a78ff;
+      --skin-selection: #302b63;
+      --skin-border: #7b72bd;
+      --skin-radius: 18px;
+      --skin-opacity: .94;
+      --skin-blur: 18px;
+      --skin-shadow: .45;
+      --skin-font-size: 14px;
+      --skin-icon-size: 36px;
+      --skin-row-height: 58px;
+      --skin-width: 720px;
+      --skin-wallpaper-opacity: .18;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      padding: 28px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 10%, rgba(92, 71, 180, .2), transparent 28%),
+        radial-gradient(circle at 90% 90%, rgba(41, 132, 148, .12), transparent 30%),
+        #050a14;
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .settings-window {
+      width: min(1180px, 100%);
+      min-height: 760px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--page);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, .5);
+    }
+
+    .titlebar {
+      height: 52px;
+      padding: 0 17px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      background: #0c1528;
+    }
+    .brand, .title-actions, .toolbar, .theme-name, .preview-toolbar, .field-title, .inline-actions {
+      display: flex;
+      align-items: center;
+    }
+    .brand { gap: 9px; font-size: 13px; letter-spacing: .02em; }
+    .brand img { width: 28px; height: 28px; border-radius: 7px; }
+    .prototype-tag {
+      padding: 4px 8px;
+      border: 1px solid rgba(138, 120, 255, .2);
+      border-radius: 999px;
+      color: #bcb4f0;
+      background: rgba(138, 120, 255, .09);
+      font-size: 9px;
+    }
+    .title-actions { gap: 8px; }
+    .title-actions button, .toolbar button, .ghost, .primary, .subtle-button {
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .primary {
+      border-color: color-mix(in srgb, var(--accent) 65%, transparent) !important;
+      background: color-mix(in srgb, var(--accent) 36%, #161c35) !important;
+    }
+    .title-actions button:hover, .toolbar button:hover, .ghost:hover, .subtle-button:hover { background: rgba(133, 147, 184, .1); }
+
+    .layout { display: grid; grid-template-columns: 156px minmax(0, 1fr); min-height: 708px; }
+    aside {
+      padding: 18px 12px;
+      border-right: 1px solid var(--line);
+      background: #0a1120;
+    }
+    aside button {
+      width: 100%;
+      margin-bottom: 4px;
+      padding: 10px 11px;
+      border: 0;
+      border-radius: 8px;
+      color: var(--subtle);
+      background: transparent;
+      text-align: left;
+      font-size: 12px;
+    }
+    aside button.active { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    main { min-width: 0; padding: 26px 28px 38px; }
+
+    .heading { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 21px; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    .heading p { margin: 0; color: var(--subtle); font-size: 11px; }
+    .toolbar { align-self: flex-start; gap: 8px; }
+    .toolbar button { font-size: 10px; }
+
+    .section-title { margin: 0 0 10px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    .theme-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .theme-card {
+      position: relative;
+      min-width: 0;
+      padding: 7px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      color: inherit;
+      background: var(--surface);
+      text-align: left;
+      cursor: pointer;
+      transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+    }
+    .theme-card:hover { transform: translateY(-2px); border-color: rgba(138, 120, 255, .42); }
+    .theme-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(138, 120, 255, .11); }
+    .theme-card.selected::after {
+      content: "✓";
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      display: grid;
+      width: 19px;
+      height: 19px;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: var(--accent);
+      font-size: 10px;
+    }
+    .theme-swatch {
+      position: relative;
+      display: block;
+      height: 70px;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #0a1222;
+    }
+    .theme-swatch::before {
+      content: "";
+      position: absolute;
+      left: 11%; right: 11%; top: 16px;
+      height: 37px;
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 8px;
+      box-shadow: 0 7px 15px rgba(0,0,0,.25);
+    }
+    .theme-swatch::after {
+      content: "";
+      position: absolute;
+      left: 22%; right: 22%; top: 27px;
+      height: 5px;
+      border-radius: 5px;
+    }
+    .swatch-midnight { background: linear-gradient(145deg, #07101f, #19223c); }
+    .swatch-midnight::before { background: #0d172b; }
+    .swatch-midnight::after { background: #8a78ff; }
+    .swatch-paper { background: linear-gradient(145deg, #d8d2c6, #f0eee8); }
+    .swatch-paper::before { border-color: rgba(40,46,58,.12); background: #fffefa; }
+    .swatch-paper::after { background: #5c63dc; }
+    .swatch-forest { background: linear-gradient(145deg, #06140e, #17392b); }
+    .swatch-forest::before { background: #0c2118; }
+    .swatch-forest::after { background: #62d89c; }
+    .swatch-custom {
+      background:
+        radial-gradient(circle at 70% 25%, rgba(114, 221, 235, .4), transparent 32%),
+        radial-gradient(circle at 20% 80%, rgba(139, 104, 255, .52), transparent 38%),
+        #090e1b;
+    }
+    .swatch-custom::before { border-color: rgba(173,169,255,.25); background: rgba(13, 20, 40, .88); }
+    .swatch-custom::after { background: linear-gradient(90deg, #9b7cff, #6ee2e5); }
+    .theme-name { justify-content: space-between; padding: 9px 4px 2px; gap: 7px; }
+    .theme-name strong { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .theme-name small { color: var(--subtle); font-size: 8px; white-space: nowrap; }
+
+    .editor-layout { display: grid; grid-template-columns: minmax(360px, .92fr) minmax(370px, 1.08fr); gap: 16px; margin-top: 18px; }
+    .panel {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+    }
+    .panel-head { padding: 14px 15px 12px; border-bottom: 1px solid var(--line); }
+    .panel-head strong { display: block; margin-bottom: 4px; font-size: 13px; }
+    .panel-head small { color: var(--subtle); font-size: 9px; }
+    .tabs { display: flex; gap: 4px; margin: 0 15px; padding: 4px; border-radius: 9px; background: #091224; transform: translateY(10px); }
+    .tabs button {
+      flex: 1;
+      padding: 7px 6px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--subtle);
+      background: transparent;
+      font-size: 9px;
+      cursor: pointer;
+    }
+    .tabs button.active { color: var(--text); background: var(--surface-strong); }
+    .tab-panel { display: none; padding: 22px 15px 15px; }
+    .tab-panel.active { display: block; }
+    .control-group { overflow: hidden; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; }
+    .control-group:last-child { margin-bottom: 0; }
+    .control-group h3 { margin: 0; padding: 10px 11px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 600; }
+    .control-row {
+      min-height: 52px;
+      padding: 9px 11px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      border-bottom: 1px solid rgba(139,153,190,.1);
+    }
+    .control-row:last-child { border-bottom: 0; }
+    .field-title { gap: 6px; }
+    .field-copy strong { display: block; font-size: 10px; font-weight: 600; }
+    .field-copy small { display: block; margin-top: 4px; color: var(--subtle); font-size: 8px; }
+    .color-field { display: flex; align-items: center; gap: 7px; }
+    input[type="color"] { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--field); cursor: pointer; }
+    .hex { width: 70px; padding: 6px 7px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--field); font-size: 9px; }
+    input[type="range"] { width: 112px; accent-color: var(--accent); }
+    .range-field { display: flex; align-items: center; gap: 7px; }
+    .range-value { min-width: 42px; color: var(--muted); font-size: 9px; text-align: right; }
+    select, .text-field {
+      height: 30px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--text);
+      background: var(--field);
+      font-size: 9px;
+    }
+    .text-field { width: 118px; }
+    .segmented { display: flex; gap: 3px; padding: 3px; border-radius: 8px; background: #091224; }
+    .segmented button { padding: 5px 7px; border: 0; border-radius: 6px; color: var(--subtle); background: transparent; font-size: 8px; cursor: pointer; }
+    .segmented button.active { color: var(--text); background: var(--surface-strong); }
+    .switch { position: relative; width: 34px; height: 19px; }
+    .switch input { position: absolute; opacity: 0; }
+    .switch span { display: block; width: 100%; height: 100%; border-radius: 999px; background: #29334a; transition: .16s; cursor: pointer; }
+    .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: #97a3bb; transition: .16s; }
+    .switch input:checked + span { background: color-mix(in srgb, var(--accent) 58%, #252e45); }
+    .switch input:checked + span::after { left: 18px; background: white; }
+    .wallpaper-picker { padding: 10px 11px; }
+    .drop-zone {
+      padding: 13px;
+      border: 1px dashed rgba(139,153,190,.25);
+      border-radius: 8px;
+      color: var(--subtle);
+      background: rgba(8,14,28,.32);
+      font-size: 8px;
+      text-align: center;
+      cursor: pointer;
+    }
+    .drop-zone b { display: block; margin-bottom: 4px; color: var(--muted); font-size: 9px; }
+
+    .preview-panel { position: sticky; top: 12px; align-self: start; }
+    .preview-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .preview-toolbar { gap: 6px; }
+    .preview-toolbar .segmented button { min-width: 48px; }
+    .contrast {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--success);
+      font-size: 8px;
+    }
+    .contrast i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+    .preview-canvas {
+      min-height: 470px;
+      padding: 28px 16px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(5, 10, 19, .26), rgba(5, 10, 19, .26)),
+        radial-gradient(circle at 25% 20%, #456487, transparent 34%),
+        radial-gradient(circle at 72% 72%, #4d376f, transparent 36%),
+        #142136;
+    }
+    .launcher-preview {
+      position: relative;
+      width: min(var(--skin-width), 100%);
+      max-width: 100%;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--skin-border) 50%, transparent);
+      border-radius: var(--skin-radius);
+      color: var(--skin-text);
+      background: color-mix(in srgb, var(--skin-window) calc(var(--skin-opacity) * 100%), transparent);
+      box-shadow: 0 22px 55px rgba(0,0,0,var(--skin-shadow));
+      backdrop-filter: blur(var(--skin-blur));
+      font-size: var(--skin-font-size);
+      isolation: isolate;
+    }
+    .launcher-preview::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      opacity: var(--skin-wallpaper-opacity);
+      background:
+        var(--uploaded-wallpaper, none),
+        radial-gradient(circle at 76% 22%, #6ae4e2, transparent 31%),
+        radial-gradient(circle at 20% 90%, #9d77ff, transparent 42%);
+      background-size: cover;
+      background-position: center;
+    }
+    .preview-search-wrap { padding: 12px; }
+    .preview-search {
+      height: 48px;
+      padding: 0 13px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid color-mix(in srgb, var(--skin-accent) 68%, transparent);
+      border-radius: calc(var(--skin-radius) * .62);
+      background: color-mix(in srgb, var(--skin-field) 92%, transparent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--skin-accent) 11%, transparent);
+    }
+    .search-icon { width: 15px; height: 15px; border: 2px solid var(--skin-muted); border-radius: 50%; position: relative; }
+    .search-icon::after { content: ""; position: absolute; width: 6px; height: 2px; right: -5px; bottom: -2px; border-radius: 2px; background: var(--skin-muted); transform: rotate(45deg); }
+    .preview-search span { color: var(--skin-text); font-weight: 540; }
+    .preview-search kbd { margin-left: auto; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--skin-border) 35%, transparent); border-radius: 6px; color: var(--skin-muted); background: color-mix(in srgb, var(--skin-panel) 80%, transparent); font-size: 8px; }
+    .provider { padding: 0 15px 9px; display: flex; justify-content: space-between; color: var(--skin-muted); font-size: 8px; }
+    .provider b { color: var(--success); font-weight: 500; }
+    .results { padding: 5px 8px 9px; border-top: 1px solid color-mix(in srgb, var(--skin-border) 18%, transparent); }
+    .result {
+      min-height: var(--skin-row-height);
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-radius: calc(var(--skin-radius) * .5);
+    }
+    .result.selected { background: var(--skin-selection); }
+    .result img { width: var(--skin-icon-size); height: var(--skin-icon-size); border-radius: calc(var(--skin-radius) * .36); }
+    .result-copy { min-width: 0; flex: 1; }
+    .result-copy strong { display: block; margin-bottom: 4px; font-size: .82em; }
+    .result-copy small { display: block; overflow: hidden; color: var(--skin-muted); font-size: .6em; text-overflow: ellipsis; white-space: nowrap; }
+    .source-tag { padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--skin-border) 24%, transparent); border-radius: 5px; color: var(--skin-muted); font-size: 7px; }
+    .preview-footer { padding: 9px 13px; display: flex; justify-content: space-between; border-top: 1px solid color-mix(in srgb, var(--skin-border) 18%, transparent); color: var(--skin-muted); font-size: 7px; }
+    .preview-footer span:first-child { word-spacing: 8px; }
+    .settings-mini { display: none; width: min(470px, 100%); height: 340px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--skin-border) 50%, transparent); border-radius: var(--skin-radius); color: var(--skin-text); background: var(--skin-window); box-shadow: 0 22px 55px rgba(0,0,0,var(--skin-shadow)); font-size: 9px; }
+    .settings-mini .mini-title { height: 38px; padding: 0 12px; display: flex; align-items: center; border-bottom: 1px solid color-mix(in srgb, var(--skin-border) 18%, transparent); background: var(--skin-panel); }
+    .settings-mini .mini-body { display: grid; grid-template-columns: 90px 1fr; height: calc(100% - 38px); }
+    .settings-mini .mini-nav { padding: 12px 8px; border-right: 1px solid color-mix(in srgb, var(--skin-border) 18%, transparent); color: var(--skin-muted); }
+    .settings-mini .mini-nav div { padding: 7px; border-radius: 6px; }
+    .settings-mini .mini-nav .active { color: var(--skin-text); background: var(--skin-selection); }
+    .settings-mini .mini-content { padding: 17px; }
+    .mini-line { width: 48%; height: 7px; margin-bottom: 8px; border-radius: 6px; background: var(--skin-muted); opacity: .55; }
+    .mini-card { margin-top: 18px; padding: 12px; border: 1px solid color-mix(in srgb, var(--skin-border) 22%, transparent); border-radius: calc(var(--skin-radius) * .55); background: var(--skin-panel); }
+    .mini-row { height: 38px; border-bottom: 1px solid color-mix(in srgb, var(--skin-border) 16%, transparent); }
+    .mini-row:last-child { border: 0; }
+    .preview-panel[data-preview="settings"] .launcher-preview { display: none; }
+    .preview-panel[data-preview="settings"] .settings-mini { display: block; }
+    .preview-note { padding: 10px 13px; border-top: 1px solid var(--line); color: var(--subtle); font-size: 8px; line-height: 1.6; }
+    .panel-footer { padding: 12px 15px; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); }
+    .panel-footer span { color: var(--subtle); font-size: 8px; }
+    .inline-actions { gap: 7px; }
+    .inline-actions button { height: 29px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; font-size: 8px; cursor: pointer; }
+    .inline-actions .apply { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+    .proposal-notes {
+      width: min(1180px, 100%);
+      margin: 15px auto 0;
+      padding: 14px 17px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 15px;
+      border: 1px solid rgba(139,153,190,.12);
+      border-radius: 13px;
+      color: #7f8ca7;
+      background: rgba(9,17,33,.74);
+      font-size: 9px;
+      line-height: 1.55;
+    }
+    .proposal-notes strong { display: block; margin-bottom: 4px; color: #b9c2d8; font-size: 9px; }
+    .toast { position: fixed; right: 24px; bottom: 24px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: #101a30; box-shadow: 0 14px 35px rgba(0,0,0,.35); font-size: 9px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 980px) {
+      body { padding: 14px; }
+      .layout { grid-template-columns: 130px minmax(0, 1fr); }
+      main { padding: 22px 19px; }
+      .editor-layout { grid-template-columns: 1fr; }
+      .preview-panel { position: static; }
+      .proposal-notes { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 680px) {
+      body { padding: 0; }
+      .settings-window { border-radius: 0; }
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      .heading { flex-direction: column; }
+      .toolbar { flex-wrap: wrap; }
+      .theme-grid { grid-template-columns: 1fr 1fr; }
+      .editor-layout { display: block; }
+      .preview-panel { margin-top: 12px; }
+      .proposal-notes { grid-template-columns: 1fr; border-radius: 0; }
+    }
+  </style>
+</head>
+<body>
+  <section class="settings-window">
+    <header class="titlebar">
+      <div class="brand"><img src="../src-tauri/icons/icon.png" alt="" /><strong>Suo 设置</strong><span class="prototype-tag">自定义皮肤交互原型</span></div>
+      <div class="title-actions"><button type="button" id="saveAll" class="primary">保存设置</button></div>
+    </header>
+
+    <div class="layout">
+      <aside>
+        <button type="button">通用</button>
+        <button type="button">搜索与索引</button>
+        <button type="button">命令与服务</button>
+        <button type="button" class="active">外观</button>
+      </aside>
+
+      <main>
+        <div class="heading">
+          <div><h1>外观</h1><p>选择内置皮肤，或创建一套可导入、导出并跨平台使用的自定义皮肤。</p></div>
+          <div class="toolbar">
+            <input id="importInput" type="file" accept="application/json" hidden />
+            <button type="button" id="importTheme">导入皮肤</button>
+            <button type="button" id="exportTheme">导出 JSON</button>
+            <button type="button" id="newTheme" class="primary">＋ 新建自定义</button>
+          </div>
+        </div>
+
+        <h2 class="section-title">皮肤库</h2>
+        <div class="theme-grid" role="list">
+          <button class="theme-card" type="button" data-theme="midnight"><span class="theme-swatch swatch-midnight"></span><span class="theme-name"><strong>午夜</strong><small>内置</small></span></button>
+          <button class="theme-card" type="button" data-theme="paper"><span class="theme-swatch swatch-paper"></span><span class="theme-name"><strong>纸张</strong><small>内置</small></span></button>
+          <button class="theme-card" type="button" data-theme="forest"><span class="theme-swatch swatch-forest"></span><span class="theme-name"><strong>森林</strong><small>内置</small></span></button>
+          <button class="theme-card selected" type="button" data-theme="custom"><span class="theme-swatch swatch-custom"></span><span class="theme-name"><strong>我的星云</strong><small>自定义</small></span></button>
+        </div>
+
+        <div class="editor-layout">
+          <section class="panel editor-panel">
+            <div class="panel-head"><strong>编辑“我的星云”</strong><small>所有修改只在右侧预览；点击“应用皮肤”后再进入页面草稿。</small></div>
+            <div class="tabs" role="tablist">
+              <button type="button" class="active" data-tab="colors">颜色与材质</button>
+              <button type="button" data-tab="layout">布局与组件</button>
+              <button type="button" data-tab="platform">平台覆盖</button>
+            </div>
+
+            <div class="tab-panel active" id="colors">
+              <div class="control-group">
+                <h3>主要颜色</h3>
+                <div class="control-row"><span class="field-copy"><strong>窗口背景</strong><small>启动器和设置页底色</small></span><span class="color-field"><input type="color" data-var="--skin-window" value="#0b1325" /><input class="hex" value="#0b1325" data-hex="--skin-window" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>卡片与面板</strong><small>结果、侧栏和设置卡片</small></span><span class="color-field"><input type="color" data-var="--skin-panel" value="#101b31" /><input class="hex" value="#101b31" data-hex="--skin-panel" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>输入框</strong><small>搜索框与表单控件</small></span><span class="color-field"><input type="color" data-var="--skin-field" value="#17213b" /><input class="hex" value="#17213b" data-hex="--skin-field" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>强调色</strong><small>焦点、光标和选中状态</small></span><span class="color-field"><input type="color" data-var="--skin-accent" value="#8a78ff" /><input class="hex" value="#8a78ff" data-hex="--skin-accent" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>选中项背景</strong><small>键盘选中的结果行</small></span><span class="color-field"><input type="color" data-var="--skin-selection" value="#302b63" /><input class="hex" value="#302b63" data-hex="--skin-selection" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>主文字</strong><small>标题和主要内容</small></span><span class="color-field"><input type="color" data-var="--skin-text" value="#f5f7ff" /><input class="hex" value="#f5f7ff" data-hex="--skin-text" /></span></div>
+                <div class="control-row"><span class="field-copy"><strong>次要文字</strong><small>路径、提示和状态</small></span><span class="color-field"><input type="color" data-var="--skin-muted" value="#91a0c7" /><input class="hex" value="#91a0c7" data-hex="--skin-muted" /></span></div>
+              </div>
+
+              <div class="control-group">
+                <h3>材质</h3>
+                <div class="control-row"><span class="field-copy"><strong>窗口透明度</strong><small>建议保持在 85% 以上</small></span><span class="range-field"><input type="range" min="70" max="100" value="94" data-range="opacity" /><span class="range-value" data-value="opacity">94%</span></span></div>
+                <div class="control-row"><span class="field-copy"><strong>背景模糊</strong><small>不同系统会使用对应材质</small></span><span class="range-field"><input type="range" min="0" max="40" value="18" data-range="blur" /><span class="range-value" data-value="blur">18 px</span></span></div>
+                <div class="wallpaper-picker">
+                  <input id="wallpaperInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                  <div class="drop-zone" id="wallpaperPicker"><b>选择本地背景图</b>PNG / JPEG / WebP，仅保存本地路径，不上传</div>
+                </div>
+                <div class="control-row"><span class="field-copy"><strong>背景图强度</strong><small>避免影响文字可读性</small></span><span class="range-field"><input type="range" min="0" max="60" value="18" data-range="wallpaper" /><span class="range-value" data-value="wallpaper">18%</span></span></div>
+              </div>
+            </div>
+
+            <div class="tab-panel" id="layout">
+              <div class="control-group">
+                <h3>窗口</h3>
+                <div class="control-row"><span class="field-copy"><strong>窗口宽度</strong><small>启动器展开后的默认宽度</small></span><span class="range-field"><input type="range" min="620" max="900" value="720" data-range="width" /><span class="range-value" data-value="width">720 px</span></span></div>
+                <div class="control-row"><span class="field-copy"><strong>窗口圆角</strong><small>同时作用于启动器和设置窗口</small></span><span class="range-field"><input type="range" min="0" max="28" value="18" data-range="radius" /><span class="range-value" data-value="radius">18 px</span></span></div>
+                <div class="control-row"><span class="field-copy"><strong>阴影强度</strong><small>透明窗口的外部投影</small></span><span class="range-field"><input type="range" min="0" max="80" value="45" data-range="shadow" /><span class="range-value" data-value="shadow">45%</span></span></div>
+              </div>
+              <div class="control-group">
+                <h3>内容密度</h3>
+                <div class="control-row"><span class="field-copy"><strong>结果密度</strong><small>控制每一行结果的高度</small></span><span class="segmented" data-segment="density"><button type="button" data-value="compact">紧凑</button><button type="button" data-value="comfortable" class="active">舒适</button><button type="button" data-value="loose">宽松</button></span></div>
+                <div class="control-row"><span class="field-copy"><strong>字体大小</strong><small>界面基础字号</small></span><span class="range-field"><input type="range" min="12" max="18" value="14" data-range="font" /><span class="range-value" data-value="font">14 px</span></span></div>
+                <div class="control-row"><span class="field-copy"><strong>图标尺寸</strong><small>应用和文件结果图标</small></span><span class="range-field"><input type="range" min="28" max="48" value="36" data-range="icon" /><span class="range-value" data-value="icon">36 px</span></span></div>
+                <div class="control-row"><span class="field-copy"><strong>最多显示结果</strong><small>超出部分继续滚动</small></span><select><option>6 项</option><option selected>8 项</option><option>10 项</option><option>12 项</option></select></div>
+                <div class="control-row"><span class="field-copy"><strong>显示来源标签</strong><small>例如“应用”“文件”“脚本”</small></span><label class="switch"><input type="checkbox" checked id="sourceToggle" /><span></span></label></div>
+              </div>
+              <div class="control-group">
+                <h3>字体</h3>
+                <div class="control-row"><span class="field-copy"><strong>字体族</strong><small>首版提供安全的系统字体栈</small></span><select><option>系统默认</option><option>苹方 / 微软雅黑</option><option>等宽字体</option></select></div>
+              </div>
+            </div>
+
+            <div class="tab-panel" id="platform">
+              <div class="control-group">
+                <h3>平台覆盖值</h3>
+                <div class="control-row"><span class="field-copy"><strong>启用平台差异</strong><small>默认一套皮肤在 Windows 与 macOS 共用</small></span><label class="switch"><input type="checkbox" id="platformToggle" /><span></span></label></div>
+                <div class="control-row"><span class="field-copy"><strong>Windows 材质</strong><small>不可用时回退普通透明背景</small></span><select disabled data-platform-control><option>Mica</option><option>Acrylic</option><option selected>普通透明</option></select></div>
+                <div class="control-row"><span class="field-copy"><strong>macOS 材质</strong><small>对应 NSVisualEffectView</small></span><select disabled data-platform-control><option selected>HUD Window</option><option>Popover</option><option>Sidebar</option></select></div>
+              </div>
+              <div class="control-group">
+                <h3>安全边界</h3>
+                <div class="control-row"><span class="field-copy"><strong>自动修正低对比度</strong><small>保存时调整次要文字与选中项颜色</small></span><label class="switch"><input type="checkbox" checked /><span></span></label></div>
+                <div class="control-row"><span class="field-copy"><strong>透明区域接收点击</strong><small>默认关闭，避免圆角外出现隐形点击层</small></span><label class="switch"><input type="checkbox" /><span></span></label></div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <span>内置皮肤不会被覆盖；编辑时自动生成自定义副本。</span>
+              <div class="inline-actions"><button type="button" id="resetTheme">恢复默认</button><button type="button" class="apply" id="applyTheme">应用皮肤</button></div>
+            </div>
+          </section>
+
+          <section class="panel preview-panel" data-preview="launcher">
+            <div class="preview-head">
+              <div class="preview-toolbar"><span class="segmented" data-segment="preview"><button type="button" class="active" data-value="launcher">启动器</button><button type="button" data-value="settings">设置页</button></span></div>
+              <span class="contrast" id="contrastStatus"><i></i><span>文字对比度 AA</span></span>
+            </div>
+            <div class="preview-canvas">
+              <div class="launcher-preview">
+                <div class="preview-search-wrap"><div class="preview-search"><i class="search-icon"></i><span>微信</span><kbd>Alt + Space</kbd></div></div>
+                <div class="provider"><span><b>●</b>　本地应用 + 限定目录索引</span><span>重建索引</span></div>
+                <div class="results">
+                  <div class="result selected"><img src="../src-tauri/icons/icon.png" alt="" /><span class="result-copy"><strong>微信</strong><small>C:\Program Files\Tencent\WeChat\WeChat.exe</small></span><span class="source-tag">应用</span></div>
+                  <div class="result"><span style="display:grid;place-items:center;width:var(--skin-icon-size);height:var(--skin-icon-size);border-radius:calc(var(--skin-radius)*.36);background:var(--skin-panel);color:var(--skin-accent);font-size:12px">文</span><span class="result-copy"><strong>微信产品需求.md</strong><small>D:\Documents\产品资料\微信产品需求.md</small></span><span class="source-tag">文件</span></div>
+                  <div class="result"><span style="display:grid;place-items:center;width:var(--skin-icon-size);height:var(--skin-icon-size);border-radius:calc(var(--skin-radius)*.36);background:var(--skin-panel);color:var(--skin-accent);font-size:12px">⌘</span><span class="result-copy"><strong>微信开发者文档</strong><small>在默认浏览器中搜索</small></span><span class="source-tag">网络搜索</span></div>
+                </div>
+                <div class="preview-footer"><span>↑↓ 选择　↵ 打开</span><span>Alt+Space 已就绪</span></div>
+              </div>
+
+              <div class="settings-mini">
+                <div class="mini-title">◇　Suo 设置</div>
+                <div class="mini-body"><div class="mini-nav"><div>通用</div><div>搜索与索引</div><div>命令与服务</div><div class="active">外观</div></div><div class="mini-content"><div class="mini-line"></div><div class="mini-line" style="width:72%;opacity:.28"></div><div class="mini-card"><div class="mini-row"></div><div class="mini-row"></div><div class="mini-row"></div></div></div></div>
+              </div>
+            </div>
+            <div class="preview-note">实时预览同时覆盖启动器和设置窗口。切换系统平台只改变材质实现，不改变皮肤的核心颜色与布局。</div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <section class="proposal-notes" aria-label="设计说明">
+    <div><strong>内置皮肤只读</strong>修改内置皮肤时自动复制为自定义项，避免用户无法回到官方默认值。</div>
+    <div><strong>实时预览，不即时保存</strong>编辑只影响预览；“应用皮肤”更新页面草稿，右上角“保存设置”才持久化。</div>
+    <div><strong>安全导入</strong>JSON 只允许声明颜色、尺寸和本地资源路径；校验 schema、版本、字段范围，不运行代码。</div>
+    <div><strong>控制复杂度</strong>常用颜色和材质放在第一个页签；密度、组件和平台覆盖按需进入，不一次性铺满页面。</div>
+  </section>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const root = document.documentElement;
+    const toast = document.getElementById('toast');
+    let toastTimer;
+    const showToast = (message) => {
+      toast.textContent = message;
+      toast.classList.add('visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('visible'), 1800);
+    };
+
+    const defaults = {
+      '--skin-window': '#0b1325', '--skin-panel': '#101b31', '--skin-field': '#17213b',
+      '--skin-text': '#f5f7ff', '--skin-muted': '#91a0c7', '--skin-accent': '#8a78ff',
+      '--skin-selection': '#302b63', '--skin-radius': '18px', '--skin-opacity': '.94',
+      '--skin-blur': '18px', '--skin-shadow': '.45', '--skin-font-size': '14px',
+      '--skin-icon-size': '36px', '--skin-row-height': '58px', '--skin-width': '720px',
+      '--skin-wallpaper-opacity': '.18'
+    };
+
+    document.querySelectorAll('.tabs button').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.tabs button').forEach(item => item.classList.toggle('active', item === button));
+      document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.toggle('active', panel.id === button.dataset.tab));
+    }));
+
+    document.querySelectorAll('.theme-card').forEach(card => card.addEventListener('click', () => {
+      document.querySelectorAll('.theme-card').forEach(item => item.classList.toggle('selected', item === card));
+      if (card.dataset.theme !== 'custom') showToast(`“${card.querySelector('strong').textContent}”是只读内置皮肤；点击新建可复制后编辑`);
+      else showToast('已选择自定义皮肤“我的星云”');
+    }));
+
+    const updateContrast = () => {
+      const hexToRgb = value => [1, 3, 5].map(index => parseInt(value.slice(index, index + 2), 16));
+      const luminance = value => {
+        const channels = hexToRgb(value).map(channel => channel / 255).map(channel => channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+        return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
+      };
+      const text = getComputedStyle(root).getPropertyValue('--skin-text').trim();
+      const background = getComputedStyle(root).getPropertyValue('--skin-window').trim();
+      if (!/^#[0-9a-f]{6}$/i.test(text) || !/^#[0-9a-f]{6}$/i.test(background)) return;
+      const [bright, dark] = [luminance(text), luminance(background)].sort((a, b) => b - a);
+      const ratio = (bright + .05) / (dark + .05);
+      const status = document.getElementById('contrastStatus');
+      status.style.color = ratio >= 4.5 ? 'var(--success)' : 'var(--warning)';
+      status.querySelector('span').textContent = ratio >= 4.5 ? `文字对比度 AA · ${ratio.toFixed(1)}:1` : `对比度偏低 · ${ratio.toFixed(1)}:1`;
+    };
+
+    document.querySelectorAll('input[type="color"][data-var]').forEach(input => input.addEventListener('input', () => {
+      root.style.setProperty(input.dataset.var, input.value);
+      const hex = document.querySelector(`[data-hex="${input.dataset.var}"]`);
+      if (hex) hex.value = input.value;
+      updateContrast();
+    }));
+    document.querySelectorAll('[data-hex]').forEach(input => input.addEventListener('change', () => {
+      if (!/^#[0-9a-f]{6}$/i.test(input.value)) return showToast('请输入 6 位十六进制颜色，例如 #8a78ff');
+      root.style.setProperty(input.dataset.hex, input.value);
+      const picker = document.querySelector(`[data-var="${input.dataset.hex}"]`);
+      if (picker) picker.value = input.value;
+      updateContrast();
+    }));
+
+    const rangeMap = {
+      opacity: value => ['--skin-opacity', String(value / 100), `${value}%`],
+      blur: value => ['--skin-blur', `${value}px`, `${value} px`],
+      wallpaper: value => ['--skin-wallpaper-opacity', String(value / 100), `${value}%`],
+      width: value => ['--skin-width', `${value}px`, `${value} px`],
+      radius: value => ['--skin-radius', `${value}px`, `${value} px`],
+      shadow: value => ['--skin-shadow', String(value / 100), `${value}%`],
+      font: value => ['--skin-font-size', `${value}px`, `${value} px`],
+      icon: value => ['--skin-icon-size', `${value}px`, `${value} px`]
+    };
+    document.querySelectorAll('[data-range]').forEach(input => input.addEventListener('input', () => {
+      const [name, value, label] = rangeMap[input.dataset.range](Number(input.value));
+      root.style.setProperty(name, value);
+      document.querySelector(`[data-value="${input.dataset.range}"]`).textContent = label;
+    }));
+
+    document.querySelectorAll('[data-segment]').forEach(group => group.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+      group.querySelectorAll('button').forEach(item => item.classList.toggle('active', item === button));
+      if (group.dataset.segment === 'preview') document.querySelector('.preview-panel').dataset.preview = button.dataset.value;
+      if (group.dataset.segment === 'density') {
+        const heights = { compact: '48px', comfortable: '58px', loose: '68px' };
+        root.style.setProperty('--skin-row-height', heights[button.dataset.value]);
+      }
+    })));
+
+    document.getElementById('sourceToggle').addEventListener('change', event => document.querySelectorAll('.source-tag').forEach(tag => tag.style.display = event.target.checked ? '' : 'none'));
+    document.getElementById('platformToggle').addEventListener('change', event => document.querySelectorAll('[data-platform-control]').forEach(control => control.disabled = !event.target.checked));
+    document.getElementById('wallpaperPicker').addEventListener('click', () => document.getElementById('wallpaperInput').click());
+    document.getElementById('wallpaperInput').addEventListener('change', event => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      root.style.setProperty('--uploaded-wallpaper', `url("${URL.createObjectURL(file)}")`);
+      document.getElementById('wallpaperPicker').innerHTML = `<b>${file.name}</b>仅用于本地实时预览`;
+      showToast('已载入本地背景图');
+    });
+
+    document.getElementById('resetTheme').addEventListener('click', () => {
+      Object.entries(defaults).forEach(([name, value]) => root.style.setProperty(name, value));
+      root.style.removeProperty('--uploaded-wallpaper');
+      document.querySelectorAll('input[type="color"][data-var]').forEach(input => {
+        input.value = defaults[input.dataset.var];
+        document.querySelector(`[data-hex="${input.dataset.var}"]`).value = defaults[input.dataset.var];
+      });
+      showToast('已恢复“我的星云”默认值');
+      updateContrast();
+    });
+    document.getElementById('applyTheme').addEventListener('click', () => showToast('皮肤已应用到页面草稿'));
+    document.getElementById('saveAll').addEventListener('click', () => showToast('原型演示：正式功能将在这里保存'));
+    document.getElementById('newTheme').addEventListener('click', () => showToast('将复制当前皮肤，并进入名称编辑'));
+
+    document.getElementById('exportTheme').addEventListener('click', () => {
+      const style = getComputedStyle(root);
+      const theme = { schema: 'suo-theme-v1', name: '我的星云', colors: {}, platformOverrides: {} };
+      ['window','panel','field','text','muted','accent','selection'].forEach(key => theme.colors[key] = style.getPropertyValue(`--skin-${key}`).trim());
+      const blob = new Blob([JSON.stringify(theme, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob); link.download = '我的星云.suo-theme.json'; link.click(); URL.revokeObjectURL(link.href);
+      showToast('已导出示例皮肤 JSON');
+    });
+    document.getElementById('importTheme').addEventListener('click', () => document.getElementById('importInput').click());
+    document.getElementById('importInput').addEventListener('change', event => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const theme = JSON.parse(reader.result);
+          if (theme.schema !== 'suo-theme-v1' || !theme.colors) throw new Error('schema');
+          Object.entries(theme.colors).forEach(([key, value]) => {
+            if (/^#[0-9a-f]{6}$/i.test(value)) root.style.setProperty(`--skin-${key}`, value);
+          });
+          showToast(`已预览导入皮肤“${theme.name || '未命名'}”`); updateContrast();
+        } catch { showToast('导入失败：不是有效的 suo-theme-v1 文件'); }
+      };
+      reader.readAsText(file);
+    });
+    updateContrast();
+  </script>
+</body>
+</html>
