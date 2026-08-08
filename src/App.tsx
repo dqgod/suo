@@ -45,6 +45,12 @@ type IndexStatus = {
   indexedFileCount: number;
 };
 
+type NativeAppIcon = {
+  width: number;
+  height: number;
+  pixels: number[];
+};
+
 const initialResponse: SearchResponse = {
   query: "",
   provider: zhCN.loading,
@@ -68,12 +74,158 @@ const kindIcons: Record<string, string> = {
   error: "!",
 };
 
+const appIconCache = new Map<string, string | null>();
+const appIconRequests = new Map<string, Promise<string | null>>();
+const appIconCacheCapacity = 256;
+const appIconMaxConcurrent = 3;
+const appIconMaxQueued = 18;
+let appIconActiveRequests = 0;
+const appIconQueue: Array<{
+  task: () => Promise<NativeAppIcon | null>;
+  resolve: (icon: NativeAppIcon | null | undefined) => void;
+}> = [];
+
+function pumpAppIconQueue() {
+  while (appIconActiveRequests < appIconMaxConcurrent && appIconQueue.length) {
+    const job = appIconQueue.shift();
+    if (!job) return;
+    appIconActiveRequests += 1;
+    void job.task()
+      .then(job.resolve, () => job.resolve(null))
+      .finally(() => {
+        appIconActiveRequests -= 1;
+        pumpAppIconQueue();
+      });
+  }
+}
+
+function scheduleAppIconRequest(task: () => Promise<NativeAppIcon | null>) {
+  if (appIconQueue.length >= appIconMaxQueued) {
+    return Promise.resolve<NativeAppIcon | null | undefined>(undefined);
+  }
+  return new Promise<NativeAppIcon | null | undefined>((resolve) => {
+    appIconQueue.push({ task, resolve });
+    pumpAppIconQueue();
+  });
+}
+
+function nativeIconToDataUrl(icon: NativeAppIcon) {
+  if (
+    icon.width <= 0 ||
+    icon.height <= 0 ||
+    icon.pixels.length !== icon.width * icon.height * 4
+  ) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = icon.width;
+  canvas.height = icon.height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  const image = new ImageData(
+    Uint8ClampedArray.from(icon.pixels),
+    icon.width,
+    icon.height,
+  );
+  context.putImageData(image, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+function rememberAppIcon(path: string, icon: string | null) {
+  if (!appIconCache.has(path) && appIconCache.size >= appIconCacheCapacity) {
+    const oldest = appIconCache.keys().next().value;
+    if (oldest) appIconCache.delete(oldest);
+  }
+  appIconCache.set(path, icon);
+  return icon;
+}
+
+function loadAppIcon(resultId: string) {
+  if (appIconCache.has(resultId)) {
+    return Promise.resolve(appIconCache.get(resultId) ?? null);
+  }
+  const pending = appIconRequests.get(resultId);
+  if (pending) return pending;
+
+  const request = scheduleAppIconRequest(() =>
+    invoke<NativeAppIcon | null>("get_app_icon", { resultId }),
+  )
+    .then((icon) => {
+      if (icon === undefined) return null;
+      return rememberAppIcon(resultId, icon ? nativeIconToDataUrl(icon) : null);
+    })
+    .finally(() => appIconRequests.delete(resultId));
+  appIconRequests.set(resultId, request);
+  return request;
+}
+
+function ResultIcon({
+  result,
+  launcherVisible,
+}: {
+  result: SearchResult;
+  launcherVisible: boolean;
+}) {
+  const appResultId = result.kind === "app" ? result.id : null;
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const [inViewport, setInViewport] = useState(false);
+  const [icon, setIcon] = useState<string | null | undefined>(() =>
+    appResultId ? appIconCache.get(appResultId) : undefined,
+  );
+
+  useEffect(() => {
+    if (!launcherVisible || !appResultId) {
+      setInViewport(false);
+      return;
+    }
+    const element = containerRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setInViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setInViewport(entry.isIntersecting),
+      { root: element.closest(".results"), rootMargin: "12px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [appResultId, launcherVisible]);
+
+  useEffect(() => {
+    if (!launcherVisible || !inViewport || !appResultId) {
+      setIcon(undefined);
+      return;
+    }
+    if (appIconCache.has(appResultId)) {
+      setIcon(appIconCache.get(appResultId));
+      return;
+    }
+    let active = true;
+    void loadAppIcon(appResultId).then((next) => {
+      if (active) setIcon(next);
+    });
+    return () => {
+      active = false;
+    };
+  }, [appResultId, inViewport, launcherVisible]);
+
+  return (
+    <span
+      ref={containerRef}
+      className={`result-icon ${result.kind} ${icon ? "native-icon" : ""}`}
+      aria-hidden="true"
+    >
+      {icon ? <img src={icon} alt="" draggable={false} /> : kindIcons[result.kind] ?? "·"}
+    </span>
+  );
+}
+
 function Launcher() {
   const [query, setQuery] = useState("");
   const [response, setResponse] = useState<SearchResponse>(initialResponse);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [message, setMessage] = useState("");
   const [composing, setComposing] = useState(false);
+  const [launcherVisible, setLauncherVisible] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
@@ -159,9 +311,11 @@ function Launcher() {
 
   useEffect(() => {
     const shown = listen("launcher-shown", () => {
+      setLauncherVisible(true);
       window.setTimeout(() => inputRef.current?.focus(), 0);
     });
     const hidden = listen("launcher-hidden", () => {
+      setLauncherVisible(false);
       const queryCompleted = completedRequestIdRef.current === requestId.current;
       if (
         keepLastInputRef.current &&
@@ -390,9 +544,7 @@ function Launcher() {
               onMouseEnter={() => setSelectedIndex(index)}
               onClick={() => void activate(result)}
             >
-              <span className={`result-icon ${result.kind}`} aria-hidden="true">
-                {kindIcons[result.kind] ?? "·"}
-              </span>
+              <ResultIcon result={result} launcherVisible={launcherVisible} />
               <span className="result-copy">
                 <strong>{result.title}</strong>
                 <small>{result.subtitle}</small>

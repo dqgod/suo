@@ -1,3 +1,4 @@
+mod app_icon;
 mod calculator;
 mod catalog;
 mod config;
@@ -102,6 +103,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             launcher::app_version,
+            app_icon::get_app_icon,
             launcher::search_launcher,
             launcher::cancel_search,
             launcher::activate_result,

@@ -274,6 +274,19 @@ button {
   font-weight: 750;
 }
 
+.result-icon.native-icon {
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+}
+
+.result-icon.native-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .result-icon.file { background: linear-gradient(145deg, #e4a844, #bb7325); }
 .result-icon.calculator { background: linear-gradient(145deg, #2eb58e, #217a6d); }
 .result-icon.script { background: linear-gradient(145deg, #3d87be, #315d9e); font-size: 10px; }

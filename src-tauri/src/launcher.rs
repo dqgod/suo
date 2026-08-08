@@ -1,6 +1,10 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc, Mutex, RwLock,
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
 };
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
@@ -18,6 +22,7 @@ static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
 
 pub struct LauncherState {
     applications: RwLock<Vec<CatalogEntry>>,
+    application_paths: HashMap<String, PathBuf>,
     files: RwLock<Vec<CatalogEntry>>,
     indexing: AtomicBool,
     hotkey_status: RwLock<String>,
@@ -32,8 +37,19 @@ pub struct LauncherState {
 
 impl LauncherState {
     pub fn new() -> Self {
+        let applications = catalog::discover_applications();
+        let application_paths = applications
+            .iter()
+            .map(|entry| {
+                (
+                    format!("app:{}", entry.path.to_string_lossy()),
+                    entry.path.clone(),
+                )
+            })
+            .collect();
         Self {
-            applications: RwLock::new(catalog::discover_applications()),
+            applications: RwLock::new(applications),
+            application_paths,
             files: RwLock::new(Vec::new()),
             indexing: AtomicBool::new(false),
             hotkey_status: RwLock::new("正在注册默认快捷键".into()),
@@ -75,6 +91,10 @@ impl LauncherState {
 
     fn file_count(&self) -> usize {
         self.files.read().map(|files| files.len()).unwrap_or(0)
+    }
+
+    pub fn application_path_for_result_id(&self, result_id: &str) -> Option<PathBuf> {
+        self.application_paths.get(result_id).cloned()
     }
 
     fn search_is_cancelled(&self, generation: u64) -> bool {
@@ -689,7 +709,7 @@ where
         .map(|(score, entry)| {
             let path = entry.path.to_string_lossy().into_owned();
             SearchResult {
-                id: format!("{kind}:{}", entry.normalized_path),
+                id: format!("{kind}:{path}"),
                 title: entry.name.clone(),
                 subtitle: path.clone(),
                 kind: kind.into(),
