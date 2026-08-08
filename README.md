@@ -31,6 +31,9 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 网络搜索可在设置中增删改，校验 `{query}` 占位符及 HTTP/HTTPS URL，按 Enter 后才打开浏览器；
 - `fy hello` 使用 Microsoft Translator，支持 `fy:ja hello`，API Key 存入系统凭据库而非 JSON；
 - 提供午夜、纸张、森林三套主题和自定义强调色；
+- 应用搜索结果异步加载系统原生图标，并限制并发、缓存与可访问路径；
+- 命令、网络搜索和翻译服务采用摘要卡片，点击后展开编辑；每项支持可选描述；
+- 通用设置可开启“空输入时仅显示搜索框”；空查询收缩原生窗口，开始输入后恢复完整窗口；
 - `setting`、`settings` 或 `设置` 显示设置入口，按 Enter 打开设置窗口；
 - 设置保存到用户配置目录的 `config.json`，保存前校验命令关键字的全局唯一性；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
@@ -62,6 +65,35 @@ Rust 单元测试：
 Set-Location .\src-tauri
 cargo test
 ```
+
+### macOS Apple Silicon 首次验证
+
+macOS 代码路径已经接入，但尚未完成 Apple Silicon 实机验收。请在 `dev` 最新版本上先建立未修改基线：
+
+```bash
+git switch dev
+git pull --ff-only origin dev
+uname -m                    # 应为 arm64
+sw_vers
+pnpm install --frozen-lockfile
+pnpm build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+pnpm tauri build --no-bundle
+pnpm tauri build --bundles app
+file src-tauri/target/release/suo
+pnpm tauri dev
+```
+
+重点实测：
+
+- `Command+Space` 默认会与 macOS Spotlight 冲突：先确认冲突提示，再临时关闭或改绑系统 Spotlight 快捷键，重启 Suo 后验证唤起；
+- 菜单栏托盘菜单、Dock 图标、单实例、失焦/Esc、圆角透明窗口以及 Retina/多显示器定位；
+- “空输入时仅显示搜索框”开启后，原生窗口应真实收缩，不能留下透明点击区域；
+- `/Applications`、`/System/Applications`、`~/Applications` 中的 `.app` 搜索、原生图标与打开行为；
+- `f <关键词>` 的 Spotlight 搜索、快速输入取消、隐私权限提示和限定目录索引回退；
+- macOS Keychain 翻译凭据，以及 Python 3、Bash、可执行脚本的参数、超时与进程组终止。
+
+可直接运行的应用包位于 `src-tauri/target/release/bundle/macos/Suo.app`。当前阶段不要求签名、公证或 DMG 发布。给 macOS Codex 的完整检查边界和故障记录格式见 [AGENTS.md](./AGENTS.md#macos-apple-silicon-handoff)。
 
 ## 分支约定
 

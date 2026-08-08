@@ -18,20 +18,63 @@ Keep platform-independent contracts in shared Rust modules. Put Windows Everythi
 
 Use pnpm for JavaScript dependencies.
 
-```powershell
-pnpm install
+```text
+pnpm install --frozen-lockfile
 pnpm build
-pnpm tauri dev
-pnpm tauri build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
 ```
 
-Run Rust tests from `src-tauri`:
+Windows native commands should run from Visual Studio's Developer PowerShell so MSVC `link.exe` wins over Git for Windows tools:
 
 ```powershell
-cargo test
+pnpm tauri dev
+pnpm tauri build --no-bundle
 ```
 
 Before pushing, run the frontend build and Rust tests. When platform integration changes, also run the relevant desktop application and verify the real hotkey, focus, search, and process behavior.
+
+## macOS Apple Silicon Handoff
+
+The Windows technical baseline is verified; macOS source paths are implemented but still require the first Apple Silicon hardware pass. Work from `dev`, do not use `sudo`, and do not commit `node_modules/`, `dist/`, `target/`, `.app`, or `.dmg` artifacts.
+
+Record the environment first:
+
+```bash
+git switch dev
+git pull --ff-only origin dev
+uname -m
+sw_vers
+node --version
+pnpm --version
+rustc --version
+cargo --version
+xcode-select -p
+```
+
+`uname -m` should report `arm64`. Install Xcode Command Line Tools, Node.js 22+, pnpm 11+, and stable Rust if any command is missing. Then establish the unmodified baseline:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+pnpm tauri build --no-bundle
+pnpm tauri build --bundles app
+file src-tauri/target/release/suo
+pnpm tauri dev
+```
+
+Verify these behaviors on the real machine:
+
+- `Command+Space` registration and conflict reporting. macOS normally reserves it for Spotlight; first confirm Suo reports the conflict, then temporarily disable or remap the macOS Spotlight shortcut and restart Suo before testing successful invocation. The Suo hotkey recorder is not implemented yet.
+- The menu-bar tray icon, its Show/Settings/Quit menu, the Dock icon, single-instance wake-up, `Esc`, focus loss, and repeated show/hide behavior.
+- Rounded transparent launcher/settings windows on Retina scaling, with no square halo or invisible click region. Enable `Settings -> General -> 空输入时仅显示搜索框`; an empty query must shrink the native window to the search row, typing must restore the full window, and clearing must shrink it again.
+- Application discovery under `/Applications`, `/System/Applications`, and `~/Applications`; results should show native `.app` icons and open the selected application.
+- `f <name>` through `/usr/bin/mdfind -name`, including cancellation under rapid typing. Record any privacy prompt, timeout, or fallback to the Desktop/Documents/Downloads limited index; do not broaden protected-directory scanning just to silence a prompt.
+- Calculator, web search, and Microsoft Translator. Translation credentials must land in macOS Keychain and must never appear in logs, screenshots, fixtures, or commits.
+- Python (`python3` fallback), Bash, and executable script commands, including argv quoting, timeout/cancel process-group termination, and the `examples/timestamp.py` sample. Never run Suo or its script tests as root.
+- A locally built `.app` launched from `src-tauri/target/release/bundle/macos/Suo.app`. Signing, notarization, DMG distribution, automatic update, and login-at-startup are still outside the current MVP validation.
+
+For each failure, preserve the exact command, exit code, stderr, macOS version, architecture, and a screenshot when the issue is visual. Keep fixes platform-scoped behind `cfg(target_os = "macos")` where appropriate; do not weaken the verified Windows Everything, icon extraction, or Job Object paths. After a fix, rerun the frontend build, all Rust tests, the no-bundle build, and the affected real-app scenario. Update README status after the hardware pass; update the product requirements only if behavior or scope changes.
 
 ## Architecture Rules
 
