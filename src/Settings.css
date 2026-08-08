@@ -1,6 +1,9 @@
 .settings-stage {
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
   color: var(--text);
   background: var(--page);
 }
