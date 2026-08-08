@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::launcher::LauncherState;
 
-const CONFIG_VERSION: u32 = 2;
+const CONFIG_VERSION: u32 = 3;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -31,9 +31,11 @@ pub struct AppConfig {
 pub struct LauncherConfig {
     pub close_on_blur: bool,
     pub keep_last_input: bool,
+    #[serde(default)]
+    pub compact_when_empty: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslationConfig {
     pub enabled: bool,
@@ -48,7 +50,7 @@ pub struct TranslationConfig {
     pub chinese_target_language: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptCommandConfig {
     pub id: String,
@@ -65,7 +67,7 @@ pub struct ScriptCommandConfig {
     pub timeout_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ScriptRuntime {
     Python,
@@ -74,7 +76,7 @@ pub enum ScriptRuntime {
     Executable,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebSearchConfig {
     pub id: String,
@@ -122,6 +124,7 @@ impl Default for AppConfig {
             launcher: LauncherConfig {
                 close_on_blur: true,
                 keep_last_input: false,
+                compact_when_empty: false,
             },
             translation: TranslationConfig {
                 enabled: true,
@@ -198,7 +201,7 @@ impl ConfigState {
             .unwrap_or_default()
     }
 
-    fn replace(&self, config: AppConfig) -> Result<AppConfig, String> {
+    fn replace(&self, config: AppConfig) -> Result<(AppConfig, AppConfig), String> {
         let _save_guard = self
             .save_lock
             .lock()
@@ -212,6 +215,11 @@ impl ConfigState {
             ));
         }
         let config = normalize_and_validate(config)?;
+        let previous = self
+            .config
+            .read()
+            .map_err(|_| "配置状态暂时不可用".to_string())?
+            .clone();
         persist_config(&self.path, &config)?;
         let mut current = self
             .config
@@ -224,7 +232,7 @@ impl ConfigState {
         if let Ok(mut migration) = self.needs_legacy_preferences_migration.write() {
             *migration = false;
         }
-        Ok(config)
+        Ok((previous, config))
     }
 
     fn view(&self) -> AppConfigView {
@@ -408,10 +416,10 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
     }
 
     match config.version {
-        // v2 adds optional descriptions. Serde defaults missing fields to an
-        // empty string, so v0/v1 data needs no destructive shape conversion.
-        0 | 1 => config.version = 2,
-        2 => {}
+        // v2 adds optional descriptions and v3 adds the optional empty-query
+        // compact mode. Serde defaults make both migrations non-destructive.
+        0 | 1 | 2 => config.version = 3,
+        3 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -598,17 +606,28 @@ pub fn save_app_config(
     launcher: State<'_, Arc<LauncherState>>,
     config: AppConfig,
 ) -> Result<AppConfigView, String> {
-    let config = state.replace(config)?;
+    let (previous, config) = state.replace(config)?;
+    let providers_changed = provider_settings_changed(&previous, &config);
     launcher.update_preferences(
         config.launcher.close_on_blur,
         config.launcher.keep_last_input,
     );
-    launcher.invalidate_provider_results();
+    if providers_changed {
+        launcher.invalidate_provider_results();
+    }
     app.emit("app-config-updated", &config)
         .map_err(|error| format!("配置已保存，但无法通知窗口：{error}"))?;
-    app.emit("provider-config-updated", ())
-        .map_err(|error| format!("配置已保存，但无法刷新搜索结果：{error}"))?;
+    if providers_changed {
+        app.emit("provider-config-updated", ())
+            .map_err(|error| format!("配置已保存，但无法刷新搜索结果：{error}"))?;
+    }
     Ok(state.view())
+}
+
+fn provider_settings_changed(previous: &AppConfig, next: &AppConfig) -> bool {
+    previous.translation != next.translation
+        || previous.script_commands != next.script_commands
+        || previous.web_searches != next.web_searches
 }
 
 #[tauri::command]
@@ -675,6 +694,18 @@ mod tests {
     }
 
     #[test]
+    fn launcher_only_changes_keep_provider_results_valid() {
+        let original = AppConfig::default();
+        let mut launcher_change = original.clone();
+        launcher_change.launcher.compact_when_empty = true;
+        assert!(!provider_settings_changed(&original, &launcher_change));
+
+        let mut provider_change = original.clone();
+        provider_change.web_searches[0].description = "更新后的说明".into();
+        assert!(provider_settings_changed(&original, &provider_change));
+    }
+
+    #[test]
     fn rejects_duplicate_command_keywords_case_insensitively() {
         let mut config = AppConfig::default();
         config.web_searches[0].keyword = "TS".into();
@@ -721,9 +752,25 @@ mod tests {
         let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v1");
         let migrated = normalize_and_validate(config).expect("migrate legacy v1");
         assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(!migrated.launcher.compact_when_empty);
         assert!(migrated.translation.description.is_empty());
         assert!(migrated.script_commands[0].description.is_empty());
         assert!(migrated.web_searches[0].description.is_empty());
+    }
+
+    #[test]
+    fn migrates_v2_without_compact_empty_setting() {
+        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
+        legacy["version"] = serde_json::json!(2);
+        legacy["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("compactWhenEmpty");
+
+        let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v2");
+        let migrated = normalize_and_validate(config).expect("migrate legacy v2");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(!migrated.launcher.compact_when_empty);
     }
 
     #[test]
@@ -757,19 +804,27 @@ mod tests {
     #[test]
     fn detects_newer_versions_in_backup_candidates() {
         let backup_only = temporary_config_path("newer-backup-only");
-        fs::write(backup_only.with_extension("json.bak"), r#"{"version":3}"#)
-            .expect("write newer backup");
-        assert_eq!(newer_config_version(&backup_only), Some(3));
+        let newer_version = u64::from(CONFIG_VERSION) + 1;
+        fs::write(
+            backup_only.with_extension("json.bak"),
+            format!(r#"{{"version":{newer_version}}}"#),
+        )
+        .expect("write newer backup");
+        assert_eq!(newer_config_version(&backup_only), Some(newer_version));
         remove_temporary_config(&backup_only);
 
         let broken_primary = temporary_config_path("broken-primary-newer-backup");
         fs::write(&broken_primary, "not json").expect("write broken primary");
+        let even_newer_version = u64::from(CONFIG_VERSION) + 2;
         fs::write(
             broken_primary.with_extension("json.bak"),
-            r#"{"version":4}"#,
+            format!(r#"{{"version":{even_newer_version}}}"#),
         )
         .expect("write newer backup");
-        assert_eq!(newer_config_version(&broken_primary), Some(4));
+        assert_eq!(
+            newer_config_version(&broken_primary),
+            Some(even_newer_version)
+        );
         remove_temporary_config(&broken_primary);
     }
 
@@ -784,14 +839,18 @@ mod tests {
             save_lock: Mutex::new(()),
             incompatible_newer_version: None,
         };
-        fs::write(&path, r#"{"version":3,"futureField":"preserve me"}"#)
-            .expect("write newer config");
+        let newer_version = u64::from(CONFIG_VERSION) + 1;
+        fs::write(
+            &path,
+            format!(r#"{{"version":{newer_version},"futureField":"preserve me"}}"#),
+        )
+        .expect("write newer config");
 
         let error = state
             .replace(AppConfig::default())
             .expect_err("newer on-disk config must be protected");
-        assert!(error.contains("v3"));
-        assert_eq!(config_file_version(&path), Some(3));
+        assert!(error.contains(&format!("v{newer_version}")));
+        assert_eq!(config_file_version(&path), Some(newer_version));
         let content = fs::read_to_string(&path).expect("read protected config");
         assert!(content.contains("futureField"));
         remove_temporary_config(&path);

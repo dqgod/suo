@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State};
 
 use crate::{
     catalog::{self, CatalogEntry},
@@ -19,6 +19,9 @@ use crate::{
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
+const LAUNCHER_WIDTH: f64 = 720.0;
+const LAUNCHER_FULL_HEIGHT: f64 = 520.0;
+const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
 
 pub struct LauncherState {
     applications: RwLock<Vec<CatalogEntry>>,
@@ -589,6 +592,29 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_launcher_compact(app: AppHandle, compact: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    let scale_factor = window.scale_factor().map_err(|error| error.to_string())?;
+    let current = window
+        .inner_size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale_factor);
+    let target_height = if compact {
+        LAUNCHER_COMPACT_HEIGHT
+    } else {
+        LAUNCHER_FULL_HEIGHT
+    };
+    if (current.height - target_height).abs() < 0.5 {
+        return Ok(());
+    }
+    window
+        .set_size(LogicalSize::new(current.width, target_height))
+        .map_err(|error| error.to_string())
+}
+
 pub fn toggle_launcher(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -647,11 +673,16 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "找不到显示器".to_string())?;
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
-    let window_size = window.outer_size().map_err(|error| error.to_string())?;
+    // Keep the launcher's top edge stable in compact and full modes. Using
+    // the current compact height here would make later invocations drift down.
+    // Use the destination monitor's DPI because the hidden window may still
+    // belong to a different monitor when this position is calculated.
+    let positioning_width = (LAUNCHER_WIDTH * monitor.scale_factor()).round() as u32;
+    let positioning_height = (LAUNCHER_FULL_HEIGHT * monitor.scale_factor()).round() as u32;
 
-    let x = monitor_position.x + (monitor_size.width.saturating_sub(window_size.width) / 2) as i32;
+    let x = monitor_position.x + (monitor_size.width.saturating_sub(positioning_width) / 2) as i32;
     let y =
-        monitor_position.y + (monitor_size.height.saturating_sub(window_size.height) / 4) as i32;
+        monitor_position.y + (monitor_size.height.saturating_sub(positioning_height) / 4) as i32;
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(|error| error.to_string())

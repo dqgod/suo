@@ -226,6 +226,7 @@ function Launcher() {
   const [message, setMessage] = useState("");
   const [composing, setComposing] = useState(false);
   const [launcherVisible, setLauncherVisible] = useState(false);
+  const [compactWhenEmpty, setCompactWhenEmpty] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
@@ -234,6 +235,8 @@ function Launcher() {
   const activationReadyRef = useRef(false);
   const preserveCancellationRef = useRef<number | null>(null);
   const keepLastInputRef = useRef(false);
+  const compactDesiredRef = useRef(false);
+  const resizeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const cancelPending = useCallback(() => {
     const generation = ++requestId.current;
@@ -286,28 +289,52 @@ function Launcher() {
     void loadAppConfig()
       .then((view) => {
         keepLastInputRef.current = view.config.launcher.keepLastInput;
+        setCompactWhenEmpty(view.config.launcher.compactWhenEmpty);
         applyAppearance(view.config.appearance);
         if (view.configLoadWarning) setMessage(view.configLoadWarning);
       })
       .catch((error) => setMessage(String(error)));
     const updated = listen<AppConfig>("app-config-updated", (event) => {
       keepLastInputRef.current = event.payload.launcher.keepLastInput;
+      setCompactWhenEmpty(event.payload.launcher.compactWhenEmpty);
       applyAppearance(event.payload.appearance);
     });
     const providersUpdated = listen("provider-config-updated", () => {
-      updateQuery(queryRef.current);
+      // Provider edits invalidate the meaning of the current command. Clear it
+      // instead of re-running a translation or immediate script as a side effect.
+      const wasEmpty = queryRef.current === "";
+      updateQuery("");
+      // An empty query is side-effect free and normally shows the default app
+      // list. setQuery("") is a no-op here, so refresh it explicitly.
+      if (wasEmpty) void search("");
     });
     return () => {
       void updated.then((unlisten) => unlisten());
       void providersUpdated.then((unlisten) => unlisten());
     };
-  }, [updateQuery]);
+  }, [search, updateQuery]);
 
   useEffect(() => {
     if (composing) return;
     const timer = window.setTimeout(() => void search(query), query ? 50 : 0);
     return () => window.clearTimeout(timer);
   }, [composing, query, search]);
+
+  const compactEmpty = compactWhenEmpty && query.length === 0;
+
+  useEffect(() => {
+    const requested = compactEmpty;
+    compactDesiredRef.current = requested;
+    resizeQueueRef.current = resizeQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (compactDesiredRef.current !== requested) return;
+        await invoke("set_launcher_compact", { compact: requested });
+      })
+      .catch((error) => {
+        if (compactDesiredRef.current === requested) setMessage(String(error));
+      });
+  }, [compactEmpty]);
 
   useEffect(() => {
     const shown = listen("launcher-shown", () => {
@@ -481,8 +508,11 @@ function Launcher() {
   };
 
   return (
-    <main className="window-stage">
-      <section className="launcher" aria-label={zhCN.productName}>
+    <main className={`window-stage ${compactEmpty ? "compact-empty" : ""}`}>
+      <section
+        className={`launcher ${compactEmpty ? "compact-empty" : ""}`}
+        aria-label={zhCN.productName}
+      >
         <div className="search-box" data-tauri-drag-region>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="10.8" cy="10.8" r="6.8" />
@@ -522,59 +552,63 @@ function Launcher() {
           </button>
         </div>
 
-        <div className="provider-row">
-          <div className="provider-copy">
-            <span className={`status-dot ${response.indexing ? "busy" : ""}`} />
-            <strong>{response.provider}</strong>
-            <span>{response.providerDetail}</span>
-          </div>
-          <button className="index-button" type="button" onClick={() => void rebuildIndex()}>
-            {zhCN.rebuildIndex}
-          </button>
-        </div>
-
-        <div className="results" role="listbox" aria-label={zhCN.results}>
-          {response.results.map((result, index) => (
-            <button
-              className={`result ${index === selectedIndex ? "selected" : ""}`}
-              type="button"
-              key={result.id}
-              role="option"
-              aria-selected={index === selectedIndex}
-              onMouseEnter={() => setSelectedIndex(index)}
-              onClick={() => void activate(result)}
-            >
-              <ResultIcon result={result} launcherVisible={launcherVisible} />
-              <span className="result-copy">
-                <strong>{result.title}</strong>
-                <small>{result.subtitle}</small>
-              </span>
-              <span className="result-badge">{result.badge}</span>
-              {index === selectedIndex && <kbd>↵</kbd>}
-            </button>
-          ))}
-          {!response.results.length && (
-            <div className="empty-state">
-              <span>⌕</span>
-              <strong>{response.indexing ? zhCN.indexing : zhCN.noResults}</strong>
-              <small>{zhCN.tryCommands}</small>
+        {!compactEmpty && (
+          <>
+            <div className="provider-row">
+              <div className="provider-copy">
+                <span className={`status-dot ${response.indexing ? "busy" : ""}`} />
+                <strong>{response.provider}</strong>
+                <span>{response.providerDetail}</span>
+              </div>
+              <button className="index-button" type="button" onClick={() => void rebuildIndex()}>
+                {zhCN.rebuildIndex}
+              </button>
             </div>
-          )}
-        </div>
 
-        <footer>
-          <div className="key-help">
-            <span><kbd>↑↓</kbd>{zhCN.select}</span>
-            <span><kbd>↵</kbd>{zhCN.open}</span>
-            <span><kbd>Shift ↵</kbd>{zhCN.keepOpen}</span>
-          </div>
-          <div className={response.hotkeyStatus.includes("失败") ? "hotkey failed" : "hotkey"}>
-            <span className="status-dot" />
-            {response.hotkeyStatus}
-          </div>
-        </footer>
+            <div className="results" role="listbox" aria-label={zhCN.results}>
+              {response.results.map((result, index) => (
+                <button
+                  className={`result ${index === selectedIndex ? "selected" : ""}`}
+                  type="button"
+                  key={result.id}
+                  role="option"
+                  aria-selected={index === selectedIndex}
+                  onMouseEnter={() => setSelectedIndex(index)}
+                  onClick={() => void activate(result)}
+                >
+                  <ResultIcon result={result} launcherVisible={launcherVisible} />
+                  <span className="result-copy">
+                    <strong>{result.title}</strong>
+                    <small>{result.subtitle}</small>
+                  </span>
+                  <span className="result-badge">{result.badge}</span>
+                  {index === selectedIndex && <kbd>↵</kbd>}
+                </button>
+              ))}
+              {!response.results.length && (
+                <div className="empty-state">
+                  <span>⌕</span>
+                  <strong>{response.indexing ? zhCN.indexing : zhCN.noResults}</strong>
+                  <small>{zhCN.tryCommands}</small>
+                </div>
+              )}
+            </div>
 
-        {message && <div className="toast">{message}</div>}
+            <footer>
+              <div className="key-help">
+                <span><kbd>↑↓</kbd>{zhCN.select}</span>
+                <span><kbd>↵</kbd>{zhCN.open}</span>
+                <span><kbd>Shift ↵</kbd>{zhCN.keepOpen}</span>
+              </div>
+              <div className={response.hotkeyStatus.includes("失败") ? "hotkey failed" : "hotkey"}>
+                <span className="status-dot" />
+                {response.hotkeyStatus}
+              </div>
+            </footer>
+
+            {message && <div className="toast">{message}</div>}
+          </>
+        )}
       </section>
     </main>
   );

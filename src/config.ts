@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type LauncherConfig = {
   closeOnBlur: boolean;
   keepLastInput: boolean;
+  compactWhenEmpty: boolean;
 };
 
 export type TranslationConfig = {
@@ -75,6 +76,7 @@ export async function loadAppConfig() {
     const config: AppConfig = {
       ...view.config,
       launcher: {
+        ...view.config.launcher,
         closeOnBlur:
           typeof preferences.closeOnBlur === "boolean"
             ? preferences.closeOnBlur

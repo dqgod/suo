@@ -29,6 +29,8 @@ export const zhCN = {
   closeOnBlurDescription: "切换到其他窗口时隐藏启动器。",
   keepLastInputSetting: "保留上次输入",
   keepLastInputDescription: "再次唤起时恢复上一次查询内容。",
+  compactWhenEmpty: "空输入时仅显示搜索框",
+  compactWhenEmptyDescription: "查询为空时收起状态、结果与快捷键区域；开始输入后自动展开。",
   trayIcon: "系统托盘图标",
   trayIconDescription: "Suo 运行时常驻通知区域，可右键打开快捷菜单。",
   enabled: "已开启",

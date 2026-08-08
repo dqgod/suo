@@ -111,6 +111,7 @@ pub fn run() {
             launcher::rebuild_file_index,
             launcher::get_index_status,
             hide_launcher,
+            launcher::set_launcher_compact,
             config::get_app_config,
             config::save_app_config,
             config::set_translation_api_key,

@@ -434,6 +434,10 @@ function Settings() {
                     <div><strong>{zhCN.keepLastInputSetting}</strong><small>{zhCN.keepLastInputDescription}</small></div>
                     <input className="switch" type="checkbox" checked={draft.launcher.keepLastInput} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, keepLastInput: event.target.checked } })} />
                   </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.compactWhenEmpty}</strong><small>{zhCN.compactWhenEmptyDescription}</small></div>
+                    <input className="switch" type="checkbox" checked={draft.launcher.compactWhenEmpty} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, compactWhenEmpty: event.target.checked } })} />
+                  </label>
                   <div className="setting-row">
                     <div><strong>{zhCN.trayIcon}</strong><small>{zhCN.trayIconDescription}</small></div>
                     <span className="setting-status">{zhCN.enabled}</span>
