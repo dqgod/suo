@@ -114,6 +114,7 @@ mod tests {
         let config = TranslationConfig {
             enabled: true,
             keyword: "fy".into(),
+            description: String::new(),
             aliases: vec![],
             region: String::new(),
             default_target_language: "zh-Hans".into(),

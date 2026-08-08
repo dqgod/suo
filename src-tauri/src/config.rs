@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::launcher::LauncherState;
 
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -39,6 +39,8 @@ pub struct TranslationConfig {
     pub enabled: bool,
     pub keyword: String,
     #[serde(default)]
+    pub description: String,
+    #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
     pub region: String,
@@ -52,6 +54,8 @@ pub struct ScriptCommandConfig {
     pub id: String,
     pub name: String,
     pub keyword: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(default)]
     pub aliases: Vec<String>,
     pub enabled: bool,
@@ -76,6 +80,8 @@ pub struct WebSearchConfig {
     pub id: String,
     pub name: String,
     pub keyword: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(default)]
     pub aliases: Vec<String>,
     pub enabled: bool,
@@ -120,6 +126,7 @@ impl Default for AppConfig {
             translation: TranslationConfig {
                 enabled: true,
                 keyword: "fy".into(),
+                description: "中英文自动识别翻译；支持 fy:语言代码 临时指定目标语言。".into(),
                 aliases: Vec::new(),
                 region: String::new(),
                 default_target_language: "zh-Hans".into(),
@@ -129,6 +136,7 @@ impl Default for AppConfig {
                 id: "timestamp-example".into(),
                 name: "时间戳转换".into(),
                 keyword: "ts".into(),
+                description: "将毫秒时间戳转换为本地日期时间。".into(),
                 aliases: Vec::new(),
                 enabled: true,
                 runtime: ScriptRuntime::Python,
@@ -140,6 +148,7 @@ impl Default for AppConfig {
                 id: "google".into(),
                 name: "Google".into(),
                 keyword: "google".into(),
+                description: "使用默认浏览器在 Google 中搜索输入内容。".into(),
                 aliases: Vec::new(),
                 enabled: true,
                 url_template: "https://www.google.com.hk/search?q={query}".into(),
@@ -161,8 +170,7 @@ impl ConfigState {
         let path = config_dir.join("config.json");
         let needs_legacy_preferences_migration =
             !path.exists() && !path.with_extension("json.bak").exists();
-        let incompatible_newer_version =
-            config_file_version(&path).filter(|version| *version > u64::from(CONFIG_VERSION));
+        let incompatible_newer_version = newer_config_version(&path);
         let (config, load_warning) = if let Some(version) = incompatible_newer_version {
             (
                 AppConfig::default(),
@@ -195,7 +203,10 @@ impl ConfigState {
             .save_lock
             .lock()
             .map_err(|_| "配置保存锁暂时不可用".to_string())?;
-        if let Some(version) = self.incompatible_newer_version {
+        if let Some(version) = self
+            .incompatible_newer_version
+            .or_else(|| newer_config_version(&self.path))
+        {
             return Err(format!(
                 "配置来自更新版本 v{version}，当前版本禁止覆盖，请升级 Suo"
             ));
@@ -249,6 +260,14 @@ fn config_file_version(path: &Path) -> Option<u64> {
         .as_u64()
 }
 
+fn newer_config_version(path: &Path) -> Option<u64> {
+    [path.to_path_buf(), path.with_extension("json.bak")]
+        .into_iter()
+        .filter_map(|candidate| config_file_version(&candidate))
+        .filter(|version| *version > u64::from(CONFIG_VERSION))
+        .max()
+}
+
 fn load_config(path: &Path) -> (AppConfig, Option<String>) {
     let backup = path.with_extension("json.bak");
     if !path.exists() {
@@ -289,6 +308,11 @@ fn persist_config(path: &Path, config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建配置目录：{error}"))?;
     }
+    if let Some(version) = newer_config_version(path) {
+        return Err(format!(
+            "磁盘配置已由更新版本 v{version} 写入，当前版本拒绝覆盖"
+        ));
+    }
     let data =
         serde_json::to_string_pretty(config).map_err(|error| format!("无法序列化配置：{error}"))?;
     let temporary = path.with_extension("json.tmp");
@@ -301,6 +325,17 @@ fn persist_config(path: &Path, config: &AppConfig) -> Result<(), String> {
     if path.exists() && read_config_file(path).is_ok() {
         fs::copy(path, path.with_extension("json.bak"))
             .map_err(|error| format!("无法备份现有配置：{error}"))?;
+    }
+    // The single-instance plugin is registered before ConfigState::load, so
+    // supported Suo versions cannot concurrently write this app config path.
+    // Recheck here to catch a newer file placed on disk during this save. An
+    // arbitrary external writer would not honor an advisory lock on macOS,
+    // so the version guard remains the cross-platform compatibility boundary.
+    if let Some(version) = newer_config_version(path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "磁盘配置已由更新版本 v{version} 写入，当前版本拒绝覆盖"
+        ));
     }
     let result = replace_config_file(&temporary, path);
     if result.is_err() {
@@ -345,16 +380,8 @@ fn replace_config_file(source: &Path, destination: &Path) -> Result<(), String> 
     fs::rename(source, destination).map_err(|error| format!("无法原子替换配置：{error}"))
 }
 
-fn normalize_and_validate(mut config: AppConfig) -> Result<AppConfig, String> {
-    if config.version > CONFIG_VERSION {
-        return Err(format!(
-            "配置来自更新版本（v{}），当前 Suo 仅支持 v{CONFIG_VERSION}，已拒绝覆盖",
-            config.version
-        ));
-    }
-    // v0 is the only legacy shape currently accepted; later migrations must
-    // be explicit before increasing CONFIG_VERSION.
-    config.version = CONFIG_VERSION;
+fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
+    let mut config = migrate_config(config)?;
     if config.script_commands.len() > MAX_COMMANDS || config.web_searches.len() > MAX_COMMANDS {
         return Err(format!("脚本命令和网络搜索分别最多允许 {MAX_COMMANDS} 项"));
     }
@@ -369,6 +396,24 @@ fn normalize_and_validate(mut config: AppConfig) -> Result<AppConfig, String> {
     validate_appearance(&config.appearance)?;
     validate_keyword_namespace(&config)?;
     validate_unique_ids(&config)?;
+    Ok(config)
+}
+
+fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
+    if config.version > CONFIG_VERSION {
+        return Err(format!(
+            "配置来自更新版本（v{}），当前 Suo 仅支持 v{CONFIG_VERSION}，已拒绝覆盖",
+            config.version
+        ));
+    }
+
+    match config.version {
+        // v2 adds optional descriptions. Serde defaults missing fields to an
+        // empty string, so v0/v1 data needs no destructive shape conversion.
+        0 | 1 => config.version = 2,
+        2 => {}
+        version => return Err(format!("不支持的配置版本 v{version}")),
+    }
     Ok(config)
 }
 
@@ -396,6 +441,7 @@ fn validate_unique_ids(config: &AppConfig) -> Result<(), String> {
 
 fn normalize_translation(config: &mut TranslationConfig) -> Result<(), String> {
     config.keyword = normalize_keyword(&config.keyword, "翻译命令")?;
+    config.description = optional_trimmed(&config.description, "翻译服务说明", 200)?;
     config.aliases = normalize_aliases(&config.aliases, "翻译命令")?;
     config.region = config.region.trim().to_string();
     config.default_target_language =
@@ -409,6 +455,7 @@ fn normalize_script(command: &mut ScriptCommandConfig) -> Result<(), String> {
     command.id = required_trimmed(&command.id, "脚本 ID", 80)?;
     command.name = required_trimmed(&command.name, "脚本名称", 80)?;
     command.keyword = normalize_keyword(&command.keyword, "脚本命令")?;
+    command.description = optional_trimmed(&command.description, "脚本说明", 200)?;
     command.aliases = normalize_aliases(&command.aliases, "脚本命令")?;
     command.script_path = required_trimmed(&command.script_path, "脚本路径", 1_024)?;
     if command.script_path.starts_with("http://") || command.script_path.starts_with("https://") {
@@ -427,6 +474,7 @@ fn normalize_web_search(search: &mut WebSearchConfig) -> Result<(), String> {
     search.id = required_trimmed(&search.id, "网络搜索 ID", 80)?;
     search.name = required_trimmed(&search.name, "网络搜索名称", 80)?;
     search.keyword = normalize_keyword(&search.keyword, "网络搜索命令")?;
+    search.description = optional_trimmed(&search.description, "网络搜索说明", 200)?;
     search.aliases = normalize_aliases(&search.aliases, "网络搜索命令")?;
     search.url_template = required_trimmed(&search.url_template, "网络搜索 URL 模板", 2_048)?;
     if !search.url_template.contains("{query}") {
@@ -515,6 +563,16 @@ fn required_trimmed(value: &str, label: &str, max: usize) -> Result<String, Stri
     Ok(value.to_string())
 }
 
+fn optional_trimmed(value: &str, label: &str, max: usize) -> Result<String, String> {
+    let value = value.trim();
+    // HTML maxlength uses UTF-16 code units. Match it here so emoji and
+    // combining characters have the same boundary in the UI and backend.
+    if value.encode_utf16().count() > max {
+        return Err(format!("{label}不能超过 {max} 个字符"));
+    }
+    Ok(value.to_string())
+}
+
 fn credential_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(CREDENTIAL_SERVICE, TRANSLATOR_CREDENTIAL)
         .map_err(|error| format!("无法访问系统凭据库：{error}"))
@@ -594,6 +652,23 @@ pub fn clear_translation_api_key(
 mod tests {
     use super::*;
 
+    fn temporary_config_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("suo-config-{label}-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create temporary config directory");
+        directory.join("config.json")
+    }
+
+    fn remove_temporary_config(path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
     #[test]
     fn defaults_are_valid() {
         normalize_and_validate(AppConfig::default()).expect("default config should be valid");
@@ -624,5 +699,101 @@ mod tests {
         let mut newer = AppConfig::default();
         newer.version = CONFIG_VERSION + 1;
         assert!(normalize_and_validate(newer).is_err());
+    }
+
+    #[test]
+    fn migrates_v1_without_descriptions() {
+        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
+        legacy["version"] = serde_json::json!(1);
+        legacy["translation"]
+            .as_object_mut()
+            .expect("translation object")
+            .remove("description");
+        legacy["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("description");
+        legacy["webSearches"][0]
+            .as_object_mut()
+            .expect("web object")
+            .remove("description");
+
+        let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v1");
+        let migrated = normalize_and_validate(config).expect("migrate legacy v1");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(migrated.translation.description.is_empty());
+        assert!(migrated.script_commands[0].description.is_empty());
+        assert!(migrated.web_searches[0].description.is_empty());
+    }
+
+    #[test]
+    fn trims_and_limits_descriptions() {
+        let mut config = AppConfig::default();
+        config.script_commands[0].description = "  示例说明  ".into();
+        let normalized = normalize_and_validate(config).expect("normalize description");
+        assert_eq!(normalized.script_commands[0].description, "示例说明");
+
+        let mut too_long = AppConfig::default();
+        too_long.web_searches[0].description = "字".repeat(201);
+        assert!(normalize_and_validate(too_long).is_err());
+
+        let mut emoji_boundary = AppConfig::default();
+        emoji_boundary.translation.description = "😀".repeat(100);
+        assert!(normalize_and_validate(emoji_boundary).is_ok());
+
+        let mut emoji_too_long = AppConfig::default();
+        emoji_too_long.translation.description = format!("{}a", "😀".repeat(100));
+        assert!(normalize_and_validate(emoji_too_long).is_err());
+
+        let mut combining_boundary = AppConfig::default();
+        combining_boundary.script_commands[0].description = "e\u{301}".repeat(100);
+        assert!(normalize_and_validate(combining_boundary).is_ok());
+
+        let mut combining_too_long = AppConfig::default();
+        combining_too_long.script_commands[0].description = format!("{}a", "e\u{301}".repeat(100));
+        assert!(normalize_and_validate(combining_too_long).is_err());
+    }
+
+    #[test]
+    fn detects_newer_versions_in_backup_candidates() {
+        let backup_only = temporary_config_path("newer-backup-only");
+        fs::write(backup_only.with_extension("json.bak"), r#"{"version":3}"#)
+            .expect("write newer backup");
+        assert_eq!(newer_config_version(&backup_only), Some(3));
+        remove_temporary_config(&backup_only);
+
+        let broken_primary = temporary_config_path("broken-primary-newer-backup");
+        fs::write(&broken_primary, "not json").expect("write broken primary");
+        fs::write(
+            broken_primary.with_extension("json.bak"),
+            r#"{"version":4}"#,
+        )
+        .expect("write newer backup");
+        assert_eq!(newer_config_version(&broken_primary), Some(4));
+        remove_temporary_config(&broken_primary);
+    }
+
+    #[test]
+    fn refuses_newer_disk_config_written_after_startup() {
+        let path = temporary_config_path("newer-after-startup");
+        let state = ConfigState {
+            path: path.clone(),
+            config: RwLock::new(AppConfig::default()),
+            load_warning: RwLock::new(None),
+            needs_legacy_preferences_migration: RwLock::new(false),
+            save_lock: Mutex::new(()),
+            incompatible_newer_version: None,
+        };
+        fs::write(&path, r#"{"version":3,"futureField":"preserve me"}"#)
+            .expect("write newer config");
+
+        let error = state
+            .replace(AppConfig::default())
+            .expect_err("newer on-disk config must be protected");
+        assert!(error.contains("v3"));
+        assert_eq!(config_file_version(&path), Some(3));
+        let content = fs::read_to_string(&path).expect("read protected config");
+        assert!(content.contains("futureField"));
+        remove_temporary_config(&path);
     }
 }

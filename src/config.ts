@@ -8,6 +8,7 @@ export type LauncherConfig = {
 export type TranslationConfig = {
   enabled: boolean;
   keyword: string;
+  description: string;
   aliases: string[];
   region: string;
   defaultTargetLanguage: string;
@@ -20,6 +21,7 @@ export type ScriptCommandConfig = {
   id: string;
   name: string;
   keyword: string;
+  description: string;
   aliases: string[];
   enabled: boolean;
   runtime: ScriptRuntime;
@@ -32,6 +34,7 @@ export type WebSearchConfig = {
   id: string;
   name: string;
   keyword: string;
+  description: string;
   aliases: string[];
   enabled: boolean;
   urlTemplate: string;

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   aliasesFromText,
   AppConfig,
@@ -9,6 +9,7 @@ import {
   loadAppConfig,
   ScriptCommandConfig,
   ScriptRuntime,
+  TranslationConfig,
   WebSearchConfig,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
@@ -16,28 +17,109 @@ import "./Settings.css";
 
 const settingsWindow = getCurrentWindow();
 const t = zhCN.settings;
-type Section = "general" | "search" | "commands" | "services" | "appearance";
+type Section = "general" | "search" | "configuration" | "appearance";
+type ConfigurationCategory = "scripts" | "web" | "services";
+
+type EditorState =
+  | {
+      kind: "script";
+      id: string;
+      original: ScriptCommandConfig | null;
+      value: ScriptCommandConfig;
+    }
+  | {
+      kind: "web";
+      id: string;
+      original: WebSearchConfig | null;
+      value: WebSearchConfig;
+    }
+  | {
+      kind: "translation";
+      id: "translation";
+      original: TranslationConfig;
+      value: TranslationConfig;
+    };
 
 const sectionCopy: Record<Section, { title: string; description: string }> = {
   general: { title: zhCN.general, description: t.generalDescription },
   search: { title: zhCN.searchAndIndex, description: t.searchDescription },
-  commands: { title: zhCN.commands, description: t.commandDescription },
-  services: { title: t.services, description: t.serviceDescription },
+  configuration: {
+    title: t.commandsAndServices,
+    description: t.configurationDescription,
+  },
   appearance: { title: zhCN.appearance, description: t.appearanceDescription },
+};
+
+const runtimeLabels: Record<ScriptRuntime, string> = {
+  python: "Python",
+  powerShell: "PowerShell",
+  bash: "Bash",
+  executable: "Executable",
 };
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function nextAvailableKeyword(config: AppConfig, prefix: string) {
+  const used = new Set<string>([
+    config.translation.keyword,
+    ...config.translation.aliases,
+    ...config.scriptCommands.flatMap((command) => [command.keyword, ...command.aliases]),
+    ...config.webSearches.flatMap((search) => [search.keyword, ...search.aliases]),
+  ].map((value) => value.toLowerCase()));
+  let suffix = 1;
+  while (used.has(`${prefix}${suffix}`)) suffix += 1;
+  return `${prefix}${suffix}`;
+}
+
+function cloneScript(command: ScriptCommandConfig): ScriptCommandConfig {
+  return { ...command, aliases: [...command.aliases] };
+}
+
+function cloneWebSearch(search: WebSearchConfig): WebSearchConfig {
+  return { ...search, aliases: [...search.aliases] };
+}
+
+function cloneTranslation(translation: TranslationConfig): TranslationConfig {
+  return { ...translation, aliases: [...translation.aliases] };
+}
+
+function applyEditor(config: AppConfig, editor: EditorState): AppConfig {
+  if (editor.kind === "translation") {
+    return { ...config, translation: cloneTranslation(editor.value) };
+  }
+  if (editor.kind === "script") {
+    const value = cloneScript(editor.value);
+    const found = config.scriptCommands.some((command) => command.id === editor.id);
+    return {
+      ...config,
+      scriptCommands: found
+        ? config.scriptCommands.map((command) => command.id === editor.id ? value : command)
+        : [...config.scriptCommands, value],
+    };
+  }
+  const value = cloneWebSearch(editor.value);
+  const found = config.webSearches.some((search) => search.id === editor.id);
+  return {
+    ...config,
+    webSearches: found
+      ? config.webSearches.map((search) => search.id === editor.id ? value : search)
+      : [...config.webSearches, value],
+  };
+}
+
 function Settings() {
   const [section, setSection] = useState<Section>("general");
+  const [category, setCategory] = useState<ConfigurationCategory>("scripts");
   const [view, setView] = useState<AppConfigView | null>(null);
   const [draft, setDraft] = useState<AppConfig | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const draftRevisionRef = useRef(0);
 
   const close = useCallback(async () => {
     try {
@@ -52,6 +134,7 @@ function Settings() {
       const next = await loadAppConfig();
       setView(next);
       setDraft(next.config);
+      setEditor(null);
       applyAppearance(next.config.appearance);
       if (next.configLoadWarning) setError(next.configLoadWarning);
     } catch (loadError) {
@@ -61,23 +144,45 @@ function Settings() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    draftRevisionRef.current += 1;
+  }, [draft, editor]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") void close();
+      if (event.key !== "Escape") return;
+      if (saving) return;
+      if (editor) {
+        event.preventDefault();
+        cancelEditor();
+      } else {
+        void close();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, refresh]);
+  }, [close, editor, saving]);
 
   const save = async () => {
     if (!draft) return;
+    const config = editor ? applyEditor(draft, editor) : draft;
+    const startedAtRevision = draftRevisionRef.current;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setSaving(true);
     setError("");
     try {
-      const next = await invoke<AppConfigView>("save_app_config", { config: draft });
+      const next = await invoke<AppConfigView>("save_app_config", { config });
       setView(next);
-      setDraft(next.config);
-      applyAppearance(next.config.appearance);
-      setStatus(zhCN.saved);
+      if (draftRevisionRef.current === startedAtRevision) {
+        setDraft(next.config);
+        setEditor(null);
+        applyAppearance(next.config.appearance);
+        setStatus(zhCN.saved);
+      } else {
+        setStatus(t.savedWithPendingChanges);
+      }
       window.setTimeout(() => setStatus(""), 1600);
     } catch (saveError) {
       setError(String(saveError));
@@ -99,6 +204,7 @@ function Settings() {
   };
 
   const clearApiKey = async () => {
+    if (!window.confirm(t.confirmClearApiKey)) return;
     setError("");
     try {
       const next = await invoke<AppConfigView>("clear_translation_api_key");
@@ -118,74 +224,148 @@ function Settings() {
     }
   };
 
-  const updateScript = (index: number, patch: Partial<ScriptCommandConfig>) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const scriptCommands = current.scriptCommands.map((command, itemIndex) =>
-        itemIndex === index ? { ...command, ...patch } : command,
-      );
-      return { ...current, scriptCommands };
+  const commitEditor = () => {
+    if (!draft || !editor) return;
+    setDraft(applyEditor(draft, editor));
+    setEditor(null);
+  };
+
+  function cancelEditor() {
+    if (!editor) return;
+    if (editor.original === null) {
+      setDraft((current) => {
+        if (!current) return current;
+        if (editor.kind === "script") {
+          return {
+            ...current,
+            scriptCommands: current.scriptCommands.filter((command) => command.id !== editor.id),
+          };
+        }
+        if (editor.kind === "web") {
+          return {
+            ...current,
+            webSearches: current.webSearches.filter((search) => search.id !== editor.id),
+          };
+        }
+        return current;
+      });
+    }
+    setEditor(null);
+  }
+
+  const changeSection = (next: Section) => {
+    if (draft && editor) setDraft(applyEditor(draft, editor));
+    setEditor(null);
+    setSection(next);
+  };
+
+  const changeCategory = (next: ConfigurationCategory) => {
+    if (draft && editor) setDraft(applyEditor(draft, editor));
+    setEditor(null);
+    setCategory(next);
+  };
+
+  const openScript = (command: ScriptCommandConfig) => {
+    if (!draft) return;
+    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    setDraft(nextDraft);
+    if (editor?.kind === "script" && editor.id === command.id) {
+      setEditor(null);
+      return;
+    }
+    const next = nextDraft.scriptCommands.find((item) => item.id === command.id) ?? command;
+    const original = cloneScript(next);
+    setEditor({ kind: "script", id: command.id, original, value: cloneScript(next) });
+  };
+
+  const openWebSearch = (search: WebSearchConfig) => {
+    if (!draft) return;
+    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    setDraft(nextDraft);
+    if (editor?.kind === "web" && editor.id === search.id) {
+      setEditor(null);
+      return;
+    }
+    const next = nextDraft.webSearches.find((item) => item.id === search.id) ?? search;
+    const original = cloneWebSearch(next);
+    setEditor({ kind: "web", id: search.id, original, value: cloneWebSearch(next) });
+  };
+
+  const openTranslation = () => {
+    if (!draft) return;
+    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    setDraft(nextDraft);
+    if (editor?.kind === "translation") {
+      setEditor(null);
+      return;
+    }
+    const original = cloneTranslation(nextDraft.translation);
+    setEditor({
+      kind: "translation",
+      id: "translation",
+      original,
+      value: cloneTranslation(original),
     });
   };
 
-  const updateWebSearch = (index: number, patch: Partial<WebSearchConfig>) => {
-    setDraft((current) => {
-      if (!current) return current;
-      const webSearches = current.webSearches.map((search, itemIndex) =>
-        itemIndex === index ? { ...search, ...patch } : search,
-      );
-      return { ...current, webSearches };
+  const addScript = () => {
+    if (!draft) return;
+    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const command: ScriptCommandConfig = {
+      id: createId("script"),
+      name: t.newScript,
+      keyword: nextAvailableKeyword(nextDraft, "cmd"),
+      description: "",
+      aliases: [],
+      enabled: true,
+      runtime: "python",
+      scriptPath: "",
+      immediate: false,
+      timeoutMs: 3000,
+    };
+    setDraft({ ...nextDraft, scriptCommands: [...nextDraft.scriptCommands, command] });
+    setCategory("scripts");
+    setEditor({ kind: "script", id: command.id, original: null, value: cloneScript(command) });
+  };
+
+  const addWebSearch = () => {
+    if (!draft) return;
+    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const search: WebSearchConfig = {
+      id: createId("web"),
+      name: t.newWebSearch,
+      keyword: nextAvailableKeyword(nextDraft, "web"),
+      description: "",
+      aliases: [],
+      enabled: true,
+      urlTemplate: "https://example.com/search?q={query}",
+    };
+    setDraft({ ...nextDraft, webSearches: [...nextDraft.webSearches, search] });
+    setCategory("web");
+    setEditor({ kind: "web", id: search.id, original: null, value: cloneWebSearch(search) });
+  };
+
+  const removeScript = (command: ScriptCommandConfig) => {
+    if (!draft || !window.confirm(t.confirmRemove.replace("{name}", command.name))) return;
+    setDraft({
+      ...draft,
+      scriptCommands: draft.scriptCommands.filter((item) => item.id !== command.id),
     });
+    setEditor(null);
+  };
+
+  const removeWebSearch = (search: WebSearchConfig) => {
+    if (!draft || !window.confirm(t.confirmRemove.replace("{name}", search.name))) return;
+    setDraft({
+      ...draft,
+      webSearches: draft.webSearches.filter((item) => item.id !== search.id),
+    });
+    setEditor(null);
   };
 
   const updateAppearance = (appearance: AppConfig["appearance"]) => {
     applyAppearance(appearance);
     setDraft((current) => (current ? { ...current, appearance } : current));
-  };
-
-  const addScript = () => {
-    setDraft((current) =>
-      current
-        ? {
-            ...current,
-            scriptCommands: [
-              ...current.scriptCommands,
-              {
-                id: createId("script"),
-                name: "新脚本",
-                keyword: `cmd${current.scriptCommands.length + 1}`,
-                aliases: [],
-                enabled: true,
-                runtime: "python",
-                scriptPath: "",
-                immediate: false,
-                timeoutMs: 3000,
-              },
-            ],
-          }
-        : current,
-    );
-  };
-
-  const addWebSearch = () => {
-    setDraft((current) =>
-      current
-        ? {
-            ...current,
-            webSearches: [
-              ...current.webSearches,
-              {
-                id: createId("web"),
-                name: "新搜索",
-                keyword: `web${current.webSearches.length + 1}`,
-                aliases: [],
-                enabled: true,
-                urlTemplate: "https://example.com/search?q={query}",
-              },
-            ],
-          }
-        : current,
-    );
   };
 
   const hotkey = /Mac/i.test(navigator.platform) ? "Command + Space" : "Alt + Space";
@@ -200,21 +380,29 @@ function Settings() {
         <button type="button" onClick={() => void close()} aria-label={zhCN.closeSettings}>×</button>
       </header>
 
-      <div className="settings-layout">
+      <div
+        className={`settings-layout ${saving ? "saving" : ""}`}
+        inert={saving}
+        onInputCapture={(event) => {
+          if (!(event.target as HTMLElement).closest("[data-independent-config]")) {
+            draftRevisionRef.current += 1;
+          }
+        }}
+      >
         <aside>
           {(Object.keys(sectionCopy) as Section[]).map((key) => (
             <button
               type="button"
               key={key}
               className={section === key ? "settings-nav-active" : ""}
-              onClick={() => setSection(key)}
+              onClick={() => changeSection(key)}
             >
               {sectionCopy[key].title}
             </button>
           ))}
         </aside>
 
-        <section className="settings-content">
+        <section className="settings-content" aria-busy={saving}>
           <div className="settings-heading">
             <div>
               <h1>{sectionCopy[section].title}</h1>
@@ -262,53 +450,139 @@ function Settings() {
                 </div>
               )}
 
-              {section === "commands" && (
-                <div className="editor-stack">
-                  {draft.scriptCommands.map((command, index) => (
-                    <article className="editor-card" key={command.id}>
-                      <div className="editor-card-heading">
-                        <label className="inline-toggle"><input type="checkbox" checked={command.enabled} onChange={(event) => updateScript(index, { enabled: event.target.checked })} />{t.enabled}</label>
-                        <button className="danger-button" type="button" onClick={() => setDraft({ ...draft, scriptCommands: draft.scriptCommands.filter((_, itemIndex) => itemIndex !== index) })}>{t.remove}</button>
-                      </div>
-                      <div className="form-grid">
-                        <Field label={t.name}><input value={command.name} onChange={(event) => updateScript(index, { name: event.target.value })} /></Field>
-                        <Field label={t.keyword}><input value={command.keyword} onChange={(event) => updateScript(index, { keyword: event.target.value })} /></Field>
-                        <Field label={t.aliases}><AliasesInput value={command.aliases} onChange={(aliases) => updateScript(index, { aliases })} /></Field>
-                        <Field label={t.runtime}><select value={command.runtime} onChange={(event) => updateScript(index, { runtime: event.target.value as ScriptRuntime })}><option value="python">Python</option><option value="powerShell">PowerShell</option><option value="bash">Bash</option><option value="executable">Executable</option></select></Field>
-                        <Field label={t.scriptPath} wide><input value={command.scriptPath} onChange={(event) => updateScript(index, { scriptPath: event.target.value })} placeholder="D:\\scripts\\tool.py" /></Field>
-                        <Field label={t.timeout}><input type="number" min={100} max={60000} value={command.timeoutMs} onChange={(event) => updateScript(index, { timeoutMs: Number(event.target.value) })} /></Field>
-                        <label className="checkbox-field"><input type="checkbox" checked={command.immediate} onChange={(event) => updateScript(index, { immediate: event.target.checked })} />{t.immediate}</label>
-                      </div>
-                    </article>
-                  ))}
-                  <button className="add-button" type="button" onClick={addScript}>＋ {t.addScript}</button>
-                </div>
-              )}
-
-              {section === "services" && (
-                <div className="editor-stack">
-                  <article className="editor-card">
-                    <div className="editor-card-heading">
-                      <div><strong>{t.translation}</strong><small>{t.translationDescription}</small></div>
-                      <label className="inline-toggle"><input type="checkbox" checked={draft.translation.enabled} onChange={(event) => setDraft({ ...draft, translation: { ...draft.translation, enabled: event.target.checked } })} />{t.enabled}</label>
+              {section === "configuration" && (
+                <div className="configuration-section">
+                  <div className="configuration-toolbar">
+                    <div className="configuration-tabs" role="tablist" aria-label={t.commandsAndServices}>
+                      <button type="button" role="tab" aria-selected={category === "scripts"} className={category === "scripts" ? "active" : ""} onClick={() => changeCategory("scripts")}>{t.scriptsTab}</button>
+                      <button type="button" role="tab" aria-selected={category === "web"} className={category === "web" ? "active" : ""} onClick={() => changeCategory("web")}>{t.webTab}</button>
+                      <button type="button" role="tab" aria-selected={category === "services"} className={category === "services" ? "active" : ""} onClick={() => changeCategory("services")}>{t.servicesTab}</button>
                     </div>
-                    <div className="form-grid">
-                      <Field label={t.keyword}><input value={draft.translation.keyword} onChange={(event) => setDraft({ ...draft, translation: { ...draft.translation, keyword: event.target.value } })} /></Field>
-                      <Field label={t.aliases}><AliasesInput value={draft.translation.aliases} onChange={(aliases) => setDraft({ ...draft, translation: { ...draft.translation, aliases } })} /></Field>
-                      <Field label={t.region}><input value={draft.translation.region} onChange={(event) => setDraft({ ...draft, translation: { ...draft.translation, region: event.target.value } })} placeholder="eastasia" /></Field>
-                      <Field label={t.defaultTarget}><input value={draft.translation.defaultTargetLanguage} onChange={(event) => setDraft({ ...draft, translation: { ...draft.translation, defaultTargetLanguage: event.target.value } })} /></Field>
-                      <Field label={t.chineseTarget}><input value={draft.translation.chineseTargetLanguage} onChange={(event) => setDraft({ ...draft, translation: { ...draft.translation, chineseTargetLanguage: event.target.value } })} /></Field>
-                      <Field label={t.apiKey} wide><div className="credential-row"><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyPlaceholder} /><button className="secondary-button" type="button" disabled={!apiKey.trim()} onClick={() => void saveApiKey()}>{t.saveApiKey}</button><button className="danger-button" type="button" disabled={!view?.translationApiKeyConfigured} onClick={() => void clearApiKey()}>{t.clearApiKey}</button></div><small className={view?.translationApiKeyConfigured ? "credential-ok" : "credential-missing"}>{view?.translationApiKeyConfigured ? t.apiKeyConfigured : t.apiKeyMissing}</small></Field>
-                    </div>
-                  </article>
+                    {category === "scripts" && <button className="add-button" type="button" onClick={addScript}>＋ {t.addScript}</button>}
+                    {category === "web" && <button className="add-button" type="button" onClick={addWebSearch}>＋ {t.addWeb}</button>}
+                  </div>
 
-                  <div className="subsection-heading"><strong>{t.webSearch}</strong><button className="add-button small" type="button" onClick={addWebSearch}>＋ {t.addWeb}</button></div>
-                  {draft.webSearches.map((search, index) => (
-                    <article className="editor-card" key={search.id}>
-                      <div className="editor-card-heading"><label className="inline-toggle"><input type="checkbox" checked={search.enabled} onChange={(event) => updateWebSearch(index, { enabled: event.target.checked })} />{t.enabled}</label><button className="danger-button" type="button" onClick={() => setDraft({ ...draft, webSearches: draft.webSearches.filter((_, itemIndex) => itemIndex !== index) })}>{t.remove}</button></div>
-                      <div className="form-grid"><Field label={t.name}><input value={search.name} onChange={(event) => updateWebSearch(index, { name: event.target.value })} /></Field><Field label={t.keyword}><input value={search.keyword} onChange={(event) => updateWebSearch(index, { keyword: event.target.value })} /></Field><Field label={t.aliases}><AliasesInput value={search.aliases} onChange={(aliases) => updateWebSearch(index, { aliases })} /></Field><Field label={t.urlTemplate} wide><input value={search.urlTemplate} onChange={(event) => updateWebSearch(index, { urlTemplate: event.target.value })} /></Field></div>
-                    </article>
-                  ))}
+                  <div className="configuration-list" role="tabpanel">
+                    {category === "scripts" && (
+                      <>
+                        {draft.scriptCommands.length === 0 && <div className="configuration-empty">{t.emptyScripts}</div>}
+                        {draft.scriptCommands.map((command) => {
+                          const activeEditor = editor?.kind === "script" && editor.id === command.id ? editor : null;
+                          const summary = activeEditor?.value ?? command;
+                          return (
+                            <ConfigurationItem
+                              key={command.id}
+                              panelId={`script-editor-${command.id}`}
+                              open={Boolean(activeEditor)}
+                              enabled={summary.enabled}
+                              name={summary.name}
+                              keyword={summary.keyword}
+                              description={summary.description}
+                              badges={[runtimeLabels[summary.runtime], summary.immediate ? t.immediateBadge : t.enterBadge]}
+                              onToggle={() => openScript(command)}
+                            >
+                              {activeEditor && (
+                                <>
+                                  <div className="configuration-editor-header">
+                                    <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
+                                    <span>{t.pageDraftHint}</span>
+                                  </div>
+                                  <div className="form-grid">
+                                    <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
+                                    <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                    <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
+                                    <Field label={t.aliases}><AliasesInput key={`script-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
+                                    <Field label={t.runtime}><select value={activeEditor.value.runtime} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, runtime: event.target.value as ScriptRuntime } })}><option value="python">Python</option><option value="powerShell">PowerShell</option><option value="bash">Bash</option><option value="executable">Executable</option></select></Field>
+                                    <Field label={t.scriptPath} wide><input value={activeEditor.value.scriptPath} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, scriptPath: event.target.value } })} placeholder="D:\\scripts\\tool.py" /></Field>
+                                    <Field label={t.timeout}><input type="number" min={100} max={60000} value={activeEditor.value.timeoutMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, timeoutMs: Number(event.target.value) } })} /></Field>
+                                    <Field label={t.executionMode}><select value={activeEditor.value.immediate ? "immediate" : "enter"} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, immediate: event.target.value === "immediate" } })}><option value="enter">{t.enterMode}</option><option value="immediate">{t.immediateMode}</option></select></Field>
+                                  </div>
+                                  <EditorActions onRemove={() => removeScript(activeEditor.value)} onCancel={cancelEditor} onDone={commitEditor} />
+                                </>
+                              )}
+                            </ConfigurationItem>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {category === "web" && (
+                      <>
+                        {draft.webSearches.length === 0 && <div className="configuration-empty">{t.emptyWebSearches}</div>}
+                        {draft.webSearches.map((search) => {
+                          const activeEditor = editor?.kind === "web" && editor.id === search.id ? editor : null;
+                          const summary = activeEditor?.value ?? search;
+                          return (
+                            <ConfigurationItem
+                              key={search.id}
+                              panelId={`web-editor-${search.id}`}
+                              open={Boolean(activeEditor)}
+                              enabled={summary.enabled}
+                              name={summary.name}
+                              keyword={summary.keyword}
+                              description={summary.description}
+                              badges={[t.browserBadge]}
+                              onToggle={() => openWebSearch(search)}
+                            >
+                              {activeEditor && (
+                                <>
+                                  <div className="configuration-editor-header">
+                                    <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
+                                    <span>{t.pageDraftHint}</span>
+                                  </div>
+                                  <div className="form-grid">
+                                    <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
+                                    <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                    <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
+                                    <Field label={t.aliases}><AliasesInput key={`web-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
+                                    <Field label={t.urlTemplate} wide><input value={activeEditor.value.urlTemplate} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, urlTemplate: event.target.value } })} /></Field>
+                                  </div>
+                                  <EditorActions onRemove={() => removeWebSearch(activeEditor.value)} onCancel={cancelEditor} onDone={commitEditor} />
+                                </>
+                              )}
+                            </ConfigurationItem>
+                          );
+                        })}
+                      </>
+                    )}
+
+                    {category === "services" && (() => {
+                      const activeEditor = editor?.kind === "translation" ? editor : null;
+                      const summary = activeEditor?.value ?? draft.translation;
+                      return (
+                        <ConfigurationItem
+                          panelId="translation-editor"
+                          open={Boolean(activeEditor)}
+                          enabled={summary.enabled}
+                          name={t.translation}
+                          keyword={summary.keyword}
+                          description={summary.description}
+                          badges={[t.microsoftProvider, view?.translationApiKeyConfigured ? t.apiKeyConfiguredBadge : t.apiKeyMissingBadge]}
+                          onToggle={openTranslation}
+                        >
+                          {activeEditor && (
+                            <>
+                              <div className="configuration-editor-header">
+                                <label className="inline-toggle"><input type="checkbox" checked={activeEditor.value.enabled} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, enabled: event.target.checked } })} />{t.enabled}</label>
+                                <span>{t.pageDraftHint}</span>
+                              </div>
+                              <div className="form-grid">
+                                <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                <Field label={t.aliases}><AliasesInput key="translation-aliases" value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
+                                <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
+                                <Field label={t.region}><input value={activeEditor.value.region} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, region: event.target.value } })} placeholder="eastasia" /></Field>
+                                <Field label={t.defaultTarget}><input value={activeEditor.value.defaultTargetLanguage} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, defaultTargetLanguage: event.target.value } })} /></Field>
+                                <Field label={t.chineseTarget}><input value={activeEditor.value.chineseTargetLanguage} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, chineseTargetLanguage: event.target.value } })} /></Field>
+                                <Field label={t.apiKey} wide><div className="credential-row" data-independent-config><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyPlaceholder} /><button className="secondary-button" type="button" disabled={!apiKey.trim()} onClick={() => void saveApiKey()}>{t.saveApiKey}</button><button className="danger-button" type="button" disabled={!view?.translationApiKeyConfigured} onClick={() => void clearApiKey()}>{t.clearApiKey}</button></div><small className={view?.translationApiKeyConfigured ? "credential-ok" : "credential-missing"}>{view?.translationApiKeyConfigured ? t.apiKeyConfigured : t.apiKeyMissing}</small></Field>
+                              </div>
+                              <EditorActions onCancel={cancelEditor} onDone={commitEditor} />
+                            </>
+                          )}
+                        </ConfigurationItem>
+                      );
+                    })()}
+                  </div>
+                  <p className="configuration-hint">{t.configurationHint}</p>
                 </div>
               )}
 
@@ -326,6 +600,52 @@ function Settings() {
         </section>
       </div>
     </main>
+  );
+}
+
+function ConfigurationItem({
+  panelId,
+  open,
+  enabled,
+  name,
+  keyword,
+  description,
+  badges,
+  onToggle,
+  children,
+}: {
+  panelId: string;
+  open: boolean;
+  enabled: boolean;
+  name: string;
+  keyword: string;
+  description: string;
+  badges: string[];
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <article className={`configuration-item ${open ? "open" : ""}`}>
+      <button className="configuration-summary" type="button" aria-expanded={open} aria-controls={panelId} onClick={onToggle}>
+        <span className={`configuration-status-dot ${enabled ? "" : "off"}`} aria-hidden="true" />
+        <span className="configuration-summary-copy">
+          <span className="configuration-title-line"><strong>{name || t.unnamed}</strong><code>{keyword || "—"}</code></span>
+          <span className={`configuration-description ${description ? "" : "empty"}`}>{description || t.noDescription}</span>
+        </span>
+        <span className="configuration-badges">{badges.map((badge) => <span className="configuration-badge" key={badge}>{badge}</span>)}</span>
+        <span className="configuration-chevron" aria-hidden="true">⌄</span>
+      </button>
+      {open && <div className="configuration-editor" id={panelId}>{children}</div>}
+    </article>
+  );
+}
+
+function EditorActions({ onRemove, onCancel, onDone }: { onRemove?: () => void; onCancel: () => void; onDone: () => void }) {
+  return (
+    <div className="editor-actions">
+      <div>{onRemove && <button className="danger-button" type="button" onClick={onRemove}>{t.remove}</button>}</div>
+      <div className="editor-actions-right"><button className="secondary-button" type="button" onClick={onCancel}>{t.cancel}</button><button className="primary-button" type="button" onClick={onDone}>{t.completeEdit}</button></div>
+    </div>
   );
 }
 
