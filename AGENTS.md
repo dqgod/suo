@@ -84,7 +84,9 @@ For each failure, preserve the exact command, exit code, stderr, macOS version, 
 - macOS file search uses Spotlight; permission requests are deferred until a protected path needs them.
 - Custom command keywords and aliases share one case-insensitive global namespace.
 - Script execution defaults to argument arrays. Shell mode is explicit and high-risk.
-- Query scripts may run immediately; action scripts run on Enter by default. Both must support timeout and process-tree cancellation.
+- Script argument count and meaning are owned by the script; Suo only performs quote-aware argv splitting and does not declare a parameter schema in the current MVP.
+- Query scripts may run immediately with a per-command 20–60000 ms debounce (default 50 ms); action scripts run on Enter by default. Both must support timeout and process-tree cancellation.
+- Web search `{query}` expands the complete post-keyword text without requiring quotes. `{query0}`, `{query1}`… expand quote-aware positional arguments; missing arguments must produce a non-actionable error result.
 - `suo-json-v1` is UTF-8. Plain text output may use a configured encoding and is capped independently for stdout/stderr.
 
 ## Security and Privacy

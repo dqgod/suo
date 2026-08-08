@@ -28,6 +28,7 @@ export type ScriptCommandConfig = {
   runtime: ScriptRuntime;
   scriptPath: string;
   immediate: boolean;
+  debounceMs: number;
   timeoutMs: number;
 };
 

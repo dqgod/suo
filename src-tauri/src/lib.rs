@@ -1,4 +1,5 @@
 mod app_icon;
+mod arguments;
 mod calculator;
 mod catalog;
 mod config;
@@ -13,6 +14,7 @@ mod scripts;
 mod spotlight;
 mod translator;
 mod tray;
+mod web_search;
 
 use std::sync::Arc;
 

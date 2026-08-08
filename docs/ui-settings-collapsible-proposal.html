@@ -201,7 +201,7 @@
               <button class="summary">
                 <span class="dot"></span>
                 <span class="summary-copy"><span class="title-line"><strong>时间戳转换</strong><code>ts</code></span><span class="description">将毫秒时间戳转换为本地日期时间，适合日志排查。</span></span>
-                <span class="badges"><span class="badge">Python</span><span class="badge">停顿后执行</span></span><span class="chevron">⌄</span>
+                <span class="badges"><span class="badge">Python</span><span class="badge">50 ms 后执行</span></span><span class="chevron">⌄</span>
               </button>
               <div class="editor">
                 <div class="grid">
@@ -209,7 +209,8 @@
                   <label class="wide">描述 / 使用说明<textarea>将毫秒时间戳转换为本地日期时间，示例：ts 1786082576069</textarea></label>
                   <label>运行时<select><option>Python</option></select></label><label>别名<input placeholder="逗号分隔" /></label>
                   <label class="wide">脚本路径<input value="examples/timestamp.py" /></label>
-                  <label>超时（ms）<input value="3000" /></label><label>执行方式<select><option>输入停顿 50 ms 后执行</option><option>按 Enter 执行</option></select></label>
+                  <label>超时（ms）<input value="3000" /></label><label>执行方式<select><option>输入停顿后执行</option><option>按 Enter 执行</option></select></label>
+                  <label>执行延迟（ms，最低 20）<input type="number" min="20" value="50" /></label>
                 </div>
                 <div class="editor-actions"><button class="danger">删除</button><div class="right-actions"><button class="cancel">取消</button><button class="done">完成编辑</button></div></div>
               </div>
@@ -220,7 +221,7 @@
 
         <section class="panel" id="web">
           <div class="list">
-            <article class="item"><button class="summary"><span class="dot"></span><span class="summary-copy"><span class="title-line"><strong>Google 搜索</strong><code>google</code></span><span class="description">使用默认浏览器在 Google 中搜索输入内容。</span></span><span class="badges"><span class="badge">网络搜索</span></span><span class="chevron">⌄</span></button><div class="editor"><div class="grid"><label>名称<input value="Google 搜索" /></label><label>关键词<input value="google" /></label><label class="wide">描述 / 使用说明<textarea>使用默认浏览器在 Google 中搜索输入内容。</textarea></label><label class="wide">URL 模板<input value="https://www.google.com.hk/search?q={query}" /></label></div><div class="editor-actions"><button class="danger">删除</button><div class="right-actions"><button class="cancel">取消</button><button class="done">完成编辑</button></div></div></div></article>
+            <article class="item"><button class="summary"><span class="dot"></span><span class="summary-copy"><span class="title-line"><strong>Google 搜索</strong><code>google</code></span><span class="description">使用默认浏览器在 Google 中搜索输入内容。</span></span><span class="badges"><span class="badge">网络搜索</span></span><span class="chevron">⌄</span></button><div class="editor"><div class="grid"><label>名称<input value="Google 搜索" /></label><label>关键词<input value="google" /></label><label class="wide">描述 / 使用说明<textarea>使用默认浏览器在 Google 中搜索输入内容。</textarea></label><label class="wide">URL 模板（{query} 整段；{query0}/{query1} 分参数）<input value="https://www.google.com.hk/search?q={query}" /></label></div><div class="editor-actions"><button class="danger">删除</button><div class="right-actions"><button class="cancel">取消</button><button class="done">完成编辑</button></div></div></div></article>
           </div>
         </section>
 

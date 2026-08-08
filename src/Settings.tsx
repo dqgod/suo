@@ -321,6 +321,7 @@ function Settings() {
       runtime: "python",
       scriptPath: "",
       immediate: false,
+      debounceMs: 50,
       timeoutMs: 3000,
     };
     setDraft({ ...nextDraft, scriptCommands: [...nextDraft.scriptCommands, command] });
@@ -482,7 +483,7 @@ function Settings() {
                               name={summary.name}
                               keyword={summary.keyword}
                               description={summary.description}
-                              badges={[runtimeLabels[summary.runtime], summary.immediate ? t.immediateBadge : t.enterBadge]}
+                              badges={[runtimeLabels[summary.runtime], summary.immediate ? `${summary.debounceMs} ms ${t.immediateBadge}` : t.enterBadge]}
                               onToggle={() => openScript(command)}
                             >
                               {activeEditor && (
@@ -500,6 +501,7 @@ function Settings() {
                                     <Field label={t.scriptPath} wide><input value={activeEditor.value.scriptPath} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, scriptPath: event.target.value } })} placeholder="D:\\scripts\\tool.py" /></Field>
                                     <Field label={t.timeout}><input type="number" min={100} max={60000} value={activeEditor.value.timeoutMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, timeoutMs: Number(event.target.value) } })} /></Field>
                                     <Field label={t.executionMode}><select value={activeEditor.value.immediate ? "immediate" : "enter"} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, immediate: event.target.value === "immediate" } })}><option value="enter">{t.enterMode}</option><option value="immediate">{t.immediateMode}</option></select></Field>
+                                    {activeEditor.value.immediate && <Field label={t.debounce}><input type="number" min={20} max={60000} value={activeEditor.value.debounceMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, debounceMs: Number(event.target.value) } })} /></Field>}
                                   </div>
                                   <EditorActions onRemove={() => removeScript(activeEditor.value)} onCancel={cancelEditor} onDone={commitEditor} />
                                 </>

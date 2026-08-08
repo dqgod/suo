@@ -8,12 +8,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::launcher::LauncherState;
+use crate::{launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 3;
+const CONFIG_VERSION: u32 = 4;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
+const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
+const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +66,13 @@ pub struct ScriptCommandConfig {
     pub runtime: ScriptRuntime,
     pub script_path: String,
     pub immediate: bool,
+    #[serde(default = "default_script_debounce_ms")]
+    pub debounce_ms: u64,
     pub timeout_ms: u64,
+}
+
+const fn default_script_debounce_ms() -> u64 {
+    50
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,12 +147,13 @@ impl Default for AppConfig {
                 id: "timestamp-example".into(),
                 name: "时间戳转换".into(),
                 keyword: "ts".into(),
-                description: "将毫秒时间戳转换为本地日期时间。".into(),
+                description: "将毫秒时间戳转换为日期时间；第二个参数可传 +8 等时区偏移。".into(),
                 aliases: Vec::new(),
                 enabled: true,
                 runtime: ScriptRuntime::Python,
                 script_path: "examples/timestamp.py".into(),
                 immediate: true,
+                debounce_ms: default_script_debounce_ms(),
                 timeout_ms: 3_000,
             }],
             web_searches: vec![WebSearchConfig {
@@ -416,10 +425,10 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
     }
 
     match config.version {
-        // v2 adds optional descriptions and v3 adds the optional empty-query
-        // compact mode. Serde defaults make both migrations non-destructive.
-        0 | 1 | 2 => config.version = 3,
-        3 => {}
+        // v2 adds optional descriptions, v3 adds the empty-query compact mode,
+        // and v4 adds per-script debounce. Serde defaults keep migrations safe.
+        0 | 1 | 2 | 3 => config.version = 4,
+        4 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -469,6 +478,12 @@ fn normalize_script(command: &mut ScriptCommandConfig) -> Result<(), String> {
     if command.script_path.starts_with("http://") || command.script_path.starts_with("https://") {
         return Err(format!("脚本 {} 不允许使用远程 URL", command.keyword));
     }
+    if !(MIN_SCRIPT_DEBOUNCE_MS..=MAX_SCRIPT_DEBOUNCE_MS).contains(&command.debounce_ms) {
+        return Err(format!(
+            "脚本 {} 的执行延迟必须在 {MIN_SCRIPT_DEBOUNCE_MS}–{MAX_SCRIPT_DEBOUNCE_MS} ms 之间",
+            command.keyword
+        ));
+    }
     if !(100..=60_000).contains(&command.timeout_ms) {
         return Err(format!(
             "脚本 {} 的超时必须在 100–60000 ms 之间",
@@ -485,13 +500,8 @@ fn normalize_web_search(search: &mut WebSearchConfig) -> Result<(), String> {
     search.description = optional_trimmed(&search.description, "网络搜索说明", 200)?;
     search.aliases = normalize_aliases(&search.aliases, "网络搜索命令")?;
     search.url_template = required_trimmed(&search.url_template, "网络搜索 URL 模板", 2_048)?;
-    if !search.url_template.contains("{query}") {
-        return Err(format!(
-            "网络搜索 {} 的 URL 必须包含 {{query}}",
-            search.keyword
-        ));
-    }
-    let sample = search.url_template.replace("{query}", "test");
+    let sample = web_search::sample_url(&search.url_template)
+        .map_err(|error| format!("网络搜索 {} 的 URL 无效：{error}", search.keyword))?;
     let parsed = tauri::Url::parse(&sample)
         .map_err(|error| format!("网络搜索 {} 的 URL 无效：{error}", search.keyword))?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -713,10 +723,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_web_template_without_query_placeholder() {
-        let mut config = AppConfig::default();
-        config.web_searches[0].url_template = "https://example.com".into();
-        assert!(normalize_and_validate(config).is_err());
+    fn validates_supported_web_search_placeholders() {
+        let mut positional = AppConfig::default();
+        positional.web_searches[0].url_template =
+            "https://example.com/?q={query0}&v={query1}".into();
+        assert!(normalize_and_validate(positional).is_ok());
+
+        let mut missing = AppConfig::default();
+        missing.web_searches[0].url_template = "https://example.com".into();
+        assert!(normalize_and_validate(missing).is_err());
+
+        let mut legacy_position = AppConfig::default();
+        legacy_position.web_searches[0].url_template = "https://example.com/?q={0}".into();
+        assert!(normalize_and_validate(legacy_position).is_err());
     }
 
     #[test]
@@ -748,29 +767,82 @@ mod tests {
             .as_object_mut()
             .expect("web object")
             .remove("description");
+        legacy["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("compactWhenEmpty");
+        legacy["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("debounceMs");
 
         let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v1");
         let migrated = normalize_and_validate(config).expect("migrate legacy v1");
         assert_eq!(migrated.version, CONFIG_VERSION);
         assert!(!migrated.launcher.compact_when_empty);
+        assert_eq!(
+            migrated.script_commands[0].debounce_ms,
+            default_script_debounce_ms()
+        );
         assert!(migrated.translation.description.is_empty());
         assert!(migrated.script_commands[0].description.is_empty());
         assert!(migrated.web_searches[0].description.is_empty());
     }
 
     #[test]
-    fn migrates_v2_without_compact_empty_setting() {
+    fn migrates_v2_without_compact_or_debounce_settings() {
         let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
         legacy["version"] = serde_json::json!(2);
         legacy["launcher"]
             .as_object_mut()
             .expect("launcher object")
             .remove("compactWhenEmpty");
+        legacy["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("debounceMs");
 
         let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v2");
         let migrated = normalize_and_validate(config).expect("migrate legacy v2");
         assert_eq!(migrated.version, CONFIG_VERSION);
         assert!(!migrated.launcher.compact_when_empty);
+        assert_eq!(
+            migrated.script_commands[0].debounce_ms,
+            default_script_debounce_ms()
+        );
+    }
+
+    #[test]
+    fn migrates_v3_without_script_debounce_setting() {
+        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
+        legacy["version"] = serde_json::json!(3);
+        legacy["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("debounceMs");
+
+        let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v3");
+        let migrated = normalize_and_validate(config).expect("migrate legacy v3");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.script_commands[0].debounce_ms,
+            default_script_debounce_ms()
+        );
+    }
+
+    #[test]
+    fn validates_script_debounce_range() {
+        let mut minimum = AppConfig::default();
+        minimum.script_commands[0].debounce_ms = MIN_SCRIPT_DEBOUNCE_MS;
+        assert!(normalize_and_validate(minimum).is_ok());
+
+        let mut too_short = AppConfig::default();
+        too_short.script_commands[0].debounce_ms = MIN_SCRIPT_DEBOUNCE_MS - 1;
+        assert!(normalize_and_validate(too_short).is_err());
+
+        let mut too_long = AppConfig::default();
+        too_long.script_commands[0].debounce_ms = MAX_SCRIPT_DEBOUNCE_MS + 1;
+        assert!(normalize_and_validate(too_long).is_err());
     }
 
     #[test]

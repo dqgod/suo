@@ -10,12 +10,13 @@ use std::{
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State};
 
 use crate::{
+    arguments,
     catalog::{self, CatalogEntry},
     config::{AppConfig, ConfigState, ScriptCommandConfig, TranslationConfig, WebSearchConfig},
     file_search::{self, FileSearchOutcome},
     i18n,
     models::{CancelStatus, IndexStatus, ResultAction, SearchResponse, SearchResult},
-    scripts, translator,
+    scripts, translator, web_search,
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
@@ -315,11 +316,11 @@ fn search_launcher_blocking(
     } else if let Some((command, arguments)) = script_command(&config, &query) {
         provider = format!("脚本命令 · {}", command.keyword);
         provider_detail = if command.immediate {
-            "参数数组模式 · 输入停顿 50 ms 后执行".into()
+            format!("参数数组模式 · 输入停顿 {} ms 后执行", command.debounce_ms)
         } else {
             "参数数组模式 · 按 Enter 执行".into()
         };
-        match scripts::parse_arguments(arguments) {
+        match arguments::parse(arguments) {
             Err(error) => vec![error_result(
                 format!("script:{}:args-error", command.id),
                 error,
@@ -359,16 +360,22 @@ fn search_launcher_blocking(
                 "请输入要搜索的内容",
             )]
         } else {
-            let url = expand_web_url(&search.url_template, arguments);
-            vec![SearchResult {
-                id: format!("web:{}:{arguments}", search.id),
-                title: format!("{} 搜索：{arguments}", search.name),
-                subtitle: url.clone(),
-                kind: "web".into(),
-                badge: "网络".into(),
-                score: 2_000,
-                action: ResultAction::OpenUrl { url },
-            }]
+            match web_search::expand_url(&search.url_template, arguments) {
+                Ok(url) => vec![SearchResult {
+                    id: format!("web:{}:{arguments}", search.id),
+                    title: format!("{} 搜索：{arguments}", search.name),
+                    subtitle: url.clone(),
+                    kind: "web".into(),
+                    badge: "网络".into(),
+                    score: 2_000,
+                    action: ResultAction::OpenUrl { url },
+                }],
+                Err(error) => vec![error_result(
+                    format!("web:{}:args-error", search.id),
+                    error,
+                    "请补充参数或检查引号",
+                )],
+            }
         }
     } else if let Some(arguments) = command_arguments(&query, "f") {
         if arguments.is_empty() {
@@ -887,10 +894,6 @@ fn web_search_command<'config, 'query>(
     })
 }
 
-fn expand_web_url(template: &str, query: &str) -> String {
-    template.replace("{query}", urlencoding::encode(query).as_ref())
-}
-
 fn script_output_result(
     command: &ScriptCommandConfig,
     arguments: &str,
@@ -947,10 +950,7 @@ mod tests {
 
     use crate::catalog::CatalogEntry;
 
-    use super::{
-        calculate, catalog_results, command_arguments, expand_web_url, is_settings_query,
-        match_score,
-    };
+    use super::{calculate, catalog_results, command_arguments, is_settings_query, match_score};
 
     #[test]
     fn evaluates_basic_calculation() {
@@ -970,14 +970,6 @@ mod tests {
         assert!(is_settings_query("SETTINGS"));
         assert!(is_settings_query("设置"));
         assert!(!is_settings_query("setting extra"));
-    }
-
-    #[test]
-    fn encodes_web_search_query() {
-        assert_eq!(
-            expand_web_url("https://example.com/?q={query}", "codex 中文"),
-            "https://example.com/?q=codex%20%E4%B8%AD%E6%96%87"
-        );
     }
 
     #[test]

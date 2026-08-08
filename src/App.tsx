@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./Settings";
-import { AppConfig, applyAppearance, loadAppConfig } from "./config";
+import { AppConfig, applyAppearance, loadAppConfig, ScriptCommandConfig } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 
 type ResultAction =
@@ -61,6 +61,28 @@ const initialResponse: SearchResponse = {
   actionEpoch: 0,
   results: [],
 };
+
+const defaultQueryDebounceMs = 50;
+const minimumScriptDebounceMs = 20;
+const maximumScriptDebounceMs = 60_000;
+
+function queryDebounceMs(query: string, commands: ScriptCommandConfig[]) {
+  if (query.length === 0) return 0;
+  const keyword = query.trim().split(/\s+/, 1)[0]?.toLowerCase();
+  if (!keyword) return defaultQueryDebounceMs;
+  const command = commands.find((candidate) => (
+    candidate.enabled &&
+    candidate.immediate &&
+    [candidate.keyword, ...candidate.aliases].some(
+      (value) => value.toLowerCase() === keyword,
+    )
+  ));
+  if (!command || !Number.isFinite(command.debounceMs)) return defaultQueryDebounceMs;
+  return Math.min(
+    maximumScriptDebounceMs,
+    Math.max(minimumScriptDebounceMs, command.debounceMs),
+  );
+}
 
 const kindIcons: Record<string, string> = {
   app: "◆",
@@ -227,6 +249,7 @@ function Launcher() {
   const [composing, setComposing] = useState(false);
   const [launcherVisible, setLauncherVisible] = useState(false);
   const [compactWhenEmpty, setCompactWhenEmpty] = useState(false);
+  const [configReady, setConfigReady] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
@@ -235,6 +258,8 @@ function Launcher() {
   const activationReadyRef = useRef(false);
   const preserveCancellationRef = useRef<number | null>(null);
   const keepLastInputRef = useRef(false);
+  const scriptCommandsRef = useRef<ScriptCommandConfig[]>([]);
+  const configRevisionRef = useRef(0);
   const compactDesiredRef = useRef(false);
   const resizeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -286,19 +311,39 @@ function Launcher() {
   }, []);
 
   useEffect(() => {
-    void loadAppConfig()
-      .then((view) => {
-        keepLastInputRef.current = view.config.launcher.keepLastInput;
-        setCompactWhenEmpty(view.config.launcher.compactWhenEmpty);
-        applyAppearance(view.config.appearance);
-        if (view.configLoadWarning) setMessage(view.configLoadWarning);
-      })
-      .catch((error) => setMessage(String(error)));
+    let disposed = false;
+    const applyConfig = (config: AppConfig) => {
+      keepLastInputRef.current = config.launcher.keepLastInput;
+      scriptCommandsRef.current = config.scriptCommands;
+      setCompactWhenEmpty(config.launcher.compactWhenEmpty);
+      applyAppearance(config.appearance);
+      setConfigReady(true);
+    };
     const updated = listen<AppConfig>("app-config-updated", (event) => {
-      keepLastInputRef.current = event.payload.launcher.keepLastInput;
-      setCompactWhenEmpty(event.payload.launcher.compactWhenEmpty);
-      applyAppearance(event.payload.appearance);
+      if (disposed) return;
+      configRevisionRef.current += 1;
+      applyConfig(event.payload);
     });
+    const loadInitialConfig = async () => {
+      try {
+        await updated;
+      } catch (error) {
+        if (!disposed) setMessage(String(error));
+      }
+      if (disposed) return;
+      const loadRevision = configRevisionRef.current;
+      try {
+        const view = await loadAppConfig();
+        if (disposed || loadRevision !== configRevisionRef.current) return;
+        applyConfig(view.config);
+        if (view.configLoadWarning) setMessage(view.configLoadWarning);
+      } catch (error) {
+        if (!disposed && loadRevision === configRevisionRef.current) {
+          setMessage(String(error));
+        }
+      }
+    };
+    void loadInitialConfig();
     const providersUpdated = listen("provider-config-updated", () => {
       // Provider edits invalidate the meaning of the current command. Clear it
       // instead of re-running a translation or immediate script as a side effect.
@@ -309,16 +354,20 @@ function Launcher() {
       if (wasEmpty) void search("");
     });
     return () => {
-      void updated.then((unlisten) => unlisten());
-      void providersUpdated.then((unlisten) => unlisten());
+      disposed = true;
+      void updated.then((unlisten) => unlisten(), () => undefined);
+      void providersUpdated.then((unlisten) => unlisten(), () => undefined);
     };
   }, [search, updateQuery]);
 
   useEffect(() => {
-    if (composing) return;
-    const timer = window.setTimeout(() => void search(query), query ? 50 : 0);
+    if (composing || (!configReady && query.trim().length > 0)) return;
+    const timer = window.setTimeout(
+      () => void search(query),
+      queryDebounceMs(query, scriptCommandsRef.current),
+    );
     return () => window.clearTimeout(timer);
-  }, [composing, query, search]);
+  }, [composing, configReady, query, search]);
 
   const compactEmpty = compactWhenEmpty && query.length === 0;
 

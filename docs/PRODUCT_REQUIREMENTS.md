@@ -249,8 +249,9 @@ fy <text>
 | `runtime` | 是 | `python`、`bash`、`shell`、`powershell`、`executable` |
 | `scriptPath` | 是 | 脚本或可执行文件绝对路径 |
 | `argumentMode` | 是 | `argv` 或原始字符串；默认 `argv` 并支持引号，均不执行 Shell 展开 |
-| `argumentRule` | 是 | `none`、`optional` 或 `required`，并可配置简单参数数量范围 |
+| `argumentRule` | 否 | 后续可用于参数提示/校验；当前 MVP 不声明参数 Schema，参数数量与含义由脚本决定 |
 | `executionMode` | 是 | `immediate` 或 `enter`；即时查询默认取消旧任务，也可配置为排队 |
+| `debounceMs` | 即时执行时 | 输入停止后等待多久执行；默认 50，范围 20–60000 |
 | `workingDirectory` | 否 | 默认脚本所在目录 |
 | `timeoutMs` | 是 | 默认 5000，范围 100–60000 |
 | `outputFormat` | 是 | `text` 或 `suo-json-v1` |
@@ -268,6 +269,8 @@ fy <text>
   "interpreterPath": "python3",
   "scriptPath": "~/Suo/scripts/timestamp.py",
   "argumentMode": "argv",
+  "executionMode": "immediate",
+  "debounceMs": 50,
   "workingDirectory": "~/Suo/scripts",
   "timeoutMs": 3000,
   "outputFormat": "text",
@@ -280,12 +283,14 @@ fy <text>
 
 ```text
 ts 1786082576069
+ts 1786082576069 +8
 ```
 
 进程实际接收的参数应等价于：
 
 ```text
 python3 timestamp.py 1786082576069
+python3 timestamp.py 1786082576069 +8
 ```
 
 标准输出：
@@ -294,7 +299,7 @@ python3 timestamp.py 1786082576069
 2026-08-07 14:02:56
 ```
 
-启动器将首个非空文本结果显示为主标题，回车按配置复制结果。
+Suo 只负责将命令后的文本安全拆分为独立 argv；参数数量、顺序、可选性和含义均由脚本自身决定。示例脚本把第一个参数解释为毫秒时间戳，把可选的第二个参数解释为 `+8`、`-5` 或 `+08:30` 形式的时区偏移。启动器将首个非空文本结果显示为主标题，回车按配置复制结果。
 
 #### 5.5.2 结构化输出
 
@@ -334,7 +339,7 @@ python3 timestamp.py 1786082576069
 
 ### 5.6 自定义网络搜索（P0）
 
-用户可以将关键词映射到带有 `{query}` 占位符的 HTTP/HTTPS URL 模板。
+用户可以将关键词映射到带有 `{query}` 或位置参数占位符的 HTTP/HTTPS URL 模板。
 
 Google 搜索配置示例：
 
@@ -370,9 +375,12 @@ https://www.google.com.hk/search?q=codex
 - 关键词必须唯一，并与翻译、脚本和其他内置命令共用冲突检测；
 - 每条网络搜索可配置最多 200 个字符的描述或使用说明；
 - `{query}` 代表关键词之后的完整参数，替换前必须使用 UTF-8 百分号编码；
-- 例如 `google codex launcher` 应生成 `https://www.google.com.hk/search?q=codex%20launcher`；
-- 首版必须且只能包含一个 `{query}` 占位符；缺少占位符时不允许保存；
-- 允许 `https://` 和 `http://`，拒绝 `file:`、`javascript:`、`data:` 及其他协议；
+- 使用 `{query}` 时，`google test codex` 会把 `test codex` 作为一个完整值，不需要写引号；
+- `{query0}`、`{query1}`…代表按安全 argv 规则解析的位置参数；例如模板 `?q={query0}&v={query1}` 配合 `google test codex` 生成 `?q=test&v=codex`；
+- 位置参数本身包含空格时使用引号，例如 `google "hello world" codex`；引号只用于分组，不进入 URL；
+- 同一占位符可重复出现，也可混用 `{query}` 与位置参数；每次替换都独立进行 UTF-8 百分号编码；
+- 模板至少包含一个受支持占位符；未知、未闭合或超过 `{query31}` 的占位符不允许保存；位置参数模式执行时若缺少参数或分组引号未闭合，只显示错误结果且不得打开浏览器；
+- 模板必须使用规范的 `https://` 或 `http://` 前缀，拒绝省略双斜杠、反斜杠形式以及 `file:`、`javascript:`、`data:` 等其他协议；
 - 模板中的域名和固定路径在执行前不可由查询参数改写；
 - 设置页保存前展示示例 URL，并检查 URL 能否被正确解析；
 - 查询为空时显示用法提示，不打开浏览器；
@@ -630,12 +638,15 @@ type ResultItem = {
 
 - `google codex` 显示可执行结果，按 `Enter` 打开 `https://www.google.com.hk/search?q=codex`；
 - `google codex launcher` 中的空格被编码，中文、`&`、`?`、`#` 等字符不会改变模板结构；
+- 模板 `?q={query0}&v={query1}` 配合 `google test codex` 分别编码两个参数；`{query}` 模式下同一输入仍作为无需引号的完整参数；
 - 空参数不会打开浏览器；`javascript:`、`file:`、`data:` 等模板无法保存；
 - 只输入建议或切换选中项不会产生外部跳转；
 
 ### 脚本
 
 - `ts 1786082576069` 将时间戳作为单个 argv 参数传递并展示脚本输出；
+- `ts 1786082576069 +8` 将两个 argv 参数传给示例脚本，由脚本将第二项解释为时区偏移；
+- 即时脚本可配置 20–60000 ms 输入停顿延迟，低于 20 ms 的配置无法保存；
 - 带空格、引号和 shell 元字符的参数不会在 argv 模式下被二次解释；
 - 超时能终止进程树；输出超限时安全截断；
 - 未找到解释器、脚本无权限、退出码非零均有可操作提示；
@@ -668,7 +679,7 @@ type ResultItem = {
 4. 自定义脚本支持 Python、Bash、PowerShell 和可执行文件；默认安全 argv，同时提供显式 Shell 高级模式；
 5. 脚本同时支持纯文本和 UTF-8 `suo-json-v1`，并可配置即时或回车执行；
 6. 翻译首版实现 Microsoft Translator，自带 Provider 接口但暂不开放通用 REST 编辑器；
-7. 网络搜索首版支持一个 `{query}` 占位符和 HTTP/HTTPS 模板，统一使用默认浏览器；
+7. 网络搜索支持整段 `{query}` 与 `{query0}`、`{query1}`…位置参数占位符，模板仅限 HTTP/HTTPS，统一使用默认浏览器；
 8. 首版默认极光玻璃主题，提供有限设计变量和 JSON 导入导出，不做复杂主题编辑器；
 9. 本地优先，不做账号、插件市场、远程脚本、自动遥测和自动更新。
 
