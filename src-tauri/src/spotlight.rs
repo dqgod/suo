@@ -20,6 +20,10 @@ pub fn search<F>(query: &str, max_results: usize, is_cancelled: F) -> SpotlightO
 where
     F: Fn() -> bool,
 {
+    if let Some(reason) = unavailable_index_reason() {
+        return SpotlightOutcome::Unavailable(reason);
+    }
+
     // -name keeps this launcher search filename-oriented instead of requesting
     // full-text document contents. User input remains a separate process arg.
     let mut command = Command::new("/usr/bin/mdfind");
@@ -114,7 +118,55 @@ where
     SpotlightOutcome::Available(entries)
 }
 
+fn unavailable_index_reason() -> Option<String> {
+    let output = Command::new("/usr/bin/mdutil")
+        .args(["-s", "/"])
+        .output()
+        .ok()?;
+    let detail = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    disabled_index_reason(&detail)
+}
+
+fn disabled_index_reason(detail: &str) -> Option<String> {
+    let normalized = detail.to_lowercase();
+    if normalized.contains("spotlight server is disabled")
+        || normalized.contains("indexing disabled")
+        || normalized.contains("spotlight 服务器已停用")
+        || normalized.contains("索引已停用")
+    {
+        Some("本机 Spotlight 索引已停用".into())
+    } else {
+        None
+    }
+}
+
 fn terminate(child: &mut std::process::Child) {
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::disabled_index_reason;
+
+    #[test]
+    fn detects_disabled_spotlight_status() {
+        assert_eq!(
+            disabled_index_reason("Spotlight server is disabled."),
+            Some("本机 Spotlight 索引已停用".into())
+        );
+        assert_eq!(
+            disabled_index_reason("/:\n\tIndexing disabled."),
+            Some("本机 Spotlight 索引已停用".into())
+        );
+    }
+
+    #[test]
+    fn accepts_enabled_spotlight_status() {
+        assert_eq!(disabled_index_reason("/:\n\tIndexing enabled."), None);
+    }
 }

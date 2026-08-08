@@ -358,9 +358,9 @@ impl ProcessTree {
     }
 
     fn terminate(&self, child: &mut Child) {
-        terminate_unix_group(self.process_group, "-TERM");
+        terminate_unix_group(self.process_group, libc::SIGTERM);
         thread::sleep(Duration::from_millis(100));
-        terminate_unix_group(self.process_group, "-KILL");
+        terminate_unix_group(self.process_group, libc::SIGKILL);
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -369,16 +369,19 @@ impl ProcessTree {
 #[cfg(unix)]
 impl Drop for ProcessTree {
     fn drop(&mut self) {
-        terminate_unix_group(self.process_group, "-KILL");
+        terminate_unix_group(self.process_group, libc::SIGKILL);
     }
 }
 
 #[cfg(unix)]
-fn terminate_unix_group(process_group: u32, signal: &str) {
-    let process_group = format!("-{process_group}");
-    let _ = Command::new("/bin/kill")
-        .args([signal, &process_group])
-        .status();
+fn terminate_unix_group(process_group: u32, signal: libc::c_int) {
+    let Ok(process_group) = i32::try_from(process_group) else {
+        return;
+    };
+    // SAFETY: a negative PID targets the child-owned process group created in
+    // configure_process_group. Signals are best effort because the group may
+    // already have exited between polling and termination.
+    let _ = unsafe { libc::kill(-process_group, signal) };
 }
 
 #[cfg(unix)]
@@ -496,7 +499,9 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{collect_output, hide_console, spawn_capped_reader, MAX_OUTPUT_BYTES};
+    #[cfg(target_os = "windows")]
+    use super::hide_console;
+    use super::{collect_output, configure_process_group, spawn_capped_reader, MAX_OUTPUT_BYTES};
 
     #[test]
     fn reader_caps_output_while_streaming() {
@@ -510,6 +515,62 @@ mod tests {
 
         assert_eq!(output.len(), MAX_OUTPUT_BYTES);
         assert!(exceeded.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_pipe_descendant_cannot_escape_deadline() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "suo-process-tree-test-{}-{}.pid",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "sleep 5 & echo $! > \"$1\"; wait",
+            "suo-process-tree-test",
+            pid_file.to_str().expect("temporary path should be UTF-8"),
+        ]);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_process_group(&mut command);
+        let child = command.spawn().expect("test command should start");
+        // SAFETY: getpgid only reads kernel process metadata for the live child.
+        assert_eq!(
+            unsafe { libc::getpgid(child.id() as i32) },
+            child.id() as i32
+        );
+        let started = Instant::now();
+
+        let result = collect_output(child, &|| false, Duration::from_millis(250));
+
+        assert_eq!(result.unwrap_err(), "脚本执行超过 250 ms，已终止进程树");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let descendant = std::fs::read_to_string(&pid_file)
+            .expect("descendant PID should be recorded")
+            .trim()
+            .parse::<i32>()
+            .expect("descendant PID should be numeric");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while process_exists(descendant) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let descendant_survived = process_exists(descendant);
+        if descendant_survived {
+            // SAFETY: this only cleans up the exact descendant created above.
+            let _ = unsafe { libc::kill(descendant, libc::SIGKILL) };
+        }
+        let _ = std::fs::remove_file(pid_file);
+        assert!(!descendant_survived, "descendant process survived timeout");
+    }
+
+    #[cfg(unix)]
+    fn process_exists(process_id: i32) -> bool {
+        // SAFETY: signal 0 performs an existence/permission check only.
+        if unsafe { libc::kill(process_id, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     }
 
     #[cfg(target_os = "windows")]

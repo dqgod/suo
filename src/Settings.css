@@ -25,9 +25,12 @@
   gap: 9px;
 }
 
-.settings-brand span {
-  color: #8c7cff;
-  font-size: 22px;
+.settings-brand-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .settings-brand strong {

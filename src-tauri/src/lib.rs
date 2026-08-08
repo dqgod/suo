@@ -32,7 +32,7 @@ pub fn run() {
         launcher::request_show_launcher(app);
     }));
 
-    builder
+    let app = builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -119,8 +119,21 @@ pub fn run() {
             config::set_translation_api_key,
             config::clear_translation_api_key
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Suo");
+        .build(tauri::generate_context!())
+        .expect("failed to build Suo");
+
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } = event
+        {
+            // Finder and Dock reactivate an existing macOS application through
+            // applicationShouldHandleReopen instead of starting a second process.
+            launcher::request_show_launcher(app);
+        }
+    });
 }
 
 fn default_shortcut() -> (Shortcut, &'static str) {

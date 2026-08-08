@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./Settings";
+import { SuoIcon } from "./SuoIcon";
 import { AppConfig, applyAppearance, loadAppConfig, ScriptCommandConfig } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 
@@ -597,7 +598,7 @@ function Launcher() {
             aria-label={zhCN.openSettings}
             onClick={() => void openSettings()}
           >
-            <span aria-hidden="true">◇</span>
+            <SuoIcon className="brand-button-icon" />
           </button>
         </div>
 

@@ -153,22 +153,22 @@ button {
   flex: 0 0 auto;
   place-items: center;
   margin-left: 2px;
-  border: 1px solid rgba(132, 145, 191, 0.18);
+  padding: 0;
+  border: 0;
   border-radius: 10px;
-  color: #9181ff;
-  background: rgba(80, 69, 167, 0.12);
+  background: transparent;
   cursor: pointer;
 }
 
 .brand-button:hover {
-  border-color: rgba(145, 129, 255, 0.38);
-  color: #b4a8ff;
-  background: rgba(100, 84, 211, 0.2);
+  background: rgba(100, 84, 211, 0.16);
 }
 
-.brand-button span {
-  font-size: 21px;
-  line-height: 1;
+.brand-button-icon {
+  display: block;
+  width: 34px;
+  height: 34px;
+  pointer-events: none;
 }
 
 .provider-row {
@@ -469,11 +469,6 @@ body,
 footer,
 .hotkey {
   color: var(--subtle);
-}
-
-.brand-button,
-.settings-brand span {
-  color: var(--accent);
 }
 
 .provider-row,

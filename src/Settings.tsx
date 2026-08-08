@@ -13,6 +13,7 @@ import {
   WebSearchConfig,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
+import { SuoIcon } from "./SuoIcon";
 import "./Settings.css";
 
 const settingsWindow = getCurrentWindow();
@@ -375,7 +376,7 @@ function Settings() {
     <main className="settings-stage">
       <header className="settings-titlebar" data-tauri-drag-region>
         <div className="settings-brand" data-tauri-drag-region>
-          <span aria-hidden="true">◇</span>
+          <SuoIcon className="settings-brand-icon" />
           <strong data-tauri-drag-region>{zhCN.settingsTitle}</strong>
         </div>
         <button type="button" onClick={() => void close()} aria-label={zhCN.closeSettings}>×</button>
