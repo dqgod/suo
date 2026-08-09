@@ -13,6 +13,7 @@ mod models;
 mod scripts;
 #[cfg(target_os = "macos")]
 mod spotlight;
+mod taskbar;
 mod translator;
 mod tray;
 mod web_search;
@@ -44,6 +45,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            taskbar::apply_window_policy(app)?;
             let config_state = Arc::new(config::ConfigState::load(app.handle()));
             let initial_config = config_state.snapshot();
             dock::apply_initial_visibility(app, initial_config.launcher.show_dock_icon);

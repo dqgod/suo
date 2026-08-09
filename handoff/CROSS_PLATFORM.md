@@ -25,6 +25,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 
 - macOS 菜单栏使用 `src-tauri/icons/tray-macos-template.png` 并启用 template mode；Windows 继续使用彩色默认应用图标。
 - macOS Dock 可见性通过 `src-tauri/src/dock.rs` 隔离；Windows 不应把同一字段解释为 taskbar 隐藏。
+- Windows taskbar 角色通过 `src-tauri/src/taskbar.rs` 隔离：`main` 搜索窗口跳过任务栏，`settings` 设置窗口保留任务栏入口；不得把这项策略泄漏到 macOS Dock。
 - Dock 图标、菜单栏图标、搜索框 Logo 与设置页 Logo 是不同呈现位置，不要通过替换同一个资源顺带改变全部位置。
 - 平台修复必须放在 adapter 或 `cfg(target_os = ...)` 后面，避免未使用 import、错误 API 或行为泄漏到另一平台。
 - Windows 开发阶段曾让 `std::env` import 和仅 Windows 使用的参数暴露到 macOS 编译；此类 warning 应通过精确 `cfg` 或明确的跨平台接口处理，不要长期留在共享模块。
