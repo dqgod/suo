@@ -540,9 +540,11 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    #[cfg(unix)]
+    use super::configure_process_group;
     #[cfg(target_os = "windows")]
     use super::hide_console;
-    use super::{collect_output, configure_process_group, spawn_capped_reader, MAX_OUTPUT_BYTES};
+    use super::{collect_output, spawn_capped_reader, MAX_OUTPUT_BYTES};
 
     #[cfg(target_os = "macos")]
     #[test]

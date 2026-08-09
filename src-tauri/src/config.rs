@@ -2773,6 +2773,21 @@ mod tests {
     }
 
     #[test]
+    fn dock_visibility_round_trips_on_every_platform() {
+        for visible in [false, true] {
+            let mut config = AppConfig::default();
+            config.launcher.show_dock_icon = visible;
+            let encoded = serde_json::to_string(&config).expect("serialize Dock preference");
+            let decoded: AppConfig =
+                serde_json::from_str(&encoded).expect("deserialize Dock preference");
+            let normalized =
+                normalize_and_validate(decoded).expect("validate round-tripped Dock preference");
+
+            assert_eq!(normalized.launcher.show_dock_icon, visible);
+        }
+    }
+
+    #[test]
     fn migrates_v4_without_custom_themes() {
         let mut legacy = legacy_config_value(4);
         legacy["appearance"]

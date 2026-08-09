@@ -11,7 +11,7 @@
 | macOS Apple Silicon 基线 | **已完成** | 后续平台改动按 `MACOS.md` 做回归；仍保留少量必须肉眼检查的项目。 |
 | 2026-08-09 macOS `dev` 增量 | **已完成** | 配置已演进到 v10；几何设置、选中行、菜单栏模板图标和 Dock 显隐均已验证。 |
 | Windows pre-v9 基线 | **已完成** | Everything、应用图标、拼音与 Job Object 路径已有通过记录。 |
-| Windows 当前 `dev`（v9/v10） | **待验证** | 下一位 Windows agent 按 `WINDOWS.md` 完成真实机器编译和回归。 |
+| Windows 当前 `dev`（v9/v10） | **已完成** | x64 构建、68 项测试、`Alt+Space` 和全部人工设置/几何/托盘/视觉验收通过；`0x80004002` 仅为自动化截图工具限制。 |
 
 ## 文件导航
 

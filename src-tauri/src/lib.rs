@@ -124,16 +124,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Suo");
 
-    app.run(|app, event| {
+    app.run(|_app, _event| {
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen {
             has_visible_windows: false,
             ..
-        } = event
+        } = _event
         {
             // Finder and Dock reactivate an existing macOS application through
             // applicationShouldHandleReopen instead of starting a second process.
-            launcher::request_show_launcher(app);
+            launcher::request_show_launcher(_app);
         }
     });
 }
