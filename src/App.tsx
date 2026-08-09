@@ -5,7 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./Settings";
 import { SuoIcon } from "./SuoIcon";
-import { AppConfig, applyAppearance, loadAppConfig, ScriptCommandConfig } from "./config";
+import {
+  AppConfig,
+  applyLauncherAppearance,
+  loadAppConfig,
+  ScriptCommandConfig,
+} from "./config";
 import { zhCN } from "./i18n/zh-CN";
 
 type ResultAction =
@@ -16,11 +21,23 @@ type ResultAction =
   | { type: "openSettings" }
   | { type: "none" };
 
+type ResultKind =
+  | "app"
+  | "file"
+  | "directory"
+  | "calculator"
+  | "script"
+  | "web"
+  | "translation"
+  | "settings"
+  | "hint"
+  | "error";
+
 type SearchResult = {
   id: string;
   title: string;
   subtitle: string;
-  kind: string;
+  kind: ResultKind;
   badge: string;
   score: number;
   action: ResultAction;
@@ -85,7 +102,7 @@ function queryDebounceMs(query: string, commands: ScriptCommandConfig[]) {
   );
 }
 
-const kindIcons: Record<string, string> = {
+const kindIcons: Partial<Record<ResultKind, string>> = {
   app: "◆",
   calculator: "=",
   script: ">_",
@@ -96,8 +113,8 @@ const kindIcons: Record<string, string> = {
   error: "!",
 };
 
-function PathResultIcon({ kind }: { kind: string }) {
-  if (kind === "folder") {
+function PathResultIcon({ kind }: { kind: ResultKind }) {
+  if (kind === "directory") {
     return (
       <svg className="path-result-icon" viewBox="0 0 24 24" fill="none">
         <path d="M3.5 7.4A2.4 2.4 0 0 1 5.9 5h4l2 2h6.2a2.4 2.4 0 0 1 2.4 2.4v7.2a2.4 2.4 0 0 1-2.4 2.4H5.9a2.4 2.4 0 0 1-2.4-2.4V7.4Z" fill="currentColor" opacity=".95" />
@@ -338,7 +355,7 @@ function Launcher() {
       keepLastInputRef.current = config.launcher.keepLastInput;
       scriptCommandsRef.current = config.scriptCommands;
       setCompactWhenEmpty(config.launcher.compactWhenEmpty);
-      applyAppearance(config.appearance);
+      applyLauncherAppearance(config.launcherTheme);
       setAppearanceLayoutRevision((current) => current + 1);
       setConfigReady(true);
     };
@@ -586,7 +603,7 @@ function Launcher() {
         aria-label={zhCN.productName}
       >
         <div className="search-box" data-tauri-drag-region>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="search-icon" viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="10.8" cy="10.8" r="6.8" />
             <path d="m16 16 4.2 4.2" />
           </svg>

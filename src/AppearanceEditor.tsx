@@ -1,206 +1,72 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   builtinThemeIds,
-  createCustomTheme,
-  resolveTheme,
-  type AppearanceConfig,
-  type BuiltinThemeId,
-  type CustomThemeConfig,
+  buildLauncherThemeBundle,
+  buildSettingsThemeBundle,
+  createLauncherTheme,
+  createSettingsTheme,
+  parseLauncherThemeBundle,
+  parseSettingsThemeBundle,
+  resolveLauncherTheme,
+  resolveSettingsTheme,
+  validateWallpaperImageDataUrl,
+  type LauncherCustomThemeConfig,
+  type LauncherThemeConfig,
+  type SearchBorderStyle,
+  type SettingsCustomThemeConfig,
+  type SettingsThemeConfig,
+  type ThemeBackgroundConfig,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 import "./AppearanceEditor.css";
 
+type ThemeScope = "launcher" | "settings";
 type AppearanceEditorProps = {
-  appearance: AppearanceConfig;
-  onChange: (appearance: AppearanceConfig) => void;
+  launcherTheme: LauncherThemeConfig;
+  settingsTheme: SettingsThemeConfig;
+  onChange: (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => void;
   readOnly: boolean;
+  saving?: boolean;
 };
 
-type EditorTab = "colors" | "layout" | "platform";
-type PreviewKind = "launcher" | "settings";
-
-type ThemeBundleV1 = {
-  schema: "suo-theme-v1";
-  version: 1;
-  theme: Omit<CustomThemeConfig, "id">;
+type ThemeTarget = {
+  scope: ThemeScope;
+  themeId: string;
 };
 
-const MAX_WALLPAPER_BYTES = Math.floor(1.5 * 1024 * 1024);
-const MAX_THEME_BUNDLE_BYTES = Math.floor(2.5 * 1024 * 1024);
 const t = zhCN.appearanceEditor;
-const builtinThemeLabels: Record<BuiltinThemeId, string> = {
-  midnight: t.midnight,
-  paper: t.paper,
-  forest: t.forest,
-};
-const colorFields = [
-  ["windowColor", t.colors.window.label, t.colors.window.description],
-  ["panelColor", t.colors.panel.label, t.colors.panel.description],
-  ["fieldColor", t.colors.field.label, t.colors.field.description],
-  ["accentColor", t.colors.accent.label, t.colors.accent.description],
-  ["selectionColor", t.colors.selection.label, t.colors.selection.description],
-  ["textColor", t.colors.text.label, t.colors.text.description],
-  ["mutedColor", t.colors.muted.label, t.colors.muted.description],
-  ["borderColor", t.colors.border.label, t.colors.border.description],
-] as const;
+const MAX_CUSTOM_THEMES = 12;
+const MAX_THEME_BUNDLE_BYTES = Math.floor(2.5 * 1024 * 1024);
+const MAX_WALLPAPER_BYTES = Math.floor(1.5 * 1024 * 1024);
+const builtinLabels = { midnight: t.midnight, paper: t.paper, forest: t.forest } as const;
 
-const themeFieldNames = [
-  "name",
-  "windowColor",
-  "panelColor",
-  "fieldColor",
-  "textColor",
-  "mutedColor",
-  "accentColor",
-  "selectionColor",
-  "borderColor",
-  "windowOpacity",
-  "blurPx",
-  "shadowPercent",
-  "wallpaperDataUrl",
-  "wallpaperOpacity",
-  "radiusPx",
-  "fontFamily",
-  "fontSizePx",
-  "launcherWidthPx",
-  "resultDensity",
-  "maxResults",
-  "iconSizePx",
-  "showSourceBadge",
-  "platformOverrides",
-] as const;
-
-const platformOverrideFieldNames = [
-  "enabled",
-  "windowsBlurPx",
-  "windowsOpacity",
-  "macosBlurPx",
-  "macosOpacity",
-] as const;
-
-function cloneAppearance(appearance: AppearanceConfig): AppearanceConfig {
-  return {
-    ...appearance,
-    customThemes: appearance.customThemes.map((theme) => ({
-      ...theme,
-      platformOverrides: { ...theme.platformOverrides },
-    })),
-  };
+function cloneBackground(theme: ThemeBackgroundConfig): ThemeBackgroundConfig {
+  return { ...theme, platformOverrides: { ...theme.platformOverrides } };
 }
 
-function customThemeId(theme: string) {
+function cloneLauncherScope(scope: LauncherThemeConfig): LauncherThemeConfig {
+  return { ...scope, customThemes: scope.customThemes.map((theme) => ({ ...theme, ...cloneBackground(theme) })) };
+}
+
+function cloneSettingsScope(scope: SettingsThemeConfig): SettingsThemeConfig {
+  return { ...scope, customThemes: scope.customThemes.map((theme) => ({ ...theme, ...cloneBackground(theme) })) };
+}
+
+function customId(theme: string) {
   return theme.startsWith("custom:") ? theme.slice("custom:".length) : null;
 }
 
-function sameThemeId(left: string, right: string | null) {
+function sameId(left: string, right: string | null) {
   return right !== null && left.toLowerCase() === right.toLowerCase();
 }
 
-function fallbackBuiltinTheme() {
-  return builtinThemeIds[0] as BuiltinThemeId;
-}
-
-function isHexColor(value: unknown): value is string {
-  return typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
-  const actualKeys = Object.keys(value);
-  return actualKeys.length === keys.length && actualKeys.every((key) => keys.includes(key));
-}
-
-function isSafeWallpaperDataUrl(value: unknown): value is string {
-  if (value === "") return true;
-  if (typeof value !== "string") return false;
-  const match = /^data:(image\/(?:png|jpeg|webp));base64,([a-z\d+/]+={0,2})$/i.exec(value);
-  if (!match) return false;
-  const base64 = match[2];
-  if (base64.length % 4 !== 0) return false;
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  const content = padding ? base64.slice(0, -padding) : base64;
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const lastSextet = alphabet.indexOf(content[content.length - 1] ?? "");
-  if (lastSextet < 0 || (padding === 2 && (lastSextet & 0x0f) !== 0) || (padding === 1 && (lastSextet & 0x03) !== 0)) {
-    return false;
-  }
-  const bytes = Math.floor((base64.length * 3) / 4) - padding;
-  return bytes >= 0 && bytes <= MAX_WALLPAPER_BYTES;
-}
-
-function parseThemeBundle(value: unknown): Omit<CustomThemeConfig, "id"> {
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["schema", "version", "theme"])) {
-    throw new Error(t.invalidBundleShape);
-  }
-  if (value.schema !== "suo-theme-v1" || value.version !== 1 || !isPlainRecord(value.theme)) {
-    throw new Error(t.unsupportedBundle);
-  }
-  const theme = value.theme;
-  if (!hasOnlyKeys(theme, themeFieldNames) || !isPlainRecord(theme.platformOverrides)) {
-    throw new Error(t.invalidThemeFields);
-  }
-  if (!hasOnlyKeys(theme.platformOverrides, platformOverrideFieldNames)) {
-    throw new Error(t.invalidPlatformFields);
-  }
-
-  const colors = colorFields.map(([key]) => theme[key]);
-  if (!colors.every(isHexColor)) throw new Error(t.invalidColor);
-  if (typeof theme.name !== "string" || Array.from(theme.name.trim()).length < 1 || Array.from(theme.name.trim()).length > 40) {
-    throw new Error(t.invalidThemeName);
-  }
-
-  const isIntegerIn = (candidate: unknown, minimum: number, maximum: number) =>
-    typeof candidate === "number" && Number.isInteger(candidate) && candidate >= minimum && candidate <= maximum;
-  if (
-    !isIntegerIn(theme.windowOpacity, 70, 100) ||
-    !isIntegerIn(theme.blurPx, 0, 40) ||
-    !isIntegerIn(theme.shadowPercent, 0, 80) ||
-    !isIntegerIn(theme.wallpaperOpacity, 0, 60) ||
-    !isIntegerIn(theme.radiusPx, 0, 28) ||
-    !isIntegerIn(theme.fontSizePx, 12, 18) ||
-    !isIntegerIn(theme.launcherWidthPx, 620, 900) ||
-    !isIntegerIn(theme.iconSizePx, 28, 48)
-  ) {
-    throw new Error(t.outOfRange);
-  }
-  if (
-    !["system", "cjk", "mono"].includes(String(theme.fontFamily)) ||
-    !["compact", "comfortable", "loose"].includes(String(theme.resultDensity)) ||
-    ![6, 8, 10, 12].includes(Number(theme.maxResults)) ||
-    typeof theme.showSourceBadge !== "boolean" ||
-    !isSafeWallpaperDataUrl(theme.wallpaperDataUrl)
-  ) {
-    throw new Error(t.unsupportedOptions);
-  }
-
-  const platform = theme.platformOverrides;
-  if (
-    typeof platform.enabled !== "boolean" ||
-    !isIntegerIn(platform.windowsBlurPx, 0, 40) ||
-    !isIntegerIn(platform.windowsOpacity, 70, 100) ||
-    !isIntegerIn(platform.macosBlurPx, 0, 40) ||
-    !isIntegerIn(platform.macosOpacity, 70, 100)
-  ) {
-    throw new Error(t.invalidPlatformRange);
-  }
-
-  // Runtime checks above narrow every imported field before this typed boundary.
-  const checked = theme as unknown as Omit<CustomThemeConfig, "id">;
-  return {
-    ...checked,
-    name: checked.name.trim(),
-    platformOverrides: { ...checked.platformOverrides },
-  };
+function isHexColor(value: string) {
+  return /^#[\da-f]{6}$/i.test(value);
 }
 
 function colorLuminance(hex: string) {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
-  const linear = channels.map((channel) =>
-    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-  );
+  const linear = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
   return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
 }
 
@@ -209,431 +75,481 @@ function contrastRatio(left: string, right: string) {
   return (bright + 0.05) / (dark + 0.05);
 }
 
-function colorWithOpacity(hex: string, opacity: number) {
-  const [red, green, blue] = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-  return `rgb(${red} ${green} ${blue} / ${opacity})`;
+function previewWallpaper(dataUrl: string) {
+  return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl)
+    ? `url("${dataUrl}")`
+    : "none";
 }
 
-function ColorControl({
-  label,
-  description,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  const [textValue, setTextValue] = useState(value);
-
-  useEffect(() => setTextValue(value), [value]);
-
-  const commitText = () => {
-    const next = textValue.trim();
-    if (isHexColor(next)) onChange(next.toLowerCase());
-    else setTextValue(value);
+function previewMaterial(theme: ThemeBackgroundConfig) {
+  const overrides = theme.platformOverrides;
+  const isMac = /Mac/i.test(navigator.platform);
+  const isWindows = /Win/i.test(navigator.platform);
+  return {
+    blurPx: overrides.enabled && isMac ? overrides.macosBlurPx : overrides.enabled && isWindows ? overrides.windowsBlurPx : theme.blurPx,
+    opacity: overrides.enabled && isMac ? overrides.macosOpacity : overrides.enabled && isWindows ? overrides.windowsOpacity : theme.windowOpacity,
   };
-
-  return (
-    <div className="appearance-control-row">
-      <div className="appearance-control-copy"><strong>{label}</strong><small>{description}</small></div>
-      <div className="appearance-color-controls">
-        <input aria-label={t.colorAriaLabel.replace("{label}", label)} type="color" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
-        <input aria-label={t.hexColorAriaLabel.replace("{label}", label)} className="appearance-hex-input" value={textValue} disabled={disabled} onChange={(event) => setTextValue(event.target.value)} onBlur={commitText} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-      </div>
-    </div>
-  );
 }
 
-function RangeControl({
-  label,
-  description,
-  value,
-  minimum,
-  maximum,
-  unit,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  description: string;
-  value: number;
-  minimum: number;
-  maximum: number;
-  unit: string;
-  disabled: boolean;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <div className="appearance-control-row">
-      <div className="appearance-control-copy"><strong>{label}</strong><small>{description}</small></div>
-      <label className="appearance-range-control">
-        <input aria-label={label} type="range" min={minimum} max={maximum} value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} />
-        <output>{value}{unit}</output>
-      </label>
-    </div>
-  );
+function needsSceneContrastReview(theme: ThemeBackgroundConfig) {
+  const material = previewMaterial(theme);
+  return material.opacity < 100 || (Boolean(theme.wallpaperDataUrl) && theme.wallpaperOpacity > 0);
 }
 
-export default function AppearanceEditor({ appearance, onChange, readOnly }: AppearanceEditorProps) {
-  const [working, setWorking] = useState<AppearanceConfig>(() => cloneAppearance(appearance));
-  const [tab, setTab] = useState<EditorTab>("colors");
-  const [previewKind, setPreviewKind] = useState<PreviewKind>("launcher");
+type ContrastCheck = { label: string; ratio: number; minimum: number; kind: "text" | "border" };
+
+function launcherChecks(theme: LauncherCustomThemeConfig): ContrastCheck[] {
+  const checks: ContrastCheck[] = [
+    { label: t.accentColor, ratio: Math.min(contrastRatio(theme.accentColor, theme.searchBackground), contrastRatio(theme.accentColor, theme.selectedRowBackground)), minimum: 3, kind: "border" },
+    { label: t.searchText, ratio: contrastRatio(theme.searchTextColor, theme.searchBackground), minimum: 4.5, kind: "text" },
+    { label: t.normalPrimary, ratio: contrastRatio(theme.normalPrimaryColor, theme.normalRowBackground), minimum: 4.5, kind: "text" },
+    { label: t.normalSecondary, ratio: contrastRatio(theme.normalSecondaryColor, theme.normalRowBackground), minimum: 4.5, kind: "text" },
+    { label: t.selectedPrimary, ratio: contrastRatio(theme.selectedPrimaryColor, theme.selectedRowBackground), minimum: 4.5, kind: "text" },
+    { label: t.selectedSecondary, ratio: contrastRatio(theme.selectedSecondaryColor, theme.selectedRowBackground), minimum: 4.5, kind: "text" },
+  ];
+  if (theme.windowBorderWidthPx > 0) checks.push({ label: t.windowBorder, ratio: contrastRatio(theme.windowBorder, theme.windowBackground), minimum: 3, kind: "border" });
+  if (theme.searchBorderWidthPx > 0 && theme.searchBorderStyle !== "none") checks.push({ label: t.searchBorder, ratio: contrastRatio(theme.searchBorder, theme.searchBackground), minimum: 3, kind: "border" });
+  return checks;
+}
+
+function settingsChecks(theme: SettingsCustomThemeConfig): ContrastCheck[] {
+  return [
+    { label: t.accentColor, ratio: Math.min(contrastRatio(theme.accentColor, theme.contentBackground), contrastRatio(theme.accentColor, theme.cardBackground), contrastRatio(theme.accentColor, theme.sidebarBackground)), minimum: 3, kind: "border" },
+    { label: t.primaryText, ratio: contrastRatio(theme.primaryTextColor, theme.contentBackground), minimum: 4.5, kind: "text" },
+    { label: t.secondaryText, ratio: contrastRatio(theme.secondaryTextColor, theme.contentBackground), minimum: 4.5, kind: "text" },
+    { label: t.navText, ratio: contrastRatio(theme.navTextColor, theme.sidebarBackground), minimum: 4.5, kind: "text" },
+    { label: t.borderColor, ratio: contrastRatio(theme.borderColor, theme.cardBackground), minimum: 3, kind: "border" },
+  ];
+}
+
+function ColorControl({ label, value, disabled, onChange }: { label: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    const next = text.trim();
+    if (isHexColor(next)) onChange(next.toLowerCase());
+    else setText(value);
+  };
+  return <label className="appearance-control">
+    <span className="appearance-control-copy"><strong>{label}</strong></span>
+    <span className="appearance-color-control">
+      <input aria-label={t.colorAriaLabel.replace("{label}", label)} type="color" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+      <input aria-label={t.hexColorAriaLabel.replace("{label}", label)} value={text} disabled={disabled} onChange={(event) => setText(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+    </span>
+  </label>;
+}
+
+function RangeControl({ label, value, minimum, maximum, unit = " px", disabled, onChange }: { label: string; value: number; minimum: number; maximum: number; unit?: string; disabled: boolean; onChange: (value: number) => void }) {
+  return <label className="appearance-control">
+    <span className="appearance-control-copy"><strong>{label}</strong></span>
+    <span className="appearance-range-control"><input aria-label={label} type="range" min={minimum} max={maximum} value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} /><output>{value}{unit}</output></span>
+  </label>;
+}
+
+function ToggleControl({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
+  return <label className="appearance-control"><span className="appearance-control-copy"><strong>{label}</strong></span><input aria-label={label} className="appearance-switch" type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /></label>;
+}
+
+function Section({ title, hint, children, open = false }: { title: string; hint: string; children: React.ReactNode; open?: boolean }) {
+  return <details className="appearance-section" open={open}>
+    <summary><span><strong>{title}</strong><small>{hint}</small></span><span aria-hidden="true">⌄</span></summary>
+    <div className="appearance-control-grid">{children}</div>
+  </details>;
+}
+
+function BackgroundControls({ theme, disabled, onChange, onWallpaper, onRemoveWallpaper }: { theme: ThemeBackgroundConfig; disabled: boolean; onChange: (update: (theme: ThemeBackgroundConfig) => ThemeBackgroundConfig) => void; onWallpaper: (file: File) => void; onRemoveWallpaper: () => void }) {
+  const wallpaperRef = useRef<HTMLInputElement>(null);
+  const updatePlatform = (field: keyof ThemeBackgroundConfig["platformOverrides"], value: number | boolean) => onChange((current) => ({ ...current, platformOverrides: { ...current.platformOverrides, [field]: value } }));
+  return <Section title={t.advanced} hint={t.advancedHint}>
+    <RangeControl label={t.windowOpacity} value={theme.windowOpacity} minimum={70} maximum={100} unit="%" disabled={disabled} onChange={(value) => onChange((current) => ({ ...current, windowOpacity: value }))} />
+    <RangeControl label={t.blur} value={theme.blurPx} minimum={0} maximum={40} disabled={disabled} onChange={(value) => onChange((current) => ({ ...current, blurPx: value }))} />
+    <RangeControl label={t.shadow} value={theme.shadowPercent} minimum={0} maximum={80} unit="%" disabled={disabled} onChange={(value) => onChange((current) => ({ ...current, shadowPercent: value }))} />
+    <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.wallpaper}</strong><small>{theme.wallpaperDataUrl ? t.wallpaperLoaded : t.wallpaperEmpty}</small></span><span className="appearance-inline-actions"><input ref={wallpaperRef} className="appearance-hidden-input" type="file" accept="image/png,image/jpeg,image/webp" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) onWallpaper(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => wallpaperRef.current?.click()}>{t.chooseImage}</button>{theme.wallpaperDataUrl && <button type="button" disabled={disabled} onClick={onRemoveWallpaper}>{t.remove}</button>}</span></label>
+    <RangeControl label={t.wallpaperOpacity} value={theme.wallpaperOpacity} minimum={0} maximum={60} unit="%" disabled={disabled} onChange={(value) => onChange((current) => ({ ...current, wallpaperOpacity: value }))} />
+    <div className="appearance-wide-control"><ToggleControl label={t.platformOverrides} checked={theme.platformOverrides.enabled} disabled={disabled} onChange={(value) => updatePlatform("enabled", value)} />
+      {theme.platformOverrides.enabled && <div className="appearance-platform-grid"><div><strong>{t.windows}</strong><RangeControl label={t.blur} value={theme.platformOverrides.windowsBlurPx} minimum={0} maximum={40} disabled={disabled} onChange={(value) => updatePlatform("windowsBlurPx", value)} /><RangeControl label={t.windowOpacity} value={theme.platformOverrides.windowsOpacity} minimum={70} maximum={100} unit="%" disabled={disabled} onChange={(value) => updatePlatform("windowsOpacity", value)} /></div><div><strong>{t.macos}</strong><RangeControl label={t.blur} value={theme.platformOverrides.macosBlurPx} minimum={0} maximum={40} disabled={disabled} onChange={(value) => updatePlatform("macosBlurPx", value)} /><RangeControl label={t.windowOpacity} value={theme.platformOverrides.macosOpacity} minimum={70} maximum={100} unit="%" disabled={disabled} onChange={(value) => updatePlatform("macosOpacity", value)} /></div></div>}
+    </div>
+  </Section>;
+}
+
+function ContrastAudit({ checks, sceneReview }: { checks: ContrastCheck[]; sceneReview: boolean }) {
+  return <div className="appearance-contrast-audit" aria-live="polite"><strong>{t.contrastTitle}</strong><small>{sceneReview ? t.contrastSceneHint : t.contrastHint}</small><div>{checks.map((check) => { const ok = check.ratio >= check.minimum; const verified = ok && !sceneReview; return <span key={check.label} className={verified ? "ok" : "warning"}>{check.kind === "text" ? t.contrastText : t.contrastBorder} · {check.label} {check.ratio.toFixed(1)}:1 {verified ? t.contrastPass : ok ? t.contrastSceneReview : t.contrastAdjust}</span>; })}</div></div>;
+}
+
+function LauncherControls({ theme, disabled, update, onWallpaper, onRemoveWallpaper }: { theme: LauncherCustomThemeConfig; disabled: boolean; update: (update: (theme: LauncherCustomThemeConfig) => LauncherCustomThemeConfig) => void; onWallpaper: (file: File) => void; onRemoveWallpaper: () => void }) {
+  return <>
+    <Section title={t.launcherStructure} hint={t.launcherStructureHint} open>
+      <ColorControl label={t.accentColor} value={theme.accentColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, accentColor: value }))} />
+      <ColorControl label={t.windowBackground} value={theme.windowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBackground: value }))} />
+      <ColorControl label={t.windowBorder} value={theme.windowBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBorder: value }))} />
+      <RangeControl label={t.windowBorderWidth} value={theme.windowBorderWidthPx} minimum={0} maximum={4} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBorderWidthPx: value }))} />
+      <RangeControl label={t.windowWidth} value={theme.windowWidthPx} minimum={620} maximum={900} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowWidthPx: value, searchWidthPx: Math.min(current.searchWidthPx, value) }))} />
+      <RangeControl label={t.windowRadius} value={theme.windowRadiusPx} minimum={0} maximum={28} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowRadiusPx: value }))} />
+      <ColorControl label={t.searchBackground} value={theme.searchBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBackground: value }))} />
+      <ColorControl label={t.searchBorder} value={theme.searchBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorder: value }))} />
+      <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.searchBorderStyle}</strong></span><select value={theme.searchBorderStyle} disabled={disabled} onChange={(event) => update((current) => ({ ...current, searchBorderStyle: event.target.value as SearchBorderStyle }))}><option value="solid">{t.solid}</option><option value="dashed">{t.dashed}</option><option value="dotted">{t.dotted}</option><option value="double">{t.double}</option><option value="none">{t.none}</option></select></label>
+      <RangeControl label={t.searchBorderWidth} value={theme.searchBorderWidthPx} minimum={0} maximum={4} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorderWidthPx: value }))} />
+      <RangeControl label={t.searchWidth} value={theme.searchWidthPx} minimum={320} maximum={theme.windowWidthPx} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchWidthPx: value }))} />
+      <ColorControl label={t.searchText} value={theme.searchTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchTextColor: value }))} />
+      <RangeControl label={t.searchFontSize} value={theme.searchFontSizePx} minimum={12} maximum={24} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchFontSizePx: value }))} />
+      <ToggleControl label={t.showSearchIcon} checked={theme.showSearchIcon} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showSearchIcon: value }))} />
+      <ToggleControl label={t.showLogo} checked={theme.showLogo} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showLogo: value }))} />
+    </Section>
+    <Section title={t.normalResults} hint={t.normalResultsHint}>
+      <ColorControl label={t.normalRowBackground} value={theme.normalRowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalRowBackground: value }))} />
+      <ColorControl label={t.normalPrimary} value={theme.normalPrimaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalPrimaryColor: value }))} />
+      <RangeControl label={t.normalPrimarySize} value={theme.normalPrimaryFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalPrimaryFontSizePx: value }))} />
+      <ColorControl label={t.normalSecondary} value={theme.normalSecondaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalSecondaryColor: value }))} />
+      <RangeControl label={t.normalSecondarySize} value={theme.normalSecondaryFontSizePx} minimum={10} maximum={18} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalSecondaryFontSizePx: value }))} />
+      <RangeControl label={t.rowHeight} value={theme.normalRowHeightPx} minimum={44} maximum={84} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalRowHeightPx: value }))} />
+    </Section>
+    <Section title={t.selectedAndIcons} hint={t.selectedAndIconsHint}>
+      <ColorControl label={t.selectedBackground} value={theme.selectedRowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedRowBackground: value }))} />
+      <ColorControl label={t.selectedPrimary} value={theme.selectedPrimaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedPrimaryColor: value }))} />
+      <RangeControl label={t.selectedPrimarySize} value={theme.selectedPrimaryFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedPrimaryFontSizePx: value }))} />
+      <ColorControl label={t.selectedSecondary} value={theme.selectedSecondaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedSecondaryColor: value }))} />
+      <RangeControl label={t.selectedSecondarySize} value={theme.selectedSecondaryFontSizePx} minimum={10} maximum={18} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedSecondaryFontSizePx: value }))} />
+      <RangeControl label={t.iconSize} value={theme.iconSizePx} minimum={16} maximum={64} disabled={disabled} onChange={(value) => update((current) => ({ ...current, iconSizePx: value }))} />
+      <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.maxResults}</strong></span><select value={theme.maxResults} disabled={disabled} onChange={(event) => update((current) => ({ ...current, maxResults: Number(event.target.value) as LauncherCustomThemeConfig["maxResults"] }))}>{([6, 8, 10, 12] as const).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+      <ToggleControl label={t.showSourceBadge} checked={theme.showSourceBadge} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showSourceBadge: value }))} />
+    </Section>
+    <BackgroundControls theme={theme} disabled={disabled} onWallpaper={onWallpaper} onRemoveWallpaper={onRemoveWallpaper} onChange={(updater) => update((current) => ({ ...current, ...updater(current) }))} />
+  </>;
+}
+
+function SettingsControls({ theme, disabled, update, onWallpaper, onRemoveWallpaper }: { theme: SettingsCustomThemeConfig; disabled: boolean; update: (update: (theme: SettingsCustomThemeConfig) => SettingsCustomThemeConfig) => void; onWallpaper: (file: File) => void; onRemoveWallpaper: () => void }) {
+  return <>
+    <Section title={t.settingsStructure} hint={t.settingsStructureHint} open>
+      <ColorControl label={t.accentColor} value={theme.accentColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, accentColor: value }))} />
+      <ColorControl label={t.windowBackground} value={theme.windowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBackground: value }))} />
+      <ColorControl label={t.titlebarBackground} value={theme.titlebarBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, titlebarBackground: value }))} />
+      <ColorControl label={t.sidebarBackground} value={theme.sidebarBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, sidebarBackground: value }))} />
+      <ColorControl label={t.contentBackground} value={theme.contentBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, contentBackground: value }))} />
+      <ColorControl label={t.cardBackground} value={theme.cardBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, cardBackground: value }))} />
+      <ColorControl label={t.borderColor} value={theme.borderColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, borderColor: value }))} />
+    </Section>
+    <Section title={t.settingsText} hint={t.settingsTextHint}>
+      <ColorControl label={t.primaryText} value={theme.primaryTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, primaryTextColor: value }))} />
+      <ColorControl label={t.secondaryText} value={theme.secondaryTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, secondaryTextColor: value }))} />
+      <ColorControl label={t.navText} value={theme.navTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, navTextColor: value }))} />
+      <ColorControl label={t.selectedNav} value={theme.selectedNavBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedNavBackground: value }))} />
+      <RangeControl label={t.baseFontSize} value={theme.baseFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, baseFontSizePx: value }))} />
+      <RangeControl label={t.windowRadius} value={theme.radiusPx} minimum={0} maximum={28} disabled={disabled} onChange={(value) => update((current) => ({ ...current, radiusPx: value }))} />
+    </Section>
+    <BackgroundControls theme={theme} disabled={disabled} onWallpaper={onWallpaper} onRemoveWallpaper={onRemoveWallpaper} onChange={(updater) => update((current) => ({ ...current, ...updater(current) }))} />
+  </>;
+}
+
+function LauncherPreview({ theme }: { theme: LauncherCustomThemeConfig }) {
+  const material = previewMaterial(theme);
+  const style = {
+    "--preview-accent": theme.accentColor, "--preview-window": theme.windowBackground, "--preview-window-border": theme.windowBorder, "--preview-window-border-width": `${theme.windowBorderWidthPx}px`, "--preview-window-width": `${(theme.windowWidthPx / 900) * 100}%`, "--preview-radius": `${theme.windowRadiusPx}px`, "--preview-window-opacity": `${material.opacity}%`, "--preview-blur": `${material.blurPx}px`, "--preview-shadow-opacity": String(theme.shadowPercent / 100), "--preview-wallpaper": previewWallpaper(theme.wallpaperDataUrl), "--preview-wallpaper-opacity": String(theme.wallpaperOpacity / 100), "--preview-search": theme.searchBackground, "--preview-search-border": theme.searchBorder, "--preview-search-border-width": `${theme.searchBorderWidthPx}px`, "--preview-search-border-style": theme.searchBorderStyle, "--preview-search-width": `${Math.min(100, (theme.searchWidthPx / theme.windowWidthPx) * 100)}%`, "--preview-search-text": theme.searchTextColor, "--preview-search-size": `${theme.searchFontSizePx}px`, "--preview-row": theme.normalRowBackground, "--preview-row-primary": theme.normalPrimaryColor, "--preview-row-secondary": theme.normalSecondaryColor, "--preview-row-primary-size": `${theme.normalPrimaryFontSizePx}px`, "--preview-row-secondary-size": `${theme.normalSecondaryFontSizePx}px`, "--preview-row-height": `${theme.normalRowHeightPx}px`, "--preview-selected": theme.selectedRowBackground, "--preview-selected-primary": theme.selectedPrimaryColor, "--preview-selected-secondary": theme.selectedSecondaryColor, "--preview-selected-primary-size": `${theme.selectedPrimaryFontSizePx}px`, "--preview-selected-secondary-size": `${theme.selectedSecondaryFontSizePx}px`, "--preview-icon-size": `${theme.iconSizePx}px`,
+  } as CSSProperties;
+  const sampleRows = [
+    { kind: "wechat", title: t.previewAppTitle, path: t.previewAppPath, badge: t.previewAppBadge, selected: true },
+    { kind: "folder", title: t.previewFolderTitle, path: t.previewFolderPath, badge: t.previewFolderBadge },
+    { kind: "file", title: t.previewFileTitle, path: t.previewFilePath, badge: t.previewFileBadge },
+  ];
+  const rows = Array.from({ length: theme.maxResults }, (_, index) => ({ ...sampleRows[index % sampleRows.length], selected: index === 0 }));
+  return <div className="appearance-launcher-preview" style={style}>
+    <div className="appearance-live-search">{theme.showSearchIcon && <span aria-hidden="true">⌕</span>}<strong>{t.previewQuery}</strong>{theme.showLogo && <i aria-hidden="true">◇</i>}</div>
+    <div className="appearance-live-results">{rows.map((row, index) => <div key={`${row.kind}-${index}`} className={`appearance-live-row ${row.selected ? "selected" : ""}`}><PreviewIcon kind={row.kind} /><span><strong>{row.title}</strong><small>{row.path}</small></span>{theme.showSourceBadge && <em>{row.badge}</em>}</div>)}</div>
+    <p className="appearance-native-note">{t.previewLauncherDimensions.replace("{width}", String(theme.windowWidthPx)).replace("{count}", String(theme.maxResults))}<br />{t.nativeIconNote}</p>
+  </div>;
+}
+
+function PreviewIcon({ kind }: { kind: string }) {
+  if (kind === "wechat") return <span className="appearance-live-icon wechat" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M8 23c0-8 7-14 15-14s15 6 15 14-7 14-15 14c-2 0-4 0-6-1l-6 4 2-6c-3-3-5-7-5-11Z" fill="#20bf63"/><circle cx="18" cy="21" r="2" fill="white"/><circle cx="27" cy="21" r="2" fill="white"/><path d="M25 31c5 0 10-4 10-9 0-5-5-9-10-9" fill="none" stroke="white" strokeWidth="2" opacity=".9"/></svg></span>;
+  if (kind === "folder") return <span className="appearance-live-icon folder" aria-hidden="true">▰</span>;
+  return <span className="appearance-live-icon file" aria-hidden="true">▤</span>;
+}
+
+function SettingsPreview({ theme }: { theme: SettingsCustomThemeConfig }) {
+  const material = previewMaterial(theme);
+  const style = { "--preview-settings-accent": theme.accentColor, "--preview-settings-window": theme.windowBackground, "--preview-settings-titlebar": theme.titlebarBackground, "--preview-settings-sidebar": theme.sidebarBackground, "--preview-settings-content": theme.contentBackground, "--preview-settings-card": theme.cardBackground, "--preview-settings-border": theme.borderColor, "--preview-settings-primary": theme.primaryTextColor, "--preview-settings-secondary": theme.secondaryTextColor, "--preview-settings-nav": theme.navTextColor, "--preview-settings-selected": theme.selectedNavBackground, "--preview-settings-font-size": `${theme.baseFontSizePx}px`, "--preview-settings-radius": `${theme.radiusPx}px`, "--preview-window-opacity": `${material.opacity}%`, "--preview-blur": `${material.blurPx}px`, "--preview-shadow-opacity": String(theme.shadowPercent / 100), "--preview-wallpaper": previewWallpaper(theme.wallpaperDataUrl), "--preview-wallpaper-opacity": String(theme.wallpaperOpacity / 100) } as CSSProperties;
+  return <div className="appearance-settings-preview" style={style}><header><strong>{t.previewSettingsTitle}</strong><span>×</span></header><div><aside><span>{t.previewGeneral}</span><span>{t.previewSearch}</span><span>{t.previewCommands}</span><strong>{t.previewAppearance}</strong></aside><main><h3>{t.previewPageTitle}</h3><p>{t.previewPageCopy}</p><section><strong>{t.previewCardTitle}</strong><p>{t.previewCardCopy}</p><i /><i /><i /></section></main></div></div>;
+}
+
+export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, readOnly, saving = false }: AppearanceEditorProps) {
+  const [scope, setScope] = useState<ThemeScope>("launcher");
+  const [workingLauncher, setWorkingLauncher] = useState(() => cloneLauncherScope(launcherTheme));
+  const [workingSettings, setWorkingSettings] = useState(() => cloneSettingsScope(settingsTheme));
   const [notice, setNotice] = useState("");
+  const [warnedScope, setWarnedScope] = useState<ThemeScope | null>(null);
   const [importing, setImporting] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
-  const wallpaperInputRef = useRef<HTMLInputElement>(null);
-  const externalSignature = useMemo(() => JSON.stringify(appearance), [appearance]);
+  const importRef = useRef<HTMLInputElement>(null);
+  const importRequestRef = useRef(0);
+  const tabRefs = useRef<Record<ThemeScope, HTMLButtonElement | null>>({ launcher: null, settings: null });
+  const wallpaperRequestsRef = useRef(new Map<string, number>());
+  const launcherSignature = useMemo(() => JSON.stringify(launcherTheme), [launcherTheme]);
+  const settingsSignature = useMemo(() => JSON.stringify(settingsTheme), [settingsTheme]);
+  const disabled = readOnly || saving || importing;
 
   useEffect(() => {
-    setWorking(cloneAppearance(appearance));
-  }, [appearance, externalSignature]);
-
-  const selectedCustomId = customThemeId(working.theme);
-  const selectedCustomTheme = selectedCustomId
-    ? working.customThemes.find((theme) => sameThemeId(theme.id, selectedCustomId)) ?? null
-    : null;
-  const selectedBuiltin = selectedCustomTheme ? null : (builtinThemeIds.includes(working.theme as BuiltinThemeId) ? working.theme as BuiltinThemeId : fallbackBuiltinTheme());
-  const previewTheme = resolveTheme(working);
-  const contrast = Math.min(
-    contrastRatio(previewTheme.textColor, previewTheme.windowColor),
-    contrastRatio(previewTheme.textColor, previewTheme.panelColor),
-    contrastRatio(previewTheme.textColor, previewTheme.fieldColor),
-    contrastRatio(previewTheme.textColor, previewTheme.selectionColor),
-  );
-  const contrastOk = contrast >= 4.5;
-  const safeWallpaper = isSafeWallpaperDataUrl(previewTheme.wallpaperDataUrl) && previewTheme.wallpaperDataUrl ? previewTheme.wallpaperDataUrl : "";
-  const currentPlatform = /Mac/i.test(navigator.platform) ? "macos" : /Win/i.test(navigator.platform) ? "windows" : null;
-  const platformOverrides = previewTheme.platformOverrides;
-  const previewBlurPx = platformOverrides.enabled && currentPlatform === "macos"
-    ? platformOverrides.macosBlurPx
-    : platformOverrides.enabled && currentPlatform === "windows"
-      ? platformOverrides.windowsBlurPx
-      : previewTheme.blurPx;
-  const previewWindowOpacity = platformOverrides.enabled && currentPlatform === "macos"
-    ? platformOverrides.macosOpacity
-    : platformOverrides.enabled && currentPlatform === "windows"
-      ? platformOverrides.windowsOpacity
-      : previewTheme.windowOpacity;
-  const previewStyle = {
-    "--appearance-window": previewTheme.windowColor,
-    "--appearance-panel": previewTheme.panelColor,
-    "--appearance-field": previewTheme.fieldColor,
-    "--appearance-text": previewTheme.textColor,
-    "--appearance-muted": previewTheme.mutedColor,
-    "--appearance-accent": previewTheme.accentColor,
-    "--appearance-selection": previewTheme.selectionColor,
-    "--appearance-border": previewTheme.borderColor,
-    "--appearance-window-opacity": String(previewWindowOpacity / 100),
-    "--appearance-window-composite": colorWithOpacity(previewTheme.windowColor, previewWindowOpacity / 100),
-    "--appearance-blur": `${previewBlurPx}px`,
-    "--appearance-wallpaper-opacity": String(previewTheme.wallpaperOpacity / 100),
-    "--appearance-wallpaper-overlay": safeWallpaper ? String(1 - previewTheme.wallpaperOpacity / 100) : "0",
-    "--appearance-radius": `${previewTheme.radiusPx}px`,
-    "--appearance-font-size": `${previewTheme.fontSizePx}px`,
-    "--appearance-icon-size": `${previewTheme.iconSizePx}px`,
-    "--appearance-row-height": previewTheme.resultDensity === "compact" ? "48px" : previewTheme.resultDensity === "loose" ? "68px" : "58px",
-    "--appearance-shadow-opacity": String(previewTheme.shadowPercent / 100),
-    "--appearance-font-family": previewTheme.fontFamily === "mono" ? "ui-monospace, SFMono-Regular, Consolas, monospace" : previewTheme.fontFamily === "cjk" ? "PingFang SC, Microsoft YaHei, Hiragino Sans GB, sans-serif" : "Inter, ui-sans-serif, system-ui, sans-serif",
-  } as CSSProperties;
-
-  const updateSelectedCustom = (updater: (theme: CustomThemeConfig) => CustomThemeConfig) => {
-    if (!selectedCustomTheme || readOnly) return;
-    setWorking((current) => {
-      const id = customThemeId(current.theme);
-      if (!id) return current;
-      const customThemes = current.customThemes.map((theme) => sameThemeId(theme.id, id) ? updater(theme) : theme);
-      const selected = customThemes.find((theme) => sameThemeId(theme.id, id));
-      return selected ? { ...current, customThemes, accentColor: selected.accentColor } : current;
-    });
-  };
-
-  const chooseBuiltin = (id: BuiltinThemeId) => {
-    if (readOnly) return;
-    setWorking((current) => {
-      const next = { ...current, theme: id };
-      return { ...next, accentColor: resolveTheme(next).accentColor };
-    });
-  };
-
-  const createTheme = () => {
-    if (readOnly) return;
-    if (working.customThemes.length >= 12) {
-      setNotice(t.customThemeLimit.replace("{max}", "12"));
-      return;
+    importRequestRef.current += 1;
+    setImporting(false);
+    for (const [key, version] of wallpaperRequestsRef.current) {
+      if (key.startsWith("launcher:")) wallpaperRequestsRef.current.set(key, version + 1);
     }
-    let created = false;
-    setWorking((current) => {
-      if (current.customThemes.length >= 12) return current;
-      const source = customThemeId(current.theme)
-        ? current.customThemes.find((theme) => sameThemeId(theme.id, customThemeId(current.theme)))
-        : null;
-      const generated = createCustomTheme(source ? undefined : current.theme);
-      const nextTheme: CustomThemeConfig = source
-        ? { ...source, id: generated.id, name: t.copyName.replace("{name}", source.name), platformOverrides: { ...source.platformOverrides } }
-        : { ...generated, name: t.copyName.replace("{name}", builtinThemeLabels[current.theme as BuiltinThemeId] ?? t.defaultBuiltinName) };
-      created = true;
-      return { ...current, theme: `custom:${nextTheme.id}`, accentColor: nextTheme.accentColor, customThemes: [...current.customThemes, nextTheme] };
-    });
-    queueMicrotask(() => {
-      setNotice(created ? t.createdTheme : t.customThemeLimit.replace("{max}", "12"));
-      if (created) setTab("colors");
-    });
+    setWorkingLauncher(cloneLauncherScope(launcherTheme));
+    setWarnedScope(null);
+  }, [launcherSignature]);
+  useEffect(() => {
+    importRequestRef.current += 1;
+    setImporting(false);
+    for (const [key, version] of wallpaperRequestsRef.current) {
+      if (key.startsWith("settings:")) wallpaperRequestsRef.current.set(key, version + 1);
+    }
+    setWorkingSettings(cloneSettingsScope(settingsTheme));
+    setWarnedScope(null);
+  }, [settingsSignature]);
+
+  const selectedLauncherId = customId(workingLauncher.theme);
+  const selectedLauncher = selectedLauncherId ? workingLauncher.customThemes.find((theme) => sameId(theme.id, selectedLauncherId)) ?? null : null;
+  const launcherPreview = resolveLauncherTheme(workingLauncher);
+  const selectedSettingsId = customId(workingSettings.theme);
+  const selectedSettings = selectedSettingsId ? workingSettings.customThemes.find((theme) => sameId(theme.id, selectedSettingsId)) ?? null : null;
+  const settingsPreview = resolveSettingsTheme(workingSettings);
+  const checks = scope === "launcher" ? launcherChecks(launcherPreview) : settingsChecks(settingsPreview);
+  const checksPass = checks.every((check) => check.ratio >= check.minimum);
+  const sceneReview = needsSceneContrastReview(scope === "launcher" ? launcherPreview : settingsPreview);
+  const contrastVerified = checksPass && !sceneReview;
+  const selectedCustom = scope === "launcher" ? selectedLauncher : selectedSettings;
+
+  const advanceWallpaperRequest = (target: ThemeTarget) => {
+    const key = `${target.scope}:${target.themeId.toLowerCase()}`;
+    const version = (wallpaperRequestsRef.current.get(key) ?? 0) + 1;
+    wallpaperRequestsRef.current.set(key, version);
+    return { key, version };
   };
 
+  const currentWallpaperTarget = (): ThemeTarget | null => {
+    const themeId = customId(scope === "launcher" ? workingLauncher.theme : workingSettings.theme);
+    return themeId ? { scope, themeId } : null;
+  };
+
+  const invalidateCurrentWallpaperRequest = () => {
+    const target = currentWallpaperTarget();
+    if (target) advanceWallpaperRequest(target);
+  };
+
+  const updateLauncher = (updater: (theme: LauncherCustomThemeConfig) => LauncherCustomThemeConfig) => {
+    if (!selectedLauncher || disabled) return;
+    setWarnedScope(null);
+    setWorkingLauncher((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(current.theme)) ? updater(theme) : theme) }));
+  };
+  const updateSettings = (updater: (theme: SettingsCustomThemeConfig) => SettingsCustomThemeConfig) => {
+    if (!selectedSettings || disabled) return;
+    setWarnedScope(null);
+    setWorkingSettings((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(current.theme)) ? updater(theme) : theme) }));
+  };
+  const chooseScope = (next: ThemeScope) => { setScope(next); setNotice(""); setWarnedScope(null); };
+  const onScopeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const next = event.key === "ArrowLeft" || event.key === "Home" ? "launcher" : "settings";
+    chooseScope(next); tabRefs.current[next]?.focus();
+  };
+  const chooseBuiltin = (id: typeof builtinThemeIds[number]) => {
+    if (disabled) return;
+    setWarnedScope(null);
+    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: id, accentColor: createLauncherTheme(id).accentColor }));
+    else setWorkingSettings((current) => ({ ...current, theme: id, accentColor: createSettingsTheme(id).accentColor }));
+  };
+  const chooseCustom = (id: string) => {
+    if (disabled) return;
+    setWarnedScope(null);
+    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: `custom:${id}` }));
+    else setWorkingSettings((current) => ({ ...current, theme: `custom:${id}` }));
+  };
+  const createTheme = () => {
+    if (disabled) return;
+    if (scope === "launcher") {
+      if (workingLauncher.customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
+      const seed = createLauncherTheme();
+      const source = selectedLauncher;
+      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createLauncherTheme(workingLauncher.theme), name: t.copyName.replace("{name}", builtinLabels[workingLauncher.theme as keyof typeof builtinLabels] ?? t.midnight) };
+      setWorkingLauncher((current) => ({ ...current, theme: `custom:${next.id}`, customThemes: [...current.customThemes, next] }));
+    } else {
+      if (workingSettings.customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
+      const seed = createSettingsTheme();
+      const source = selectedSettings;
+      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createSettingsTheme(workingSettings.theme), name: t.copyName.replace("{name}", builtinLabels[workingSettings.theme as keyof typeof builtinLabels] ?? t.midnight) };
+      setWorkingSettings((current) => ({ ...current, theme: `custom:${next.id}`, customThemes: [...current.customThemes, next] }));
+    }
+    setWarnedScope(null); setNotice(t.createdTheme);
+  };
   const deleteTheme = () => {
-    if (!selectedCustomTheme || readOnly) return;
-    setWorking((current) => {
-      const id = customThemeId(current.theme);
-      const customThemes = current.customThemes.filter((theme) => !sameThemeId(theme.id, id));
-      const next = { ...current, theme: fallbackBuiltinTheme(), customThemes };
-      return { ...next, accentColor: resolveTheme(next).accentColor };
-    });
-    setNotice(t.deletedTheme);
+    if (!selectedCustom || disabled) return;
+    invalidateCurrentWallpaperRequest();
+    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: "midnight", accentColor: createLauncherTheme("midnight").accentColor, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, customId(current.theme))) }));
+    else setWorkingSettings((current) => ({ ...current, theme: "midnight", accentColor: createSettingsTheme("midnight").accentColor, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, customId(current.theme))) }));
+    setWarnedScope(null); setNotice(t.deletedTheme);
   };
-
   const resetTheme = () => {
-    if (!selectedCustomTheme || readOnly) return;
-    const reset = createCustomTheme();
-    updateSelectedCustom((theme) => ({ ...reset, id: theme.id, name: theme.name }));
+    if (!selectedCustom || disabled) return;
+    invalidateCurrentWallpaperRequest();
+    if (scope === "launcher") updateLauncher((theme) => ({ ...createLauncherTheme(), id: theme.id, name: theme.name }));
+    else updateSettings((theme) => ({ ...createSettingsTheme(), id: theme.id, name: theme.name }));
     setNotice(t.resetTheme);
   };
-
-  const applyToDraft = () => {
-    if (readOnly) return;
-    if (working.customThemes.some((theme) => !theme.name.trim())) {
-      setNotice(t.themeNameRequired);
-      return;
+  const importError = (targetScope: ThemeScope, value: unknown, error: unknown) => {
+    const expectedSchema = targetScope === "launcher" ? "suo-launcher-theme-v1" : "suo-settings-theme-v1";
+    const schema = value && typeof value === "object" && "schema" in value ? (value as { schema?: unknown }).schema : "";
+    const version = value && typeof value === "object" && "version" in value ? (value as { version?: unknown }).version : undefined;
+    const detail = error instanceof Error ? error.message.trim() : "";
+    if (error instanceof SyntaxError) return t.invalidJson;
+    if (schema === "suo-theme-v1") return t.legacySchema;
+    if (schema === (targetScope === "launcher" ? "suo-settings-theme-v1" : "suo-launcher-theme-v1")) return t.wrongScope.replace("{scope}", targetScope === "launcher" ? t.settingsScope : t.launcherScope);
+    if (schema === expectedSchema && version !== 1) {
+      return typeof version === "number"
+        ? t.unsupportedThemeVersion.replace("{version}", `v${version}`)
+        : t.invalidThemeVersion;
     }
-    onChange(cloneAppearance(working));
-    setNotice(t.appliedTheme);
+    if (schema === expectedSchema) {
+      return detail
+        ? t.invalidThemeFieldsWithReason.replace("{reason}", detail)
+        : t.invalidThemeFields;
+    }
+    return t.invalidSchema.replace("{schema}", expectedSchema);
   };
-
-  const exportTheme = () => {
-    const builtinId = selectedBuiltin ?? fallbackBuiltinTheme();
-    const source = selectedCustomTheme ?? {
-      ...createCustomTheme(builtinId),
-      name: builtinThemeLabels[builtinId],
-    };
-    const { id: _id, ...theme } = source;
-    const payload: ThemeBundleV1 = { schema: "suo-theme-v1", version: 1, theme };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${theme.name.replace(/[\\/:*?\"<>|]/g, "_") || "suo-theme"}.suo-theme.json`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    setNotice(t.exportedTheme);
-  };
-
   const importTheme = (file: File) => {
-    if (readOnly || importing) return;
-    if (working.customThemes.length >= 12) {
-      setNotice(t.importedThemeLimit.replace("{max}", "12"));
-      return;
-    }
-    if (file.size > MAX_THEME_BUNDLE_BYTES) {
-      setNotice(t.bundleTooLarge);
-      return;
-    }
+    if (disabled || importing) return;
+    if (file.size > MAX_THEME_BUNDLE_BYTES) return setNotice(t.bundleTooLarge);
+    if ((scope === "launcher" ? workingLauncher : workingSettings).customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
+    // FileReader completes asynchronously. Keep the destination fixed even if
+    // the user switches scope while the file is being read.
+    const importScope = scope;
+    const importRequest = ++importRequestRef.current;
     setImporting(true);
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      let value: unknown;
       try {
-        const imported = parseThemeBundle(JSON.parse(String(reader.result)));
-        const seed = createCustomTheme();
-        const theme: CustomThemeConfig = { ...imported, id: seed.id, platformOverrides: { ...imported.platformOverrides } };
-        let importedTheme = false;
-        setWorking((current) => {
-          if (current.customThemes.length >= 12) return current;
-          importedTheme = true;
-          return {
-            ...current,
-            theme: `custom:${theme.id}`,
-            accentColor: theme.accentColor,
-            customThemes: [...current.customThemes, theme],
-          };
-        });
-        queueMicrotask(() => {
-          setNotice(importedTheme ? t.importedTheme.replace("{name}", theme.name) : t.importedThemeLimit.replace("{max}", "12"));
-          if (importedTheme) setTab("colors");
-        });
+        if (importRequestRef.current !== importRequest) return;
+        value = JSON.parse(String(reader.result));
+        if (importScope === "launcher") {
+          const bundle = parseLauncherThemeBundle(value);
+          await validateWallpaperImageDataUrl(bundle.theme.wallpaperDataUrl);
+          if (importRequestRef.current !== importRequest) return;
+          const theme: LauncherCustomThemeConfig = { ...bundle.theme, id: createLauncherTheme().id, platformOverrides: { ...bundle.theme.platformOverrides } };
+          setWorkingLauncher((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, theme: `custom:${theme.id}`, customThemes: [...current.customThemes, theme] });
+          setNotice(t.importedTheme.replace("{name}", theme.name));
+        } else {
+          const bundle = parseSettingsThemeBundle(value);
+          await validateWallpaperImageDataUrl(bundle.theme.wallpaperDataUrl);
+          if (importRequestRef.current !== importRequest) return;
+          const theme: SettingsCustomThemeConfig = { ...bundle.theme, id: createSettingsTheme().id, platformOverrides: { ...bundle.theme.platformOverrides } };
+          setWorkingSettings((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, theme: `custom:${theme.id}`, customThemes: [...current.customThemes, theme] });
+          setNotice(t.importedTheme.replace("{name}", theme.name));
+        }
+        setWarnedScope(null);
       } catch (error) {
-        setNotice(t.importFailed.replace("{reason}", error instanceof Error ? error.message : t.invalidBundle));
+        if (importRequestRef.current === importRequest) setNotice(t.importFailed.replace("{reason}", importError(importScope, value, error)));
       } finally {
-        setImporting(false);
+        if (importRequestRef.current === importRequest) setImporting(false);
       }
     };
     reader.onerror = () => {
+      if (importRequestRef.current !== importRequest) return;
       setImporting(false);
       setNotice(t.unableToReadBundle);
     };
     reader.readAsText(file, "utf-8");
   };
-
-  const chooseWallpaper = (file: File) => {
-    if (!selectedCustomTheme || readOnly) return;
-    if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > MAX_WALLPAPER_BYTES) {
-      setNotice(t.wallpaperTooLarge);
-      return;
+  const exportTheme = () => {
+    try {
+      const theme = scope === "launcher" ? launcherPreview : settingsPreview;
+      const bundle = scope === "launcher" ? buildLauncherThemeBundle(theme as LauncherCustomThemeConfig) : buildSettingsThemeBundle(theme as SettingsCustomThemeConfig);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = `${scope}-theme.json`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setNotice(t.exportedTheme);
+    } catch {
+      setNotice(t.invalidThemeDraft);
     }
+  };
+  const loadWallpaper = (file: File) => {
+    if (disabled || !/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > MAX_WALLPAPER_BYTES) return setNotice(t.wallpaperTooLarge);
+    const target = currentWallpaperTarget();
+    if (!target) return;
+    const request = advanceWallpaperRequest(target);
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      if (wallpaperRequestsRef.current.get(request.key) !== request.version) return;
       const dataUrl = String(reader.result);
-      if (!isSafeWallpaperDataUrl(dataUrl)) {
-        setNotice(t.invalidWallpaper);
+      try {
+        await validateWallpaperImageDataUrl(dataUrl);
+      } catch {
+        if (wallpaperRequestsRef.current.get(request.key) === request.version) setNotice(t.wallpaperInvalid);
         return;
       }
-      updateSelectedCustom((theme) => ({ ...theme, wallpaperDataUrl: dataUrl }));
-      setNotice(t.wallpaperLoaded.replace("{name}", file.name));
+      if (wallpaperRequestsRef.current.get(request.key) !== request.version) return;
+      if (target.scope === "launcher") {
+        setWorkingLauncher((current) => {
+          let updated = false;
+          const customThemes = current.customThemes.map((theme) => {
+            if (!sameId(theme.id, target.themeId)) return theme;
+            updated = true;
+            return { ...theme, wallpaperDataUrl: dataUrl };
+          });
+          return updated ? { ...current, customThemes } : current;
+        });
+      } else {
+        setWorkingSettings((current) => {
+          let updated = false;
+          const customThemes = current.customThemes.map((theme) => {
+            if (!sameId(theme.id, target.themeId)) return theme;
+            updated = true;
+            return { ...theme, wallpaperDataUrl: dataUrl };
+          });
+          return updated ? { ...current, customThemes } : current;
+        });
+      }
+      setNotice(t.wallpaperLoaded);
     };
-    reader.onerror = () => setNotice(t.unableToReadWallpaper);
+    reader.onerror = () => {
+      if (wallpaperRequestsRef.current.get(request.key) === request.version) setNotice(t.wallpaperUnableToRead);
+    };
     reader.readAsDataURL(file);
   };
-
-  return (
-    <section className="appearance-editor" aria-label={t.ariaLabel}>
-      <header className="appearance-editor-heading">
-        <div>
-          <h2>{t.title}</h2>
-          <p>{t.description}</p>
-        </div>
-        <div className="appearance-editor-actions">
-          <input ref={importInputRef} className="appearance-hidden-input" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} />
-          <button type="button" className="appearance-secondary-button" disabled={readOnly || importing} onClick={() => importInputRef.current?.click()}>{t.importTheme}</button>
-          <button type="button" className="appearance-secondary-button" onClick={exportTheme}>{t.exportJson}</button>
-          <button type="button" className="appearance-primary-button" disabled={readOnly} onClick={createTheme}>{t.createTheme}</button>
-        </div>
-      </header>
-
-      <div className="appearance-theme-grid" aria-label={t.themeLibrary}>
-        {builtinThemeIds.map((id) => (
-          <button key={id} type="button" className={`appearance-theme-card ${selectedBuiltin === id ? "selected" : ""}`} aria-pressed={selectedBuiltin === id} disabled={readOnly} onClick={() => chooseBuiltin(id)}>
-            <span className={`appearance-theme-swatch appearance-theme-swatch-${id}`} aria-hidden="true" />
-            <span><strong>{builtinThemeLabels[id]}</strong><small>{t.builtin}</small></span>
-          </button>
-        ))}
-        {working.customThemes.map((theme) => (
-          <button key={theme.id} type="button" className={`appearance-theme-card appearance-theme-card-custom ${selectedCustomTheme?.id === theme.id ? "selected" : ""}`} aria-pressed={selectedCustomTheme?.id === theme.id} disabled={readOnly} onClick={() => setWorking((current) => ({ ...current, theme: `custom:${theme.id}`, accentColor: theme.accentColor }))}>
-            <span className="appearance-theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.windowColor}, ${theme.accentColor})` }} aria-hidden="true" />
-            <span><strong>{theme.name}</strong><small>{t.custom}</small></span>
-          </button>
-        ))}
-      </div>
-
-      <div className="appearance-workbench">
-        <section className="appearance-edit-panel">
-          <div className="appearance-panel-heading">
-            <div>
-              {selectedCustomTheme ? (
-                <label className="appearance-theme-name-editor">
-                  <span>{t.themeName}</span>
-                  <input
-                    aria-label={t.themeName}
-                    value={selectedCustomTheme.name}
-                    disabled={readOnly}
-                    onChange={(event) => {
-                      const name = Array.from(event.target.value).slice(0, 40).join("");
-                      updateSelectedCustom((theme) => ({ ...theme, name }));
-                    }}
-                  />
-                  <small>{t.themeNameHint}</small>
-                </label>
-              ) : <strong>{t.builtinReadOnly.replace("{name}", builtinThemeLabels[selectedBuiltin ?? fallbackBuiltinTheme()])}</strong>}
-              <small>{selectedCustomTheme ? t.customPreviewHint : t.builtinPreviewHint}</small>
-            </div>
-            {selectedCustomTheme && <div className="appearance-inline-buttons"><button type="button" disabled={readOnly} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="appearance-danger-button" disabled={readOnly} onClick={deleteTheme}>{t.delete}</button></div>}
-          </div>
-
-          {!selectedCustomTheme ? (
-            <div className="appearance-builtin-empty"><p>{t.builtinEmpty}</p><button type="button" className="appearance-primary-button" disabled={readOnly} onClick={createTheme}>{t.createFromBuiltin}</button></div>
-          ) : (
-            <>
-              <div className="appearance-tabs" role="tablist" aria-label={t.editorTabs}>
-                {([ ["colors", t.colorsAndMaterial], ["layout", t.layoutAndComponents], ["platform", t.platformOverrides] ] as const).map(([id, label]) => (
-                  <button key={id} id={`appearance-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`appearance-panel-${id}`} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
-                ))}
-              </div>
-
-              {tab === "colors" && <div id="appearance-panel-colors" role="tabpanel" aria-labelledby="appearance-tab-colors" className="appearance-tab-panel">
-                <h3>{t.primaryColors}</h3>
-                {colorFields.map(([key, label, description]) => <ColorControl key={key} label={label} description={description} value={selectedCustomTheme[key]} disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, [key]: value }))} />)}
-                <h3>{t.material}</h3>
-                <RangeControl label={t.windowOpacity} description={t.windowOpacityHint} value={selectedCustomTheme.windowOpacity} minimum={70} maximum={100} unit="%" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, windowOpacity: value }))} />
-                <RangeControl label={t.backgroundBlur} description={t.blurHint} value={selectedCustomTheme.blurPx} minimum={0} maximum={40} unit=" px" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, blurPx: value }))} />
-                <div className="appearance-control-row">
-                  <div className="appearance-control-copy"><strong>{t.wallpaper}</strong><small>{selectedCustomTheme.wallpaperDataUrl ? t.wallpaperLoadedHint : t.wallpaperEmptyHint}</small></div>
-                  <div className="appearance-inline-buttons"><input ref={wallpaperInputRef} className="appearance-hidden-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) chooseWallpaper(file); event.currentTarget.value = ""; }} /><button type="button" disabled={readOnly} onClick={() => wallpaperInputRef.current?.click()}>{t.chooseImage}</button>{selectedCustomTheme.wallpaperDataUrl && <button type="button" disabled={readOnly} onClick={() => updateSelectedCustom((theme) => ({ ...theme, wallpaperDataUrl: "" }))}>{t.remove}</button>}</div>
-                </div>
-                <RangeControl label={t.wallpaperOpacity} description={t.wallpaperOpacityHint} value={selectedCustomTheme.wallpaperOpacity} minimum={0} maximum={60} unit="%" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, wallpaperOpacity: value }))} />
-              </div>}
-
-              {tab === "layout" && <div id="appearance-panel-layout" role="tabpanel" aria-labelledby="appearance-tab-layout" className="appearance-tab-panel">
-                <h3>{t.window}</h3>
-                <RangeControl label={t.launcherWidth} description={t.launcherWidthHint} value={selectedCustomTheme.launcherWidthPx} minimum={620} maximum={900} unit=" px" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, launcherWidthPx: value }))} />
-                <RangeControl label={t.radius} description={t.radiusHint} value={selectedCustomTheme.radiusPx} minimum={0} maximum={28} unit=" px" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, radiusPx: value }))} />
-                <RangeControl label={t.shadow} description={t.shadowHint} value={selectedCustomTheme.shadowPercent} minimum={0} maximum={80} unit="%" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, shadowPercent: value }))} />
-                <h3>{t.density}</h3>
-                <div className="appearance-control-row"><div className="appearance-control-copy"><strong>{t.resultDensity}</strong><small>{t.resultDensityHint}</small></div><div className="appearance-segmented">{([ ["compact", t.compact], ["comfortable", t.comfortable], ["loose", t.loose] ] as const).map(([value, label]) => <button key={value} type="button" className={selectedCustomTheme.resultDensity === value ? "active" : ""} aria-pressed={selectedCustomTheme.resultDensity === value} disabled={readOnly} onClick={() => updateSelectedCustom((theme) => ({ ...theme, resultDensity: value }))}>{label}</button>)}</div></div>
-                <RangeControl label={t.fontSize} description={t.fontSizeHint} value={selectedCustomTheme.fontSizePx} minimum={12} maximum={18} unit=" px" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, fontSizePx: value }))} />
-                <RangeControl label={t.iconSize} description={t.iconSizeHint} value={selectedCustomTheme.iconSizePx} minimum={28} maximum={48} unit=" px" disabled={readOnly} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, iconSizePx: value }))} />
-                <label className="appearance-control-row"><span className="appearance-control-copy"><strong>{t.maxResults}</strong><small>{t.maxResultsHint}</small></span><select value={selectedCustomTheme.maxResults} disabled={readOnly} onChange={(event) => updateSelectedCustom((theme) => ({ ...theme, maxResults: Number(event.target.value) as CustomThemeConfig["maxResults"] }))}>{[6, 8, 10, 12].map((value) => <option key={value} value={value}>{t.resultCount.replace("{count}", String(value))}</option>)}</select></label>
-                <label className="appearance-control-row"><span className="appearance-control-copy"><strong>{t.fontFamily}</strong><small>{t.fontFamilyHint}</small></span><select value={selectedCustomTheme.fontFamily} disabled={readOnly} onChange={(event) => updateSelectedCustom((theme) => ({ ...theme, fontFamily: event.target.value as CustomThemeConfig["fontFamily"] }))}><option value="system">{t.systemFont}</option><option value="cjk">{t.cjkFont}</option><option value="mono">{t.monoFont}</option></select></label>
-                <label className="appearance-control-row"><span className="appearance-control-copy"><strong>{t.showSourceBadge}</strong><small>{t.showSourceBadgeHint}</small></span><input className="appearance-switch" type="checkbox" checked={selectedCustomTheme.showSourceBadge} disabled={readOnly} onChange={(event) => updateSelectedCustom((theme) => ({ ...theme, showSourceBadge: event.target.checked }))} /></label>
-              </div>}
-
-              {tab === "platform" && <div id="appearance-panel-platform" role="tabpanel" aria-labelledby="appearance-tab-platform" className="appearance-tab-panel">
-                <h3>{t.platformOverrideValues}</h3>
-                <label className="appearance-control-row"><span className="appearance-control-copy"><strong>{t.enablePlatformOverrides}</strong><small>{t.enablePlatformOverridesHint}</small></span><input className="appearance-switch" type="checkbox" checked={selectedCustomTheme.platformOverrides.enabled} disabled={readOnly} onChange={(event) => updateSelectedCustom((theme) => ({ ...theme, platformOverrides: { ...theme.platformOverrides, enabled: event.target.checked } }))} /></label>
-                <div className="appearance-platform-grid" aria-disabled={!selectedCustomTheme.platformOverrides.enabled}>
-                  <div><h4>Windows</h4><RangeControl label={t.backgroundBlur} description={t.unavailableFallback} value={selectedCustomTheme.platformOverrides.windowsBlurPx} minimum={0} maximum={40} unit=" px" disabled={readOnly || !selectedCustomTheme.platformOverrides.enabled} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, platformOverrides: { ...theme.platformOverrides, windowsBlurPx: value } }))} /><RangeControl label={t.windowOpacity} description={t.windowsOnly} value={selectedCustomTheme.platformOverrides.windowsOpacity} minimum={70} maximum={100} unit="%" disabled={readOnly || !selectedCustomTheme.platformOverrides.enabled} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, platformOverrides: { ...theme.platformOverrides, windowsOpacity: value } }))} /></div>
-                  <div><h4>macOS</h4><RangeControl label={t.backgroundBlur} description={t.unavailableFallback} value={selectedCustomTheme.platformOverrides.macosBlurPx} minimum={0} maximum={40} unit=" px" disabled={readOnly || !selectedCustomTheme.platformOverrides.enabled} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, platformOverrides: { ...theme.platformOverrides, macosBlurPx: value } }))} /><RangeControl label={t.windowOpacity} description={t.macosOnly} value={selectedCustomTheme.platformOverrides.macosOpacity} minimum={70} maximum={100} unit="%" disabled={readOnly || !selectedCustomTheme.platformOverrides.enabled} onChange={(value) => updateSelectedCustom((theme) => ({ ...theme, platformOverrides: { ...theme.platformOverrides, macosOpacity: value } }))} /></div>
-                </div>
-                <p className="appearance-safety-note">{t.platformSafetyHint}</p>
-              </div>}
-            </>
-          )}
-
-          <footer className="appearance-edit-footer"><span>{notice || t.defaultHint}</span><button type="button" className="appearance-primary-button" disabled={readOnly} onClick={applyToDraft}>{t.applyToDraft}</button></footer>
-        </section>
-
-        <section className="appearance-preview-panel" aria-label={t.previewAriaLabel}>
-          <div className="appearance-preview-heading"><div className="appearance-preview-switch" role="group" aria-label={t.previewContent}><button type="button" className={previewKind === "launcher" ? "active" : ""} aria-pressed={previewKind === "launcher"} onClick={() => setPreviewKind("launcher")}>{t.launcherPreview}</button><button type="button" className={previewKind === "settings" ? "active" : ""} aria-pressed={previewKind === "settings"} onClick={() => setPreviewKind("settings")}>{t.settingsPreview}</button></div><span className={`appearance-contrast ${contrastOk ? "ok" : "warning"}`}>{contrastOk ? t.contrastPass : t.contrastLow} · {contrast.toFixed(1)}:1</span></div>
-          <div className="appearance-preview-canvas" style={previewStyle}>
-            <div className="appearance-preview-surface" style={safeWallpaper ? { backgroundImage: `url("${safeWallpaper}")` } : undefined}>
-              {previewKind === "launcher" ? <LauncherPreview theme={previewTheme} /> : <SettingsPreview />}
-            </div>
-          </div>
-          <p className="appearance-preview-note">{t.previewHint}{safeWallpaper ? t.wallpaperContrastHint : ""}</p>
-        </section>
-      </div>
-    </section>
-  );
-}
-
-function LauncherPreview({ theme }: { theme: CustomThemeConfig }) {
-  return (
-    <div className="appearance-launcher-preview">
-      <div className="appearance-preview-search"><span aria-hidden="true">⌕</span><strong>{t.previewQuery}</strong><kbd>Alt + Space</kbd></div>
-      <div className="appearance-preview-provider"><span><b>●</b> {t.previewProvider}</span><span>{t.rebuildIndex}</span></div>
-      <div className="appearance-preview-results">
-        <PreviewResult icon={t.previewAppIcon} title={t.previewAppTitle} subtitle={t.previewAppPath} badge={t.previewAppBadge} selected showBadge={theme.showSourceBadge} />
-        <PreviewResult icon={t.previewFileIcon} title={t.previewFileTitle} subtitle={t.previewFilePath} badge={t.previewFileBadge} showBadge={theme.showSourceBadge} />
-        <PreviewResult icon="⌘" title={t.previewWebTitle} subtitle={t.previewWebSubtitle} badge={t.previewWebBadge} showBadge={theme.showSourceBadge} />
-      </div>
-      <div className="appearance-preview-footer"><span>{t.previewFooterLeft}</span><span>{t.previewFooterRight}</span></div>
+  const removeWallpaper = () => {
+    if (disabled) return;
+    invalidateCurrentWallpaperRequest();
+    if (scope === "launcher") updateLauncher((theme) => ({ ...theme, wallpaperDataUrl: "" }));
+    else updateSettings((theme) => ({ ...theme, wallpaperDataUrl: "" }));
+  };
+  const applyDraft = () => {
+    if (disabled) return;
+    try {
+      if (scope === "launcher") buildLauncherThemeBundle(launcherPreview);
+      else buildSettingsThemeBundle(settingsPreview);
+    } catch {
+      setNotice(t.invalidThemeDraft);
+      return;
+    }
+    if ((!checksPass || sceneReview) && warnedScope !== scope) { setWarnedScope(scope); setNotice(checksPass ? t.pendingSceneReadability : t.pendingReadability); return; }
+    onChange(scope === "launcher"
+      ? { launcherTheme: cloneLauncherScope(workingLauncher), settingsTheme: cloneSettingsScope(settingsTheme) }
+      : { launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: cloneSettingsScope(workingSettings) });
+    setNotice(t.appliedTheme); setWarnedScope(null);
+  };
+  const selectedBuiltin = scope === "launcher" ? (selectedLauncher ? null : workingLauncher.theme) : (selectedSettings ? null : workingSettings.theme);
+  return <section className="appearance-editor" aria-label={t.ariaLabel}>
+    <header className="appearance-editor-heading"><div><h2>{t.title}</h2><p>{t.description}</p></div></header>
+    <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
+      {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={scope === id ? "active" : ""} onClick={() => chooseScope(id)}><span aria-hidden="true">{id === "launcher" ? "⌕" : "⚙"}</span><span><strong>{id === "launcher" ? t.launcherScope : t.settingsScope}</strong><small>{id === "launcher" ? t.launcherScopeHint : t.settingsScopeHint}</small></span></button>)}
+    </nav>
+    <p className="appearance-separation-note">{t.separateNotice}</p>
+    <div id={`appearance-${scope}-panel`} role="tabpanel" aria-labelledby={`appearance-${scope}-tab`} className="appearance-workbench">
+      <section className="appearance-edit-panel">
+        <header className="appearance-library-heading"><div><h3>{scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}</h3><p>{scope === "launcher" ? t.launcherLibraryHint : t.settingsLibraryHint}</p></div><span>{t.isolated}</span></header>
+        <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
+        <div className="appearance-theme-grid" aria-label={scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}>{builtinThemeIds.map((id) => <button key={id} type="button" className={`appearance-theme-card ${selectedBuiltin === id ? "selected" : ""}`} aria-pressed={selectedBuiltin === id} disabled={disabled} onClick={() => chooseBuiltin(id)}><span className={`appearance-theme-swatch appearance-theme-swatch-${id}`} /><span><strong>{builtinLabels[id]}</strong><small>{t.builtin} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span></button>)}{(scope === "launcher" ? workingLauncher.customThemes : workingSettings.customThemes).map((theme) => <button key={theme.id} type="button" className={`appearance-theme-card ${selectedCustom?.id === theme.id ? "selected" : ""}`} aria-pressed={selectedCustom?.id === theme.id} disabled={disabled} onClick={() => chooseCustom(theme.id)}><span className="appearance-theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.windowBackground}, ${scope === "launcher" ? (theme as LauncherCustomThemeConfig).selectedRowBackground : (theme as SettingsCustomThemeConfig).selectedNavBackground})` }} /><span><strong>{theme.name}</strong><small>{t.custom} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span></button>)}</div>
+        {selectedCustom ? <div className="appearance-custom-editor"><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
+        <footer className="appearance-edit-footer"><span>{notice}</span><button type="button" className="primary" disabled={disabled} onClick={applyDraft}>{t.applyToDraft}</button></footer>
+      </section>
+      <aside className="appearance-preview-panel" aria-label={t.previewAriaLabel}><header><div><strong>{scope === "launcher" ? t.previewLauncher : t.previewSettings}</strong><small>{t.previewDraftOnly}</small></div><span className={contrastVerified ? "ok" : "warning"}>{contrastVerified ? t.contrastPass : checksPass ? t.contrastSceneReview : t.contrastAdjust}</span></header><div className="appearance-preview-canvas">{scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}</div><ContrastAudit checks={checks} sceneReview={sceneReview} /></aside>
     </div>
-  );
-}
-
-function PreviewResult({ icon, title, subtitle, badge, selected = false, showBadge }: { icon: string; title: string; subtitle: string; badge: string; selected?: boolean; showBadge: boolean }) {
-  return <div className={`appearance-preview-result ${selected ? "selected" : ""}`}><span className="appearance-preview-result-icon">{icon}</span><span><strong>{title}</strong><small>{subtitle}</small></span>{showBadge && <em>{badge}</em>}</div>;
-}
-
-function SettingsPreview() {
-  return <div className="appearance-settings-preview"><header>{t.previewSettingsTitle}</header><div className="appearance-settings-preview-body"><aside><span>{t.previewGeneral}</span><span>{t.previewSearch}</span><span>{t.previewCommands}</span><strong>{t.previewAppearance}</strong></aside><main><h3>{t.previewAppearance}</h3><p>{t.previewSettingsDescription}</p><div className="appearance-settings-preview-card"><i /><i /><i /></div></main></div></div>;
+  </section>;
 }

@@ -1,14 +1,45 @@
+:root {
+  --settings-window-bg: #0b1222;
+  --settings-titlebar-bg: #0c1326;
+  --settings-sidebar-bg: #0a1120;
+  --settings-content-bg: #0b1222;
+  --settings-card-bg: #101a30;
+  --settings-border: #66728f;
+  --settings-primary-text: #f5f7ff;
+  --settings-secondary-text: #91a0c7;
+  --settings-nav-text: #687590;
+  --settings-nav-selected-bg: #302b63;
+  --settings-accent: #8a78ff;
+  --settings-font-size: 14px;
+  --settings-radius: 18px;
+  --settings-opacity: 96%;
+  --settings-blur: 18px;
+  --settings-shadow-opacity: 0.45;
+  --settings-wallpaper-image: none;
+  --settings-wallpaper-opacity: 0;
+  --page: var(--settings-window-bg);
+  --surface: var(--settings-titlebar-bg);
+  --surface-strong: var(--settings-card-bg);
+  --field: color-mix(in srgb, var(--settings-card-bg) 86%, var(--settings-content-bg));
+  --text: var(--settings-primary-text);
+  --muted: var(--settings-secondary-text);
+  --subtle: color-mix(in srgb, var(--settings-secondary-text) 78%, var(--settings-content-bg));
+  --line: var(--settings-border);
+  --accent: var(--settings-accent, var(--settings-nav-selected-bg));
+}
+
 .settings-stage {
   position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--window-radius);
-  color: var(--text);
-  background: color-mix(in srgb, var(--page) var(--window-opacity), transparent);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--window-shadow-opacity));
-  backdrop-filter: blur(var(--window-blur));
+  border: 1px solid var(--settings-border);
+  border-radius: var(--settings-radius);
+  color: var(--settings-primary-text);
+  background: color-mix(in srgb, var(--settings-window-bg) var(--settings-opacity), transparent);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--settings-shadow-opacity));
+  backdrop-filter: blur(var(--settings-blur));
+  font-size: var(--settings-font-size);
   isolation: isolate;
 }
 
@@ -18,10 +49,10 @@
   inset: 0;
   z-index: 0;
   border-radius: inherit;
-  background-image: var(--wallpaper-image);
+  background-image: var(--settings-wallpaper-image);
   background-position: center;
   background-size: cover;
-  opacity: var(--wallpaper-opacity);
+  opacity: var(--settings-wallpaper-opacity);
   pointer-events: none;
 }
 
@@ -36,8 +67,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 14px 0 18px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--settings-border);
+  background: color-mix(in srgb, var(--settings-titlebar-bg) 94%, transparent);
   user-select: none;
 }
 
@@ -56,7 +87,7 @@
 }
 
 .settings-brand strong {
-  font-size: 13px;
+  font-size: calc(var(--settings-font-size) - 1px);
   letter-spacing: 0.03em;
 }
 
@@ -89,10 +120,10 @@
   flex-direction: column;
   gap: 4px;
   padding: 18px 12px;
-  border-right: 1px solid var(--line);
-  color: var(--subtle);
-  background: color-mix(in srgb, var(--surface) 86%, var(--page));
-  font-size: 12px;
+  border-right: 1px solid var(--settings-border);
+  color: var(--settings-nav-text);
+  background: color-mix(in srgb, var(--settings-sidebar-bg) 94%, transparent);
+  font-size: calc(var(--settings-font-size) - 2px);
 }
 
 .settings-layout aside button {
@@ -112,14 +143,15 @@
 }
 
 .settings-layout aside .settings-nav-active {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--settings-primary-text);
+  background: var(--settings-nav-selected-bg);
 }
 
 .settings-content {
   min-width: 0;
   padding: 26px 28px;
   overflow: auto;
+  background: color-mix(in srgb, var(--settings-content-bg) 94%, transparent);
 }
 
 .settings-layout.saving {
@@ -135,13 +167,13 @@
 
 .settings-heading h1 {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: calc(var(--settings-font-size) + 8px);
 }
 
 .settings-heading p {
   margin: 0;
-  color: var(--subtle);
-  font-size: 11px;
+  color: var(--settings-secondary-text);
+  font-size: calc(var(--settings-font-size) - 3px);
 }
 
 .saved-indicator {
@@ -159,9 +191,9 @@
 
 .settings-card {
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 13px;
-  background: var(--surface-strong);
+  border: 1px solid var(--settings-border);
+  border-radius: min(13px, var(--settings-radius));
+  background: color-mix(in srgb, var(--settings-card-bg) 96%, transparent);
 }
 
 .setting-row {
@@ -185,14 +217,14 @@
 }
 
 .setting-row strong {
-  color: var(--text);
-  font-size: 12px;
+  color: var(--settings-primary-text);
+  font-size: calc(var(--settings-font-size) - 2px);
   font-weight: 620;
 }
 
 .setting-row small {
-  color: var(--subtle);
-  font-size: 10px;
+  color: var(--settings-secondary-text);
+  font-size: calc(var(--settings-font-size) - 4px);
 }
 
 .hotkey-value {

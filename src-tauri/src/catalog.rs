@@ -12,11 +12,6 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
-    pub fn from_path(path: PathBuf) -> Self {
-        let is_directory = path.is_dir();
-        Self::from_path_with_type(path, is_directory)
-    }
-
     pub fn from_path_with_type(path: PathBuf, is_directory: bool) -> Self {
         let name = display_name(&path);
         let normalized_name = name.to_lowercase();

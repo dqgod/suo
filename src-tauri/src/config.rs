@@ -1,25 +1,34 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
 };
 
-use serde::{Deserialize, Serialize};
+use image::{GenericImageView, ImageFormat, ImageReader, Limits};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 5;
+const CONFIG_VERSION: u32 = 6;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
 const MAX_CUSTOM_THEMES: usize = 12;
 const MAX_THEME_WALLPAPER_BYTES: usize = 1_572_864;
+const MAX_THEME_WALLPAPER_DIMENSION: u32 = 4_096;
+const MAX_THEME_WALLPAPER_PIXELS: u64 = 16_777_216;
+// A supported PNG can use 16-bit RGBA (8 bytes per pixel). Cover the full
+// 4096 x 4096 output plus bounded decoder scratch space so every image that
+// passes the frontend's dimension contract can also pass the Rust decoder.
+const MAX_THEME_WALLPAPER_ALLOCATION_BYTES: u64 = 160 * 1024 * 1024;
+const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
 const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
 const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub version: u32,
@@ -27,7 +36,71 @@ pub struct AppConfig {
     pub translation: TranslationConfig,
     pub script_commands: Vec<ScriptCommandConfig>,
     pub web_searches: Vec<WebSearchConfig>,
-    pub appearance: AppearanceConfig,
+    pub launcher_theme: LauncherThemeConfig,
+    pub settings_theme: SettingsThemeConfig,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppConfigWire {
+    version: u32,
+    launcher: LauncherConfig,
+    translation: TranslationConfig,
+    script_commands: Vec<ScriptCommandConfig>,
+    web_searches: Vec<WebSearchConfig>,
+    #[serde(default)]
+    launcher_theme: Option<LauncherThemeConfig>,
+    #[serde(default)]
+    settings_theme: Option<SettingsThemeConfig>,
+    // v5 and older stored one appearance model. It is intentionally accepted
+    // only while loading local configuration so that it can be split into two
+    // independent scope models; it is not an import contract.
+    #[serde(default)]
+    appearance: Option<LegacyAppearanceConfig>,
+}
+
+impl<'de> Deserialize<'de> for AppConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = AppConfigWire::deserialize(deserializer)?;
+        let (mut launcher_theme, mut settings_theme) =
+            match (wire.launcher_theme, wire.settings_theme) {
+                (Some(launcher_theme), Some(settings_theme)) => (launcher_theme, settings_theme),
+                (None, None) if wire.version <= 5 => {
+                    let legacy = wire.appearance.unwrap_or_default();
+                    (
+                        LauncherThemeConfig::from_legacy(&legacy),
+                        SettingsThemeConfig::from_legacy(&legacy),
+                    )
+                }
+                (None, None) => {
+                    return Err(D::Error::custom(
+                        "v6 配置必须同时包含 launcherTheme 和 settingsTheme",
+                    ));
+                }
+                _ => {
+                    return Err(D::Error::custom(
+                        "launcherTheme 和 settingsTheme 必须同时存在",
+                    ));
+                }
+            };
+        // An intermediate local v6 build predated per-custom-theme accents.
+        // Repair only the serde sentinel for an omitted field; an explicitly
+        // empty or malformed accent still reaches normal validation and fails.
+        launcher_theme.fill_missing_custom_accents();
+        settings_theme.fill_missing_custom_accents();
+        Ok(Self {
+            version: wire.version,
+            launcher: wire.launcher,
+            translation: wire.translation,
+            script_commands: wire.script_commands,
+            web_searches: wire.web_searches,
+            launcher_theme,
+            settings_theme,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,42 +175,149 @@ pub struct WebSearchConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AppearanceConfig {
+pub struct LauncherThemeConfig {
     pub theme: String,
     pub accent_color: String,
     #[serde(default)]
-    pub custom_themes: Vec<CustomThemeConfig>,
+    pub custom_themes: Vec<LauncherCustomThemeConfig>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CustomThemeConfig {
+pub struct LauncherCustomThemeConfig {
     pub id: String,
     pub name: String,
-    pub window_color: String,
-    pub panel_color: String,
-    pub field_color: String,
-    pub text_color: String,
-    pub muted_color: String,
+    #[serde(default = "missing_custom_accent_color")]
     pub accent_color: String,
-    pub selection_color: String,
+    pub window_background: String,
+    pub window_border: String,
+    pub window_border_width_px: u8,
+    pub window_width_px: u16,
+    pub window_radius_px: u8,
+    pub search_background: String,
+    pub search_border: String,
+    pub search_border_width_px: u8,
+    pub search_border_style: String,
+    pub search_width_px: u16,
+    pub search_text_color: String,
+    pub search_font_size_px: u8,
+    pub normal_row_background: String,
+    pub normal_primary_color: String,
+    pub normal_secondary_color: String,
+    pub normal_primary_font_size_px: u8,
+    pub normal_secondary_font_size_px: u8,
+    pub normal_row_height_px: u8,
+    pub selected_row_background: String,
+    pub selected_primary_color: String,
+    pub selected_secondary_color: String,
+    pub selected_primary_font_size_px: u8,
+    pub selected_secondary_font_size_px: u8,
+    pub icon_size_px: u8,
+    pub show_search_icon: bool,
+    pub show_logo: bool,
+    #[serde(default = "default_show_source_badge")]
+    pub show_source_badge: bool,
+    pub max_results: u8,
+    #[serde(flatten)]
+    pub background: ThemeBackgroundConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsThemeConfig {
+    pub theme: String,
+    pub accent_color: String,
+    #[serde(default)]
+    pub custom_themes: Vec<SettingsCustomThemeConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsCustomThemeConfig {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "missing_custom_accent_color")]
+    pub accent_color: String,
+    pub window_background: String,
+    pub titlebar_background: String,
+    pub sidebar_background: String,
+    pub content_background: String,
+    pub card_background: String,
     pub border_color: String,
+    pub primary_text_color: String,
+    pub secondary_text_color: String,
+    pub nav_text_color: String,
+    pub selected_nav_background: String,
+    pub base_font_size_px: u8,
+    pub radius_px: u8,
+    #[serde(flatten)]
+    pub background: ThemeBackgroundConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThemeBackgroundConfig {
     pub window_opacity: u8,
     pub blur_px: u8,
     pub shadow_percent: u8,
     #[serde(default)]
     pub wallpaper_data_url: String,
     pub wallpaper_opacity: u8,
-    pub radius_px: u8,
-    pub font_family: String,
-    pub font_size_px: u8,
-    pub launcher_width_px: u16,
-    pub result_density: String,
-    pub max_results: u8,
-    pub icon_size_px: u8,
-    pub show_source_badge: bool,
     #[serde(default)]
     pub platform_overrides: PlatformThemeOverrides,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyAppearanceConfig {
+    #[serde(default = "default_builtin_theme")]
+    theme: String,
+    #[serde(default = "default_accent_color")]
+    accent_color: String,
+    #[serde(default)]
+    custom_themes: Vec<LegacyCustomThemeConfig>,
+}
+
+impl Default for LegacyAppearanceConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_builtin_theme(),
+            accent_color: default_accent_color(),
+            custom_themes: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyCustomThemeConfig {
+    id: String,
+    name: String,
+    window_color: String,
+    panel_color: String,
+    field_color: String,
+    text_color: String,
+    muted_color: String,
+    accent_color: String,
+    selection_color: String,
+    border_color: String,
+    window_opacity: u8,
+    blur_px: u8,
+    shadow_percent: u8,
+    #[serde(default)]
+    wallpaper_data_url: String,
+    wallpaper_opacity: u8,
+    radius_px: u8,
+    #[serde(rename = "fontFamily")]
+    _font_family: String,
+    font_size_px: u8,
+    launcher_width_px: u16,
+    result_density: String,
+    max_results: u8,
+    icon_size_px: u8,
+    show_source_badge: bool,
+    #[serde(default)]
+    platform_overrides: PlatformThemeOverrides,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,8 +342,52 @@ impl Default for PlatformThemeOverrides {
     }
 }
 
-impl AppearanceConfig {
-    pub fn active_custom_theme(&self) -> Option<&CustomThemeConfig> {
+const fn default_show_source_badge() -> bool {
+    true
+}
+
+fn default_builtin_theme() -> String {
+    "midnight".into()
+}
+
+fn default_accent_color() -> String {
+    "#8a78ff".into()
+}
+
+fn missing_custom_accent_color() -> String {
+    MISSING_CUSTOM_ACCENT_COLOR.into()
+}
+
+impl Default for LauncherThemeConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_builtin_theme(),
+            accent_color: default_accent_color(),
+            custom_themes: Vec::new(),
+        }
+    }
+}
+
+impl Default for SettingsThemeConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_builtin_theme(),
+            accent_color: default_accent_color(),
+            custom_themes: Vec::new(),
+        }
+    }
+}
+
+impl LauncherThemeConfig {
+    fn fill_missing_custom_accents(&mut self) {
+        for theme in &mut self.custom_themes {
+            if theme.accent_color == MISSING_CUSTOM_ACCENT_COLOR {
+                theme.accent_color.clone_from(&self.accent_color);
+            }
+        }
+    }
+
+    pub fn active_custom_theme(&self) -> Option<&LauncherCustomThemeConfig> {
         let id = self.theme.strip_prefix("custom:")?;
         self.custom_themes
             .iter()
@@ -178,8 +402,138 @@ impl AppearanceConfig {
 
     pub fn launcher_width(&self) -> f64 {
         self.active_custom_theme()
-            .map(|theme| f64::from(theme.launcher_width_px))
+            .map(|theme| f64::from(theme.window_width_px))
             .unwrap_or(720.0)
+    }
+
+    fn from_legacy(legacy: &LegacyAppearanceConfig) -> Self {
+        Self {
+            theme: legacy.theme.clone(),
+            accent_color: legacy_active_accent_color(legacy),
+            custom_themes: legacy
+                .custom_themes
+                .iter()
+                .map(LauncherCustomThemeConfig::from_legacy)
+                .collect(),
+        }
+    }
+}
+
+impl SettingsThemeConfig {
+    fn fill_missing_custom_accents(&mut self) {
+        for theme in &mut self.custom_themes {
+            if theme.accent_color == MISSING_CUSTOM_ACCENT_COLOR {
+                theme.accent_color.clone_from(&self.accent_color);
+            }
+        }
+    }
+
+    fn from_legacy(legacy: &LegacyAppearanceConfig) -> Self {
+        Self {
+            theme: legacy.theme.clone(),
+            accent_color: legacy_active_accent_color(legacy),
+            custom_themes: legacy
+                .custom_themes
+                .iter()
+                .map(SettingsCustomThemeConfig::from_legacy)
+                .collect(),
+        }
+    }
+}
+
+fn legacy_active_accent_color(legacy: &LegacyAppearanceConfig) -> String {
+    let Some(selected) = legacy.theme.strip_prefix("custom:") else {
+        return legacy.accent_color.clone();
+    };
+    legacy
+        .custom_themes
+        .iter()
+        .find(|theme| theme.id.eq_ignore_ascii_case(selected))
+        .map(|theme| theme.accent_color.clone())
+        .unwrap_or_else(|| legacy.accent_color.clone())
+}
+
+impl ThemeBackgroundConfig {
+    fn from_legacy(theme: &LegacyCustomThemeConfig) -> Self {
+        Self {
+            window_opacity: theme.window_opacity,
+            blur_px: theme.blur_px,
+            shadow_percent: theme.shadow_percent,
+            wallpaper_data_url: theme.wallpaper_data_url.clone(),
+            wallpaper_opacity: theme.wallpaper_opacity,
+            platform_overrides: theme.platform_overrides.clone(),
+        }
+    }
+}
+
+impl LauncherCustomThemeConfig {
+    fn from_legacy(theme: &LegacyCustomThemeConfig) -> Self {
+        let row_height = match theme.result_density.as_str() {
+            "compact" => 48,
+            "loose" => 68,
+            _ => 58,
+        };
+        Self {
+            id: theme.id.clone(),
+            name: theme.name.clone(),
+            accent_color: theme.accent_color.clone(),
+            window_background: theme.window_color.clone(),
+            window_border: theme.border_color.clone(),
+            window_border_width_px: 1,
+            window_width_px: theme.launcher_width_px,
+            window_radius_px: theme.radius_px,
+            search_background: theme.field_color.clone(),
+            search_border: theme.border_color.clone(),
+            search_border_width_px: 1,
+            search_border_style: "solid".into(),
+            search_width_px: theme.launcher_width_px,
+            search_text_color: theme.text_color.clone(),
+            search_font_size_px: 20,
+            // Results were transparent in the unified v5 skin. Reusing the
+            // outer window colour preserves that visual after the scope split.
+            normal_row_background: theme.window_color.clone(),
+            normal_primary_color: theme.text_color.clone(),
+            normal_secondary_color: theme.muted_color.clone(),
+            normal_primary_font_size_px: theme.font_size_px,
+            normal_secondary_font_size_px: theme.font_size_px.saturating_sub(2).max(10),
+            normal_row_height_px: row_height,
+            selected_row_background: theme.selection_color.clone(),
+            selected_primary_color: theme.text_color.clone(),
+            selected_secondary_color: theme.muted_color.clone(),
+            selected_primary_font_size_px: theme.font_size_px,
+            selected_secondary_font_size_px: theme.font_size_px.saturating_sub(2).max(10),
+            icon_size_px: theme.icon_size_px,
+            show_search_icon: true,
+            // The v5 launcher always rendered the Suo button on the right.
+            // Preserve it during migration; users may hide it in the new skin.
+            show_logo: true,
+            show_source_badge: theme.show_source_badge,
+            max_results: theme.max_results,
+            background: ThemeBackgroundConfig::from_legacy(theme),
+        }
+    }
+}
+
+impl SettingsCustomThemeConfig {
+    fn from_legacy(theme: &LegacyCustomThemeConfig) -> Self {
+        Self {
+            id: theme.id.clone(),
+            name: theme.name.clone(),
+            accent_color: theme.accent_color.clone(),
+            window_background: theme.window_color.clone(),
+            titlebar_background: theme.panel_color.clone(),
+            sidebar_background: theme.field_color.clone(),
+            content_background: theme.window_color.clone(),
+            card_background: theme.panel_color.clone(),
+            border_color: theme.border_color.clone(),
+            primary_text_color: theme.text_color.clone(),
+            secondary_text_color: theme.muted_color.clone(),
+            nav_text_color: theme.text_color.clone(),
+            selected_nav_background: theme.selection_color.clone(),
+            base_font_size_px: theme.font_size_px,
+            radius_px: theme.radius_px,
+            background: ThemeBackgroundConfig::from_legacy(theme),
+        }
     }
 }
 
@@ -243,11 +597,8 @@ impl Default for AppConfig {
                 enabled: true,
                 url_template: "https://www.google.com.hk/search?q={query}".into(),
             }],
-            appearance: AppearanceConfig {
-                theme: "midnight".into(),
-                accent_color: "#8a78ff".into(),
-                custom_themes: Vec::new(),
-            },
+            launcher_theme: LauncherThemeConfig::default(),
+            settings_theme: SettingsThemeConfig::default(),
         }
     }
 }
@@ -489,7 +840,8 @@ fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
     for search in &mut config.web_searches {
         normalize_web_search(search)?;
     }
-    normalize_appearance(&mut config.appearance)?;
+    normalize_launcher_theme(&mut config.launcher_theme)?;
+    normalize_settings_theme(&mut config.settings_theme)?;
     validate_keyword_namespace(&config)?;
     validate_unique_ids(&config)?;
     Ok(config)
@@ -505,10 +857,11 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
 
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
-        // v4 adds per-script debounce, and v5 adds custom themes. Serde defaults
-        // keep older configurations safe during migration.
-        0 | 1 | 2 | 3 | 4 => config.version = 5,
-        5 => {}
+        // v4 adds per-script debounce, v5 adds custom themes, and v6 splits
+        // the legacy appearance payload into launcherTheme/settingsTheme during
+        // deserialization. Both copies are subsequently validated independently.
+        0 | 1 | 2 | 3 | 4 | 5 => config.version = CONFIG_VERSION,
+        6 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -590,123 +943,482 @@ fn normalize_web_search(search: &mut WebSearchConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_appearance(appearance: &mut AppearanceConfig) -> Result<(), String> {
-    appearance.theme = required_trimmed(&appearance.theme, "当前主题", 80)?;
-    validate_hex_color(&appearance.accent_color, "强调色")?;
-    if appearance.custom_themes.len() > MAX_CUSTOM_THEMES {
-        return Err(format!("自定义皮肤最多允许 {MAX_CUSTOM_THEMES} 个"));
+trait ThemeEntry {
+    fn id(&self) -> &str;
+    fn set_id(&mut self, id: String);
+    fn name(&self) -> &str;
+    fn set_name(&mut self, name: String);
+}
+
+impl ThemeEntry for LauncherCustomThemeConfig {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+}
+
+impl ThemeEntry for SettingsCustomThemeConfig {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+}
+
+fn normalize_theme_scope<T, F>(
+    theme: &mut String,
+    accent_color: &str,
+    custom_themes: &mut [T],
+    scope_label: &str,
+    mut validate_theme: F,
+) -> Result<(), String>
+where
+    T: ThemeEntry,
+    F: FnMut(&T) -> Result<(), String>,
+{
+    *theme = required_trimmed(theme, &format!("{scope_label}当前主题"), 80)?;
+    validate_hex_color(accent_color, &format!("{scope_label}强调色"))?;
+    if custom_themes.len() > MAX_CUSTOM_THEMES {
+        return Err(format!(
+            "{scope_label}自定义皮肤最多允许 {MAX_CUSTOM_THEMES} 个"
+        ));
     }
 
     let mut ids = HashMap::<String, String>::new();
-    for theme in &mut appearance.custom_themes {
-        theme.id = required_trimmed(&theme.id, "皮肤 ID", 64)?;
-        if !theme
-            .id
+    for custom_theme in custom_themes.iter_mut() {
+        let id = required_trimmed(custom_theme.id(), "皮肤 ID", 64)?;
+        if !id
             .bytes()
             .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
         {
+            return Err(format!("皮肤 {id} 的 ID 只能包含字母、数字、- 和 _"));
+        }
+        custom_theme.set_id(id);
+        let name = required_trimmed(custom_theme.name(), "皮肤名称", 40)?;
+        custom_theme.set_name(name);
+        if let Some(existing) = ids.insert(
+            custom_theme.id().to_ascii_lowercase(),
+            custom_theme.name().to_string(),
+        ) {
             return Err(format!(
-                "皮肤 {} 的 ID 只能包含字母、数字、- 和 _",
-                theme.id
+                "{scope_label}皮肤 ID {} 同时属于 {} 和 {}",
+                custom_theme.id(),
+                existing,
+                custom_theme.name()
             ));
         }
-        theme.name = required_trimmed(&theme.name, "皮肤名称", 40)?;
-        if let Some(existing) = ids.insert(theme.id.to_ascii_lowercase(), theme.name.clone()) {
-            return Err(format!(
-                "皮肤 ID {} 同时属于 {} 和 {}",
-                theme.id, existing, theme.name
-            ));
-        }
-        validate_custom_theme(theme)?;
+        validate_theme(custom_theme)?;
     }
 
-    if !matches!(appearance.theme.as_str(), "midnight" | "paper" | "forest") {
-        let selected = appearance
-            .theme
+    if !matches!(theme.as_str(), "midnight" | "paper" | "forest") {
+        let selected = theme
             .strip_prefix("custom:")
-            .ok_or_else(|| "主题必须是内置主题或 custom:<id>".to_string())?;
-        let canonical_id = appearance
-            .custom_themes
+            .ok_or_else(|| format!("{scope_label}主题必须是内置主题或 custom:<id>"))?;
+        let canonical_id = custom_themes
             .iter()
-            .find(|theme| theme.id.eq_ignore_ascii_case(selected))
-            .map(|theme| theme.id.clone())
-            .ok_or_else(|| format!("当前自定义皮肤不存在：{selected}"))?;
-        appearance.theme = format!("custom:{canonical_id}");
+            .find(|custom_theme| custom_theme.id().eq_ignore_ascii_case(selected))
+            .map(|custom_theme| custom_theme.id().to_string())
+            .ok_or_else(|| format!("{scope_label}当前自定义皮肤不存在：{selected}"))?;
+        *theme = format!("custom:{canonical_id}");
     }
     Ok(())
 }
 
-fn validate_custom_theme(theme: &CustomThemeConfig) -> Result<(), String> {
-    for (value, label) in [
-        (&theme.window_color, "窗口背景"),
-        (&theme.panel_color, "卡片与面板"),
-        (&theme.field_color, "输入框"),
-        (&theme.text_color, "主文字"),
-        (&theme.muted_color, "次要文字"),
-        (&theme.accent_color, "强调色"),
-        (&theme.selection_color, "选中项背景"),
-        (&theme.border_color, "边框"),
-    ] {
-        validate_hex_color(value, &format!("皮肤 {} 的{label}", theme.name))?;
-    }
+fn normalize_launcher_theme(theme: &mut LauncherThemeConfig) -> Result<(), String> {
+    normalize_theme_scope(
+        &mut theme.theme,
+        &theme.accent_color,
+        &mut theme.custom_themes,
+        "搜索皮肤",
+        validate_launcher_custom_theme,
+    )
+}
 
-    validate_range(theme.window_opacity, 70, 100, &theme.name, "窗口透明度")?;
-    validate_range(theme.blur_px, 0, 40, &theme.name, "背景模糊")?;
-    validate_range(theme.shadow_percent, 0, 80, &theme.name, "阴影强度")?;
-    validate_range(theme.wallpaper_opacity, 0, 60, &theme.name, "背景图强度")?;
-    validate_range(theme.radius_px, 0, 28, &theme.name, "圆角")?;
-    validate_range(theme.font_size_px, 12, 18, &theme.name, "字体大小")?;
-    if !(620..=900).contains(&theme.launcher_width_px) {
+fn normalize_settings_theme(theme: &mut SettingsThemeConfig) -> Result<(), String> {
+    normalize_theme_scope(
+        &mut theme.theme,
+        &theme.accent_color,
+        &mut theme.custom_themes,
+        "设置皮肤",
+        validate_settings_custom_theme,
+    )
+}
+
+fn validate_launcher_custom_theme(theme: &LauncherCustomThemeConfig) -> Result<(), String> {
+    for (value, label) in [
+        (&theme.accent_color, "强调色"),
+        (&theme.window_background, "窗口背景"),
+        (&theme.window_border, "窗口边框"),
+        (&theme.search_background, "搜索框背景"),
+        (&theme.search_border, "搜索框边框"),
+        (&theme.search_text_color, "搜索文字"),
+        (&theme.normal_row_background, "普通结果背景"),
+        (&theme.normal_primary_color, "普通主文字"),
+        (&theme.normal_secondary_color, "普通次文字"),
+        (&theme.selected_row_background, "选中结果背景"),
+        (&theme.selected_primary_color, "选中主文字"),
+        (&theme.selected_secondary_color, "选中次文字"),
+    ] {
+        validate_hex_color(value, &format!("搜索皮肤 {} 的{label}", theme.name))?;
+    }
+    validate_range(
+        theme.window_border_width_px,
+        0,
+        4,
+        &theme.name,
+        "窗口边框宽度",
+    )?;
+    if !(620..=900).contains(&theme.window_width_px) {
         return Err(format!(
-            "皮肤 {} 的启动器宽度必须在 620–900 px 之间",
+            "搜索皮肤 {} 的窗口宽度必须在 620–900 px 之间",
             theme.name
         ));
     }
-    if !matches!(theme.font_family.as_str(), "system" | "cjk" | "mono") {
-        return Err(format!("皮肤 {} 的字体族无效", theme.name));
-    }
+    validate_range(theme.window_radius_px, 0, 28, &theme.name, "窗口圆角")?;
+    validate_range(
+        theme.search_border_width_px,
+        0,
+        4,
+        &theme.name,
+        "搜索框边框宽度",
+    )?;
     if !matches!(
-        theme.result_density.as_str(),
-        "compact" | "comfortable" | "loose"
+        theme.search_border_style.as_str(),
+        "solid" | "dashed" | "dotted" | "double" | "none"
     ) {
-        return Err(format!("皮肤 {} 的结果密度无效", theme.name));
+        return Err(format!("搜索皮肤 {} 的搜索框边框样式无效", theme.name));
     }
+    if !(320..=900).contains(&theme.search_width_px)
+        || theme.search_width_px > theme.window_width_px
+    {
+        return Err(format!(
+            "搜索皮肤 {} 的搜索框宽度必须在 320–窗口宽度 px 之间",
+            theme.name
+        ));
+    }
+    validate_range(
+        theme.search_font_size_px,
+        12,
+        24,
+        &theme.name,
+        "搜索文字大小",
+    )?;
+    validate_range(
+        theme.normal_primary_font_size_px,
+        12,
+        20,
+        &theme.name,
+        "普通主文字大小",
+    )?;
+    validate_range(
+        theme.normal_secondary_font_size_px,
+        10,
+        18,
+        &theme.name,
+        "普通次文字大小",
+    )?;
+    validate_range(
+        theme.normal_row_height_px,
+        44,
+        84,
+        &theme.name,
+        "普通结果行高",
+    )?;
+    validate_range(
+        theme.selected_primary_font_size_px,
+        12,
+        20,
+        &theme.name,
+        "选中主文字大小",
+    )?;
+    validate_range(
+        theme.selected_secondary_font_size_px,
+        10,
+        18,
+        &theme.name,
+        "选中次文字大小",
+    )?;
+    validate_range(theme.icon_size_px, 16, 64, &theme.name, "图标尺寸")?;
     if !matches!(theme.max_results, 6 | 8 | 10 | 12) {
         return Err(format!(
-            "皮肤 {} 最多只能显示 6、8、10 或 12 项结果",
+            "搜索皮肤 {} 最多只能显示 6、8、10 或 12 项结果",
             theme.name
         ));
     }
-    validate_range(theme.icon_size_px, 28, 48, &theme.name, "图标尺寸")?;
+    validate_background(&theme.background, &theme.name)
+}
+
+fn validate_settings_custom_theme(theme: &SettingsCustomThemeConfig) -> Result<(), String> {
+    for (value, label) in [
+        (&theme.accent_color, "强调色"),
+        (&theme.window_background, "窗口背景"),
+        (&theme.titlebar_background, "标题栏背景"),
+        (&theme.sidebar_background, "侧栏背景"),
+        (&theme.content_background, "内容背景"),
+        (&theme.card_background, "卡片背景"),
+        (&theme.border_color, "边框"),
+        (&theme.primary_text_color, "主文字"),
+        (&theme.secondary_text_color, "次文字"),
+        (&theme.nav_text_color, "导航文字"),
+        (&theme.selected_nav_background, "选中导航背景"),
+    ] {
+        validate_hex_color(value, &format!("设置皮肤 {} 的{label}", theme.name))?;
+    }
+    validate_range(theme.base_font_size_px, 12, 20, &theme.name, "基础字体大小")?;
+    validate_range(theme.radius_px, 0, 28, &theme.name, "圆角")?;
+    validate_background(&theme.background, &theme.name)
+}
+
+#[allow(dead_code)]
+const LAUNCHER_THEME_BUNDLE_SCHEMA: &str = "suo-launcher-theme-v1";
+#[allow(dead_code)]
+const SETTINGS_THEME_BUNDLE_SCHEMA: &str = "suo-settings-theme-v1";
+
+#[allow(dead_code)]
+const LAUNCHER_THEME_BUNDLE_FIELDS: &[&str] = &[
+    "name",
+    "accentColor",
+    "windowBackground",
+    "windowBorder",
+    "windowBorderWidthPx",
+    "windowWidthPx",
+    "windowRadiusPx",
+    "searchBackground",
+    "searchBorder",
+    "searchBorderWidthPx",
+    "searchBorderStyle",
+    "searchWidthPx",
+    "searchTextColor",
+    "searchFontSizePx",
+    "normalRowBackground",
+    "normalPrimaryColor",
+    "normalSecondaryColor",
+    "normalPrimaryFontSizePx",
+    "normalSecondaryFontSizePx",
+    "normalRowHeightPx",
+    "selectedRowBackground",
+    "selectedPrimaryColor",
+    "selectedSecondaryColor",
+    "selectedPrimaryFontSizePx",
+    "selectedSecondaryFontSizePx",
+    "iconSizePx",
+    "showSearchIcon",
+    "showLogo",
+    "showSourceBadge",
+    "maxResults",
+    "windowOpacity",
+    "blurPx",
+    "shadowPercent",
+    "wallpaperDataUrl",
+    "wallpaperOpacity",
+    "platformOverrides",
+];
+
+#[allow(dead_code)]
+const SETTINGS_THEME_BUNDLE_FIELDS: &[&str] = &[
+    "name",
+    "accentColor",
+    "windowBackground",
+    "titlebarBackground",
+    "sidebarBackground",
+    "contentBackground",
+    "cardBackground",
+    "borderColor",
+    "primaryTextColor",
+    "secondaryTextColor",
+    "navTextColor",
+    "selectedNavBackground",
+    "baseFontSizePx",
+    "radiusPx",
+    "windowOpacity",
+    "blurPx",
+    "shadowPercent",
+    "wallpaperDataUrl",
+    "wallpaperOpacity",
+    "platformOverrides",
+];
+
+#[allow(dead_code)]
+const PLATFORM_OVERRIDE_FIELDS: &[&str] = &[
+    "enabled",
+    "windowsBlurPx",
+    "windowsOpacity",
+    "macosBlurPx",
+    "macosOpacity",
+];
+
+/// Parses one strict launcher-scope bundle. This deliberately does not accept
+/// the retired `suo-theme-v1` schema or a settings bundle.
+#[allow(dead_code)]
+pub fn parse_launcher_theme_bundle(value: &str) -> Result<LauncherCustomThemeConfig, String> {
+    let mut payload = parse_theme_bundle_payload(
+        value,
+        LAUNCHER_THEME_BUNDLE_SCHEMA,
+        LAUNCHER_THEME_BUNDLE_FIELDS,
+    )?;
+    payload.insert(
+        "id".into(),
+        serde_json::Value::String("imported-launcher-theme".into()),
+    );
+    let theme =
+        serde_json::from_value::<LauncherCustomThemeConfig>(serde_json::Value::Object(payload))
+            .map_err(|error| format!("搜索皮肤导入字段无效：{error}"))?;
+    validate_launcher_custom_theme(&theme)?;
+    Ok(theme)
+}
+
+/// Parses one strict settings-scope bundle. A launcher bundle is not a valid
+/// settings import even when every overlapping token happens to be valid.
+#[allow(dead_code)]
+pub fn parse_settings_theme_bundle(value: &str) -> Result<SettingsCustomThemeConfig, String> {
+    let mut payload = parse_theme_bundle_payload(
+        value,
+        SETTINGS_THEME_BUNDLE_SCHEMA,
+        SETTINGS_THEME_BUNDLE_FIELDS,
+    )?;
+    payload.insert(
+        "id".into(),
+        serde_json::Value::String("imported-settings-theme".into()),
+    );
+    let theme =
+        serde_json::from_value::<SettingsCustomThemeConfig>(serde_json::Value::Object(payload))
+            .map_err(|error| format!("设置皮肤导入字段无效：{error}"))?;
+    validate_settings_custom_theme(&theme)?;
+    Ok(theme)
+}
+
+#[allow(dead_code)]
+pub fn build_launcher_theme_bundle(
+    theme: &LauncherCustomThemeConfig,
+) -> Result<serde_json::Value, String> {
+    validate_launcher_custom_theme(theme)?;
+    build_theme_bundle(LAUNCHER_THEME_BUNDLE_SCHEMA, theme)
+}
+
+#[allow(dead_code)]
+pub fn build_settings_theme_bundle(
+    theme: &SettingsCustomThemeConfig,
+) -> Result<serde_json::Value, String> {
+    validate_settings_custom_theme(theme)?;
+    build_theme_bundle(SETTINGS_THEME_BUNDLE_SCHEMA, theme)
+}
+
+#[allow(dead_code)]
+fn parse_theme_bundle_payload(
+    value: &str,
+    expected_schema: &str,
+    expected_theme_fields: &[&str],
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let value = serde_json::from_str::<serde_json::Value>(value)
+        .map_err(|error| format!("皮肤导入 JSON 无效：{error}"))?;
+    let root = value
+        .as_object()
+        .ok_or_else(|| "皮肤导入必须是 JSON 对象".to_string())?;
+    validate_exact_object_fields(root, &["schema", "version", "theme"], "皮肤导入")?;
+    if root.get("schema").and_then(serde_json::Value::as_str) != Some(expected_schema) {
+        return Err(format!("皮肤导入 scope 不匹配；只接受 {expected_schema}"));
+    }
+    if root.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("皮肤导入版本必须是 v1".into());
+    }
+    let theme = root
+        .get("theme")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "皮肤导入 theme 必须是对象".to_string())?;
+    validate_exact_object_fields(theme, expected_theme_fields, "皮肤导入 theme")?;
+    let overrides = theme
+        .get("platformOverrides")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "皮肤导入 platformOverrides 必须是对象".to_string())?;
+    validate_exact_object_fields(
+        overrides,
+        PLATFORM_OVERRIDE_FIELDS,
+        "皮肤导入 platformOverrides",
+    )?;
+    Ok(theme.clone())
+}
+
+#[allow(dead_code)]
+fn validate_exact_object_fields(
+    value: &serde_json::Map<String, serde_json::Value>,
+    expected: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    if value.len() != expected.len()
+        || expected.iter().any(|field| !value.contains_key(*field))
+        || value
+            .keys()
+            .any(|field| !expected.contains(&field.as_str()))
+    {
+        return Err(format!("{label} 字段必须完整且不能包含未知字段"));
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn build_theme_bundle<T: Serialize>(schema: &str, theme: &T) -> Result<serde_json::Value, String> {
+    let mut theme = serde_json::to_value(theme)
+        .map_err(|error| format!("无法序列化皮肤：{error}"))?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "皮肤必须是对象".to_string())?;
+    theme.remove("id");
+    Ok(serde_json::json!({
+        "schema": schema,
+        "version": 1,
+        "theme": theme,
+    }))
+}
+
+fn validate_background(background: &ThemeBackgroundConfig, name: &str) -> Result<(), String> {
+    validate_range(background.window_opacity, 70, 100, name, "窗口透明度")?;
+    validate_range(background.blur_px, 0, 40, name, "背景模糊")?;
+    validate_range(background.shadow_percent, 0, 80, name, "阴影强度")?;
+    validate_range(background.wallpaper_opacity, 0, 60, name, "背景图强度")?;
     validate_range(
-        theme.platform_overrides.windows_blur_px,
+        background.platform_overrides.windows_blur_px,
         0,
         40,
-        &theme.name,
+        name,
         "Windows 模糊",
     )?;
     validate_range(
-        theme.platform_overrides.windows_opacity,
+        background.platform_overrides.windows_opacity,
         70,
         100,
-        &theme.name,
+        name,
         "Windows 透明度",
     )?;
     validate_range(
-        theme.platform_overrides.macos_blur_px,
+        background.platform_overrides.macos_blur_px,
         0,
         40,
-        &theme.name,
+        name,
         "macOS 模糊",
     )?;
     validate_range(
-        theme.platform_overrides.macos_opacity,
+        background.platform_overrides.macos_opacity,
         70,
         100,
-        &theme.name,
+        name,
         "macOS 透明度",
     )?;
-    validate_wallpaper_data_url(&theme.wallpaper_data_url, &theme.name)
+    validate_wallpaper_data_url(&background.wallpaper_data_url, name)
 }
 
 fn validate_hex_color(value: &str, label: &str) -> Result<(), String> {
@@ -739,13 +1451,17 @@ fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
     if value.is_empty() {
         return Ok(());
     }
-    let payload = [
-        "data:image/png;base64,",
-        "data:image/jpeg;base64,",
-        "data:image/webp;base64,",
+    let (mime_type, payload) = [
+        ("image/png", "data:image/png;base64,"),
+        ("image/jpeg", "data:image/jpeg;base64,"),
+        ("image/webp", "data:image/webp;base64,"),
     ]
     .iter()
-    .find_map(|prefix| value.strip_prefix(prefix))
+    .find_map(|(mime_type, prefix)| {
+        value
+            .strip_prefix(prefix)
+            .map(|payload| (*mime_type, payload))
+    })
     .ok_or_else(|| format!("皮肤 {name} 的背景图只允许 PNG、JPEG 或 WebP"))?;
     if payload.is_empty() || payload.len() % 4 != 0 {
         return Err(format!("皮肤 {name} 的背景图数据无效"));
@@ -782,7 +1498,46 @@ fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
     if decoded_bytes > MAX_THEME_WALLPAPER_BYTES {
         return Err(format!("皮肤 {name} 的背景图不能超过 1.5 MB"));
     }
+    let decoded = decode_base64(payload, decoded_bytes)
+        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
+    let is_complete_image = match mime_type {
+        "image/png" => validate_png(&decoded),
+        "image/jpeg" => validate_jpeg(&decoded),
+        "image/webp" => validate_webp(&decoded),
+        _ => false,
+    };
+    if !is_complete_image || !decode_wallpaper_image(&decoded, mime_type) {
+        return Err(format!(
+            "皮肤 {name} 的背景图不是完整的 PNG、JPEG 或 WebP 文件"
+        ));
+    }
     Ok(())
+}
+
+/// Decodes a payload which has already passed the strict alphabet, padding and
+/// canonical-tail checks above. Keeping this decoder local avoids accepting a
+/// browser/runtime-specific forgiving Base64 variant.
+fn decode_base64(payload: &str, expected_len: usize) -> Option<Vec<u8>> {
+    let mut result = Vec::with_capacity(expected_len);
+    for group in payload.as_bytes().chunks(4) {
+        if group.len() != 4 {
+            return None;
+        }
+        let first = base64_sextet(group[0])?;
+        let second = base64_sextet(group[1])?;
+        result.push((first << 2) | (second >> 4));
+        if group[2] == b'=' {
+            continue;
+        }
+        let third = base64_sextet(group[2])?;
+        result.push((second << 4) | (third >> 2));
+        if group[3] == b'=' {
+            continue;
+        }
+        let fourth = base64_sextet(group[3])?;
+        result.push((third << 6) | fourth);
+    }
+    (result.len() == expected_len).then_some(result)
 }
 
 fn base64_sextet(byte: u8) -> Option<u8> {
@@ -794,6 +1549,361 @@ fn base64_sextet(byte: u8) -> Option<u8> {
         b'/' => Some(63),
         _ => None,
     }
+}
+
+/// Container checks above reject malformed framing before the decoder runs.
+/// Decode with explicit image and allocation limits so a tiny compressed input
+/// cannot expand into an unbounded wallpaper allocation.
+fn decode_wallpaper_image(bytes: &[u8], mime_type: &str) -> bool {
+    let format = match mime_type {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" => ImageFormat::Jpeg,
+        "image/webp" => ImageFormat::WebP,
+        _ => return false,
+    };
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_THEME_WALLPAPER_DIMENSION);
+    limits.max_image_height = Some(MAX_THEME_WALLPAPER_DIMENSION);
+    limits.max_alloc = Some(MAX_THEME_WALLPAPER_ALLOCATION_BYTES);
+
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
+    reader.limits(limits);
+    let Ok(image) = reader.decode() else {
+        return false;
+    };
+    let (width, height) = image.dimensions();
+    width > 0
+        && height > 0
+        && width <= MAX_THEME_WALLPAPER_DIMENSION
+        && height <= MAX_THEME_WALLPAPER_DIMENSION
+        && u64::from(width) * u64::from(height) <= MAX_THEME_WALLPAPER_PIXELS
+}
+
+fn validate_png(bytes: &[u8]) -> bool {
+    const SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if !bytes.starts_with(SIGNATURE) {
+        return false;
+    }
+
+    let mut position = SIGNATURE.len();
+    let mut saw_ihdr = false;
+    let mut saw_plte = false;
+    let mut saw_idat = false;
+    let mut left_idat = false;
+    let mut indexed_colour = false;
+
+    while position < bytes.len() {
+        let Some(header_end) = position.checked_add(8) else {
+            return false;
+        };
+        if header_end > bytes.len() {
+            return false;
+        }
+        let length = usize::try_from(u32::from_be_bytes(
+            bytes[position..position + 4].try_into().unwrap_or_default(),
+        ))
+        .ok();
+        let Some(length) = length else {
+            return false;
+        };
+        let data_start = header_end;
+        let Some(data_end) = data_start.checked_add(length) else {
+            return false;
+        };
+        let Some(chunk_end) = data_end.checked_add(4) else {
+            return false;
+        };
+        if chunk_end > bytes.len() {
+            return false;
+        }
+        let kind = &bytes[position + 4..header_end];
+        let data = &bytes[data_start..data_end];
+        let expected_crc =
+            u32::from_be_bytes(bytes[data_end..chunk_end].try_into().unwrap_or_default());
+        if png_crc32(&bytes[position + 4..data_end]) != expected_crc {
+            return false;
+        }
+
+        if !saw_ihdr {
+            if kind != b"IHDR" || !validate_png_ihdr(data) {
+                return false;
+            }
+            indexed_colour = data[9] == 3;
+            saw_ihdr = true;
+        } else if kind == b"IHDR" {
+            return false;
+        } else if kind == b"PLTE" {
+            if saw_idat || data.is_empty() || data.len() % 3 != 0 || data.len() > 768 {
+                return false;
+            }
+            saw_plte = true;
+        } else if kind == b"IDAT" {
+            if left_idat || data.is_empty() {
+                return false;
+            }
+            saw_idat = true;
+        } else if kind == b"IEND" {
+            return data.is_empty()
+                && saw_idat
+                && (!indexed_colour || saw_plte)
+                && chunk_end == bytes.len();
+        } else if saw_idat {
+            left_idat = true;
+        }
+        position = chunk_end;
+    }
+    false
+}
+
+fn validate_png_ihdr(data: &[u8]) -> bool {
+    if data.len() != 13 {
+        return false;
+    }
+    let width = u32::from_be_bytes(data[0..4].try_into().unwrap_or_default());
+    let height = u32::from_be_bytes(data[4..8].try_into().unwrap_or_default());
+    if width == 0 || height == 0 || data[10] != 0 || data[11] != 0 || !matches!(data[12], 0 | 1) {
+        return false;
+    }
+    matches!(
+        (data[8], data[9]),
+        (1 | 2 | 4 | 8 | 16, 0) | (8 | 16, 2 | 4 | 6) | (1 | 2 | 4 | 8, 3)
+    )
+}
+
+fn png_crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 {
+                crc >> 1
+            } else {
+                (crc >> 1) ^ 0xedb8_8320
+            };
+        }
+    }
+    !crc
+}
+
+fn validate_jpeg(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return false;
+    }
+    let mut position = 2;
+    let mut saw_frame = false;
+    let mut saw_scan = false;
+
+    while position < bytes.len() {
+        let Some((marker, marker_end)) = jpeg_marker(bytes, position) else {
+            return false;
+        };
+        position = marker_end;
+        match marker {
+            0xd9 => return saw_frame && saw_scan && position == bytes.len(),
+            0xd8 => return false,
+            0x01 | 0xd0..=0xd7 => continue,
+            _ => {}
+        }
+
+        let Some(length_end) = position.checked_add(2) else {
+            return false;
+        };
+        if length_end > bytes.len() {
+            return false;
+        }
+        let length = usize::from(u16::from_be_bytes(
+            bytes[position..length_end].try_into().unwrap_or_default(),
+        ));
+        if length < 2 {
+            return false;
+        }
+        let Some(segment_end) = position.checked_add(length) else {
+            return false;
+        };
+        if segment_end > bytes.len() {
+            return false;
+        }
+        let segment = &bytes[length_end..segment_end];
+        if is_jpeg_frame_marker(marker) {
+            if !validate_jpeg_frame(segment) {
+                return false;
+            }
+            saw_frame = true;
+        }
+        if marker == 0xda {
+            if !saw_frame || !validate_jpeg_scan_header(segment) {
+                return false;
+            }
+            saw_scan = true;
+            match jpeg_scan_end(bytes, segment_end) {
+                Some(JpegScanEnd::End) => return true,
+                Some(JpegScanEnd::NextMarker(next)) => position = next,
+                None => return false,
+            }
+        } else {
+            position = segment_end;
+        }
+    }
+    false
+}
+
+fn jpeg_marker(bytes: &[u8], position: usize) -> Option<(u8, usize)> {
+    if bytes.get(position) != Some(&0xff) {
+        return None;
+    }
+    let mut marker_end = position + 1;
+    while bytes.get(marker_end) == Some(&0xff) {
+        marker_end += 1;
+    }
+    let marker = *bytes.get(marker_end)?;
+    (marker != 0).then_some((marker, marker_end + 1))
+}
+
+enum JpegScanEnd {
+    End,
+    NextMarker(usize),
+}
+
+fn jpeg_scan_end(bytes: &[u8], mut position: usize) -> Option<JpegScanEnd> {
+    while position < bytes.len() {
+        if bytes[position] != 0xff {
+            position += 1;
+            continue;
+        }
+        let marker_start = position;
+        position += 1;
+        while bytes.get(position) == Some(&0xff) {
+            position += 1;
+        }
+        let marker = *bytes.get(position)?;
+        if marker == 0 {
+            position += 1;
+            continue;
+        }
+        if matches!(marker, 0xd0..=0xd7) {
+            position += 1;
+            continue;
+        }
+        if marker == 0xd9 {
+            return (position + 1 == bytes.len()).then_some(JpegScanEnd::End);
+        }
+        return Some(JpegScanEnd::NextMarker(marker_start));
+    }
+    None
+}
+
+fn is_jpeg_frame_marker(marker: u8) -> bool {
+    matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf)
+}
+
+fn validate_jpeg_frame(segment: &[u8]) -> bool {
+    if segment.len() < 6 {
+        return false;
+    }
+    let components = usize::from(segment[5]);
+    let height = u16::from_be_bytes([segment[1], segment[2]]);
+    let width = u16::from_be_bytes([segment[3], segment[4]]);
+    components > 0 && height > 0 && width > 0 && segment.len() == 6 + components.saturating_mul(3)
+}
+
+fn validate_jpeg_scan_header(segment: &[u8]) -> bool {
+    let Some(components) = segment.first().copied().map(usize::from) else {
+        return false;
+    };
+    components > 0 && segment.len() == 4 + components.saturating_mul(2)
+}
+
+fn validate_webp(bytes: &[u8]) -> bool {
+    if bytes.len() < 20 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return false;
+    }
+    let declared = usize::try_from(u32::from_le_bytes(
+        bytes[4..8].try_into().unwrap_or_default(),
+    ))
+    .ok();
+    let Some(declared) = declared else {
+        return false;
+    };
+    if declared.checked_add(8) != Some(bytes.len()) {
+        return false;
+    }
+    validate_webp_chunks(&bytes[12..])
+}
+
+fn validate_webp_chunks(bytes: &[u8]) -> bool {
+    let mut position = 0;
+    let mut saw_image = false;
+    while position < bytes.len() {
+        let Some(header_end) = position.checked_add(8) else {
+            return false;
+        };
+        if header_end > bytes.len() {
+            return false;
+        }
+        let length = usize::try_from(u32::from_le_bytes(
+            bytes[position + 4..header_end]
+                .try_into()
+                .unwrap_or_default(),
+        ))
+        .ok();
+        let Some(length) = length else {
+            return false;
+        };
+        let Some(data_end) = header_end.checked_add(length) else {
+            return false;
+        };
+        let Some(next) = data_end.checked_add(length % 2) else {
+            return false;
+        };
+        if next > bytes.len() {
+            return false;
+        }
+        let kind = &bytes[position..position + 4];
+        let data = &bytes[header_end..data_end];
+        let valid_chunk = match kind {
+            b"VP8 " => validate_webp_vp8(data),
+            b"VP8L" => validate_webp_vp8l(data),
+            b"VP8X" => validate_webp_vp8x(data),
+            b"ANMF" => data.len() >= 16 && validate_webp_chunks(&data[16..]),
+            _ => true,
+        };
+        if !valid_chunk {
+            return false;
+        }
+        if matches!(kind, b"VP8 " | b"VP8L" | b"ANMF") {
+            saw_image = true;
+        }
+        position = next;
+    }
+    saw_image
+}
+
+fn validate_webp_vp8(data: &[u8]) -> bool {
+    if data.len() < 10 || data[0] & 1 != 0 || data[3..6] != [0x9d, 0x01, 0x2a] {
+        return false;
+    }
+    let width = u16::from_le_bytes([data[6], data[7]]) & 0x3fff;
+    let height = u16::from_le_bytes([data[8], data[9]]) & 0x3fff;
+    width > 0 && height > 0
+}
+
+fn validate_webp_vp8l(data: &[u8]) -> bool {
+    if data.len() < 5 || data[0] != 0x2f {
+        return false;
+    }
+    let dimensions = u32::from_le_bytes(data[1..5].try_into().unwrap_or_default());
+    let width = (dimensions & 0x3fff) + 1;
+    let height = ((dimensions >> 14) & 0x3fff) + 1;
+    width > 0 && height > 0 && dimensions >> 29 == 0
+}
+
+fn validate_webp_vp8x(data: &[u8]) -> bool {
+    if data.len() != 10 || data[0] & 0x01 != 0 || data[1..4] != [0, 0, 0] {
+        return false;
+    }
+    let width = u32::from(data[4]) | (u32::from(data[5]) << 8) | (u32::from(data[6]) << 16);
+    let height = u32::from(data[7]) | (u32::from(data[8]) << 8) | (u32::from(data[9]) << 16);
+    width <= 0x00ff_ffff && height <= 0x00ff_ffff
 }
 
 fn validate_keyword_namespace(config: &AppConfig) -> Result<(), String> {
@@ -973,41 +2083,290 @@ mod tests {
         }
     }
 
-    fn custom_theme(id: &str) -> CustomThemeConfig {
-        CustomThemeConfig {
-            id: id.into(),
-            name: "测试皮肤".into(),
-            window_color: "#0b1222".into(),
-            panel_color: "#101a30".into(),
-            field_color: "#161f39".into(),
-            text_color: "#f5f7ff".into(),
-            muted_color: "#91a0c7".into(),
-            accent_color: "#8a78ff".into(),
-            selection_color: "#302b63".into(),
-            border_color: "#343d5a".into(),
+    fn theme_background() -> ThemeBackgroundConfig {
+        ThemeBackgroundConfig {
             window_opacity: 94,
             blur_px: 18,
             shadow_percent: 45,
             wallpaper_data_url: String::new(),
             wallpaper_opacity: 18,
-            radius_px: 18,
-            font_family: "system".into(),
-            font_size_px: 14,
-            launcher_width_px: 720,
-            result_density: "comfortable".into(),
-            max_results: 8,
-            icon_size_px: 36,
-            show_source_badge: true,
             platform_overrides: PlatformThemeOverrides::default(),
         }
     }
 
-    fn wallpaper_data_url(decoded_bytes: usize) -> String {
-        let encoded_len = 4 * ((decoded_bytes + 2) / 3);
-        let padding = (3 - decoded_bytes % 3) % 3;
-        let mut payload = "A".repeat(encoded_len - padding);
-        payload.push_str(&"=".repeat(padding));
-        format!("data:image/png;base64,{payload}")
+    fn launcher_custom_theme(id: &str) -> LauncherCustomThemeConfig {
+        LauncherCustomThemeConfig {
+            id: id.into(),
+            name: "测试皮肤".into(),
+            accent_color: "#8a78ff".into(),
+            window_background: "#0b1222".into(),
+            window_border: "#343d5a".into(),
+            window_border_width_px: 1,
+            window_width_px: 720,
+            window_radius_px: 18,
+            search_background: "#161f39".into(),
+            search_border: "#343d5a".into(),
+            search_border_width_px: 1,
+            search_border_style: "solid".into(),
+            search_width_px: 720,
+            search_text_color: "#f5f7ff".into(),
+            search_font_size_px: 20,
+            normal_row_background: "#101a30".into(),
+            normal_primary_color: "#f5f7ff".into(),
+            normal_secondary_color: "#91a0c7".into(),
+            normal_primary_font_size_px: 14,
+            normal_secondary_font_size_px: 12,
+            normal_row_height_px: 58,
+            selected_row_background: "#302b63".into(),
+            selected_primary_color: "#f5f7ff".into(),
+            selected_secondary_color: "#91a0c7".into(),
+            selected_primary_font_size_px: 14,
+            selected_secondary_font_size_px: 12,
+            icon_size_px: 36,
+            show_search_icon: true,
+            show_logo: false,
+            show_source_badge: true,
+            max_results: 8,
+            background: theme_background(),
+        }
+    }
+
+    fn settings_custom_theme(id: &str) -> SettingsCustomThemeConfig {
+        SettingsCustomThemeConfig {
+            id: id.into(),
+            name: "设置皮肤".into(),
+            accent_color: "#8a78ff".into(),
+            window_background: "#0b1222".into(),
+            titlebar_background: "#101a30".into(),
+            sidebar_background: "#161f39".into(),
+            content_background: "#0b1222".into(),
+            card_background: "#101a30".into(),
+            border_color: "#343d5a".into(),
+            primary_text_color: "#f5f7ff".into(),
+            secondary_text_color: "#91a0c7".into(),
+            nav_text_color: "#f5f7ff".into(),
+            selected_nav_background: "#302b63".into(),
+            base_font_size_px: 14,
+            radius_px: 18,
+            background: theme_background(),
+        }
+    }
+
+    fn legacy_config_value(version: u32) -> serde_json::Value {
+        let mut config = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
+        let object = config.as_object_mut().expect("config object");
+        object.remove("launcherTheme");
+        object.remove("settingsTheme");
+        object.insert("version".into(), serde_json::json!(version));
+        object.insert(
+            "appearance".into(),
+            serde_json::json!({
+                "theme": "midnight",
+                "accentColor": "#8a78ff",
+                "customThemes": [],
+            }),
+        );
+        config
+    }
+
+    fn legacy_custom_theme_value(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "name": "旧版皮肤",
+            "windowColor": "#0b1222",
+            "panelColor": "#101a30",
+            "fieldColor": "#161f39",
+            "textColor": "#f5f7ff",
+            "mutedColor": "#91a0c7",
+            "accentColor": "#8a78ff",
+            "selectionColor": "#302b63",
+            "borderColor": "#343d5a",
+            "windowOpacity": 94,
+            "blurPx": 18,
+            "shadowPercent": 45,
+            "wallpaperDataUrl": "",
+            "wallpaperOpacity": 18,
+            "radiusPx": 18,
+            "fontFamily": "system",
+            "fontSizePx": 14,
+            "launcherWidthPx": 720,
+            "resultDensity": "comfortable",
+            "maxResults": 8,
+            "iconSizePx": 36,
+            "showSourceBadge": true,
+            "platformOverrides": {
+                "enabled": false,
+                "windowsBlurPx": 18,
+                "windowsOpacity": 94,
+                "macosBlurPx": 18,
+                "macosOpacity": 94,
+            },
+        })
+    }
+
+    fn base64_encode(bytes: &[u8]) -> String {
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut result = String::with_capacity(4 * ((bytes.len() + 2) / 3));
+        for chunk in bytes.chunks(3) {
+            let a = chunk[0];
+            let b = *chunk.get(1).unwrap_or(&0);
+            let c = *chunk.get(2).unwrap_or(&0);
+            result.push(TABLE[(a >> 2) as usize] as char);
+            result.push(TABLE[(((a & 0x03) << 4) | (b >> 4)) as usize] as char);
+            result.push(if chunk.len() > 1 {
+                TABLE[(((b & 0x0f) << 2) | (c >> 6)) as usize] as char
+            } else {
+                '='
+            });
+            result.push(if chunk.len() > 2 {
+                TABLE[(c & 0x3f) as usize] as char
+            } else {
+                '='
+            });
+        }
+        result
+    }
+
+    fn wallpaper_data_url(mime_type: &str, bytes: &[u8]) -> String {
+        format!("data:{mime_type};base64,{}", base64_encode(bytes))
+    }
+
+    fn append_png_chunk(bytes: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        bytes.extend_from_slice(
+            &u32::try_from(data.len())
+                .expect("PNG chunk length")
+                .to_be_bytes(),
+        );
+        let crc_start = bytes.len();
+        bytes.extend_from_slice(kind);
+        bytes.extend_from_slice(data);
+        bytes.extend_from_slice(&png_crc32(&bytes[crc_start..]).to_be_bytes());
+    }
+
+    fn valid_png_bytes(total_len: usize) -> Vec<u8> {
+        // A real 1×1 RGBA PNG. For the size-limit test, an ancillary tEXt
+        // chunk makes the file exact-sized without changing the image payload.
+        const BASE_LEN: usize = 73;
+        assert!(total_len == BASE_LEN || total_len >= BASE_LEN + 14);
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        append_png_chunk(
+            &mut bytes,
+            b"IHDR",
+            &[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0],
+        );
+        if total_len > BASE_LEN {
+            let mut text = vec![b'a'; total_len - BASE_LEN - 12];
+            text[0] = b'x';
+            text[1] = 0;
+            append_png_chunk(&mut bytes, b"tEXt", &text);
+        }
+        // zlib stream for the scanline [filter=0, R=0, G=0, B=0, A=255].
+        append_png_chunk(
+            &mut bytes,
+            b"IDAT",
+            &[
+                0x78, 0x01, 0x01, 0x05, 0x00, 0xfa, 0xff, 0, 0, 0, 0, 0xff, 1, 4, 1, 0,
+            ],
+        );
+        append_png_chunk(&mut bytes, b"IEND", &[]);
+        assert_eq!(bytes.len(), total_len);
+        bytes
+    }
+
+    fn encoded_image_bytes(format: ImageFormat) -> Vec<u8> {
+        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([24, 48, 96, 255]),
+        ));
+        let mut output = Cursor::new(Vec::new());
+        image
+            .write_to(&mut output, format)
+            .expect("encode real test image");
+        output.into_inner()
+    }
+
+    fn encoded_rgba16_png_bytes() -> Vec<u8> {
+        let image = image::DynamicImage::ImageRgba16(image::ImageBuffer::from_pixel(
+            32,
+            32,
+            image::Rgba([u16::MAX, 0, 32_768, u16::MAX]),
+        ));
+        let mut output = Cursor::new(Vec::new());
+        image
+            .write_to(&mut output, ImageFormat::Png)
+            .expect("encode real 16-bit PNG test image");
+        output.into_inner()
+    }
+
+    fn valid_jpeg_bytes() -> Vec<u8> {
+        encoded_image_bytes(ImageFormat::Jpeg)
+    }
+
+    fn valid_webp_bytes() -> Vec<u8> {
+        encoded_image_bytes(ImageFormat::WebP)
+    }
+
+    fn corrupt_png_idat_with_valid_crc(bytes: &mut [u8]) {
+        let mut position = 8;
+        while position + 12 <= bytes.len() {
+            let length = usize::try_from(u32::from_be_bytes(
+                bytes[position..position + 4]
+                    .try_into()
+                    .expect("PNG chunk length"),
+            ))
+            .expect("PNG chunk length fits usize");
+            let data_start = position + 8;
+            let data_end = data_start + length;
+            let chunk_end = data_end + 4;
+            assert!(chunk_end <= bytes.len(), "complete PNG fixture");
+            if &bytes[position + 4..data_start] == b"IDAT" {
+                // Break the zlib header, then recompute the PNG chunk CRC so
+                // the container remains structurally valid.
+                bytes[data_start] ^= 0x01;
+                let crc = png_crc32(&bytes[position + 4..data_end]).to_be_bytes();
+                bytes[data_end..chunk_end].copy_from_slice(&crc);
+                return;
+            }
+            position = chunk_end;
+        }
+        panic!("PNG fixture must contain IDAT");
+    }
+
+    fn jpeg_scan_positions(bytes: &[u8]) -> (usize, usize) {
+        let mut position = 2;
+        loop {
+            let (marker, marker_end) = jpeg_marker(bytes, position).expect("JPEG marker");
+            position = marker_end;
+            if marker == 0xda {
+                let length = usize::from(u16::from_be_bytes(
+                    bytes[position..position + 2]
+                        .try_into()
+                        .expect("JPEG scan length"),
+                ));
+                return (position + 2, position + length);
+            }
+            if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+                continue;
+            }
+            let length = usize::from(u16::from_be_bytes(
+                bytes[position..position + 2]
+                    .try_into()
+                    .expect("JPEG segment length"),
+            ));
+            position += length;
+        }
+    }
+
+    fn structurally_valid_invalid_webp_bytes() -> Vec<u8> {
+        // A VP8 container/header with an empty first partition. The RIFF and
+        // VP8 framing are internally consistent, but no decoder can form an
+        // image from it.
+        vec![
+            b'R', b'I', b'F', b'F', 22, 0, 0, 0, b'W', b'E', b'B', b'P', b'V', b'P', b'8', b' ',
+            10, 0, 0, 0, 0, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0,
+        ]
     }
 
     #[test]
@@ -1069,8 +2428,7 @@ mod tests {
 
     #[test]
     fn migrates_v1_without_descriptions() {
-        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
-        legacy["version"] = serde_json::json!(1);
+        let mut legacy = legacy_config_value(1);
         legacy["translation"]
             .as_object_mut()
             .expect("translation object")
@@ -1107,8 +2465,7 @@ mod tests {
 
     #[test]
     fn migrates_v2_without_compact_or_debounce_settings() {
-        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
-        legacy["version"] = serde_json::json!(2);
+        let mut legacy = legacy_config_value(2);
         legacy["launcher"]
             .as_object_mut()
             .expect("launcher object")
@@ -1130,8 +2487,7 @@ mod tests {
 
     #[test]
     fn migrates_v3_without_script_debounce_setting() {
-        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
-        legacy["version"] = serde_json::json!(3);
+        let mut legacy = legacy_config_value(3);
         legacy["scriptCommands"][0]
             .as_object_mut()
             .expect("script object")
@@ -1148,8 +2504,7 @@ mod tests {
 
     #[test]
     fn migrates_v4_without_custom_themes() {
-        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
-        legacy["version"] = serde_json::json!(4);
+        let mut legacy = legacy_config_value(4);
         legacy["appearance"]
             .as_object_mut()
             .expect("appearance object")
@@ -1158,61 +2513,262 @@ mod tests {
         let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize legacy v4");
         let migrated = normalize_and_validate(config).expect("migrate legacy v4");
         assert_eq!(migrated.version, CONFIG_VERSION);
-        assert!(migrated.appearance.custom_themes.is_empty());
-        assert_eq!(migrated.appearance.theme, "midnight");
+        assert!(migrated.launcher_theme.custom_themes.is_empty());
+        assert!(migrated.settings_theme.custom_themes.is_empty());
+        assert_eq!(migrated.launcher_theme.theme, "midnight");
+        assert_eq!(migrated.settings_theme.theme, "midnight");
     }
 
     #[test]
-    fn validates_custom_theme_selection_and_ranges() {
+    fn migrates_v5_appearance_into_two_independent_scopes() {
+        let mut legacy = legacy_config_value(5);
+        let appearance = legacy["appearance"]
+            .as_object_mut()
+            .expect("legacy appearance object");
+        appearance.insert("theme".into(), serde_json::json!("custom:nebula"));
+        appearance.insert(
+            "customThemes".into(),
+            serde_json::json!([legacy_custom_theme_value("nebula")]),
+        );
+        appearance["customThemes"][0]["accentColor"] = serde_json::json!("#ef4f9a");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(legacy).expect("deserialize v5 appearance"),
+        )
+        .expect("migrate v5 appearance");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(migrated.launcher_theme.theme, "custom:nebula");
+        assert_eq!(migrated.settings_theme.theme, "custom:nebula");
+        assert_eq!(migrated.launcher_theme.custom_themes.len(), 1);
+        assert_eq!(migrated.settings_theme.custom_themes.len(), 1);
+        assert_eq!(migrated.launcher_theme.accent_color, "#ef4f9a");
+        assert_eq!(migrated.settings_theme.accent_color, "#ef4f9a");
+        assert_eq!(
+            migrated.launcher_theme.custom_themes[0].accent_color,
+            "#ef4f9a"
+        );
+        assert_eq!(
+            migrated.settings_theme.custom_themes[0].accent_color,
+            "#ef4f9a"
+        );
+
+        let mut edited = migrated.clone();
+        edited.launcher_theme.custom_themes[0].name = "仅搜索皮肤".into();
+        assert_eq!(edited.settings_theme.custom_themes[0].name, "旧版皮肤");
+    }
+
+    #[test]
+    fn repairs_intermediate_v6_custom_themes_without_accent() {
+        let mut config = AppConfig::default();
+        config.launcher_theme.theme = "custom:launcher-v6".into();
+        config.launcher_theme.accent_color = "#4361ee".into();
+        config
+            .launcher_theme
+            .custom_themes
+            .push(launcher_custom_theme("launcher-v6"));
+        config.settings_theme.theme = "custom:settings-v6".into();
+        config.settings_theme.accent_color = "#2a9d8f".into();
+        config
+            .settings_theme
+            .custom_themes
+            .push(settings_custom_theme("settings-v6"));
+
+        let mut intermediate = serde_json::to_value(config).expect("serialize v6 config");
+        intermediate["launcherTheme"]["customThemes"][0]
+            .as_object_mut()
+            .expect("launcher custom theme")
+            .remove("accentColor");
+        intermediate["settingsTheme"]["customThemes"][0]
+            .as_object_mut()
+            .expect("settings custom theme")
+            .remove("accentColor");
+
+        let repaired = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(intermediate)
+                .expect("deserialize intermediate v6 config"),
+        )
+        .expect("repair intermediate v6 custom accents");
+        assert_eq!(
+            repaired.launcher_theme.custom_themes[0].accent_color,
+            "#4361ee"
+        );
+        assert_eq!(
+            repaired.settings_theme.custom_themes[0].accent_color,
+            "#2a9d8f"
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_v6_theme_scopes_instead_of_falling_back_to_appearance() {
+        let mut malformed = legacy_config_value(CONFIG_VERSION);
+        malformed["appearance"] = serde_json::json!({
+            "theme": "midnight",
+            "accentColor": "#8a78ff",
+            "customThemes": []
+        });
+        assert!(serde_json::from_value::<AppConfig>(malformed).is_err());
+
+        let mut incomplete = serde_json::to_value(AppConfig::default()).expect("serialize v6");
+        incomplete
+            .as_object_mut()
+            .expect("v6 config object")
+            .remove("settingsTheme");
+        assert!(serde_json::from_value::<AppConfig>(incomplete).is_err());
+    }
+
+    #[test]
+    fn validates_scope_custom_theme_selection_and_ranges() {
         let mut valid = AppConfig::default();
-        valid.appearance.theme = "custom:nebula".into();
-        valid.appearance.custom_themes.push(custom_theme("nebula"));
+        valid.launcher_theme.theme = "custom:nebula".into();
+        valid
+            .launcher_theme
+            .custom_themes
+            .push(launcher_custom_theme("nebula"));
+        valid.settings_theme.theme = "custom:calm".into();
+        valid
+            .settings_theme
+            .custom_themes
+            .push(settings_custom_theme("calm"));
         let normalized = normalize_and_validate(valid).expect("valid custom theme");
-        assert_eq!(normalized.appearance.max_results(), 8);
-        assert_eq!(normalized.appearance.launcher_width(), 720.0);
+        assert_eq!(normalized.launcher_theme.max_results(), 8);
+        assert_eq!(normalized.launcher_theme.launcher_width(), 720.0);
+        assert_eq!(normalized.settings_theme.theme, "custom:calm");
 
         let mut differently_cased = AppConfig::default();
-        differently_cased.appearance.theme = "custom:NEBULA".into();
+        differently_cased.launcher_theme.theme = "custom:NEBULA".into();
         differently_cased
-            .appearance
+            .launcher_theme
             .custom_themes
-            .push(custom_theme("nebula"));
+            .push(launcher_custom_theme("nebula"));
         let normalized = normalize_and_validate(differently_cased)
             .expect("custom theme selection should be canonicalized");
-        assert_eq!(normalized.appearance.theme, "custom:nebula");
+        assert_eq!(normalized.launcher_theme.theme, "custom:nebula");
 
         let mut missing = AppConfig::default();
-        missing.appearance.theme = "custom:missing".into();
+        missing.launcher_theme.theme = "custom:missing".into();
         assert!(normalize_and_validate(missing).is_err());
 
         let mut invalid_color = AppConfig::default();
-        let mut theme = custom_theme("bad-color");
-        theme.text_color = "red".into();
-        invalid_color.appearance.custom_themes.push(theme);
+        let mut theme = launcher_custom_theme("bad-color");
+        theme.normal_primary_color = "red".into();
+        invalid_color.launcher_theme.custom_themes.push(theme);
         assert!(normalize_and_validate(invalid_color).is_err());
 
         let mut invalid_width = AppConfig::default();
-        let mut theme = custom_theme("bad-width");
-        theme.launcher_width_px = 901;
-        invalid_width.appearance.custom_themes.push(theme);
+        let mut theme = launcher_custom_theme("bad-width");
+        theme.window_width_px = 901;
+        invalid_width.launcher_theme.custom_themes.push(theme);
         assert!(normalize_and_validate(invalid_width).is_err());
 
+        let mut borderless = AppConfig::default();
+        let mut theme = launcher_custom_theme("borderless");
+        theme.search_border_style = "none".into();
+        theme.search_border_width_px = 0;
+        borderless.launcher_theme.custom_themes.push(theme);
+        assert!(normalize_and_validate(borderless).is_ok());
+
+        let mut oversized_search_text = AppConfig::default();
+        let mut theme = launcher_custom_theme("oversized-search-text");
+        theme.search_font_size_px = 25;
+        oversized_search_text
+            .launcher_theme
+            .custom_themes
+            .push(theme);
+        assert!(normalize_and_validate(oversized_search_text).is_err());
+
         let mut remote_wallpaper = AppConfig::default();
-        let mut theme = custom_theme("bad-wallpaper");
-        theme.wallpaper_data_url = "https://example.com/background.png".into();
-        remote_wallpaper.appearance.custom_themes.push(theme);
+        let mut theme = settings_custom_theme("bad-wallpaper");
+        theme.background.wallpaper_data_url = "https://example.com/background.png".into();
+        remote_wallpaper.settings_theme.custom_themes.push(theme);
         assert!(normalize_and_validate(remote_wallpaper).is_err());
+    }
+
+    #[test]
+    fn scopes_allow_same_id_without_cross_scope_validation_or_mutation() {
+        let mut config = AppConfig::default();
+        config.launcher_theme.theme = "custom:shared".into();
+        config.settings_theme.theme = "custom:shared".into();
+        config
+            .launcher_theme
+            .custom_themes
+            .push(launcher_custom_theme("shared"));
+        config
+            .settings_theme
+            .custom_themes
+            .push(settings_custom_theme("shared"));
+        assert!(normalize_and_validate(config).is_ok());
+    }
+
+    #[test]
+    fn rejects_wrong_scope_and_illegal_theme_bundle_tokens() {
+        let launcher = launcher_custom_theme("bundle");
+        let launcher_bundle =
+            build_launcher_theme_bundle(&launcher).expect("build launcher bundle");
+        assert_eq!(launcher_bundle["theme"]["accentColor"], "#8a78ff");
+        let serialized =
+            serde_json::to_string(&launcher_bundle).expect("serialize launcher bundle");
+        assert!(parse_launcher_theme_bundle(&serialized).is_ok());
+        assert!(parse_settings_theme_bundle(&serialized).is_err());
+
+        let settings_bundle = build_settings_theme_bundle(&settings_custom_theme("bundle"))
+            .expect("build settings bundle");
+        assert_eq!(settings_bundle["theme"]["accentColor"], "#8a78ff");
+        let serialized_settings =
+            serde_json::to_string(&settings_bundle).expect("serialize settings bundle");
+        assert!(parse_settings_theme_bundle(&serialized_settings).is_ok());
+        assert!(parse_launcher_theme_bundle(&serialized_settings).is_err());
+
+        let mut invalid_style = launcher_bundle.clone();
+        invalid_style["theme"]["searchBorderStyle"] = serde_json::json!("groove");
+        assert!(parse_launcher_theme_bundle(
+            &serde_json::to_string(&invalid_style).expect("serialize illegal style")
+        )
+        .is_err());
+
+        let mut invalid_accent = launcher_bundle.clone();
+        invalid_accent["theme"]["accentColor"] = serde_json::json!("red");
+        assert!(parse_launcher_theme_bundle(
+            &serde_json::to_string(&invalid_accent).expect("serialize illegal accent")
+        )
+        .is_err());
+
+        let mut missing_accent = launcher_bundle.clone();
+        missing_accent["theme"]
+            .as_object_mut()
+            .expect("launcher bundle theme")
+            .remove("accentColor");
+        assert!(parse_launcher_theme_bundle(
+            &serde_json::to_string(&missing_accent).expect("serialize missing accent")
+        )
+        .is_err());
+
+        let mut unknown_token = launcher_bundle;
+        unknown_token["theme"]["unexpected"] = serde_json::json!(true);
+        assert!(parse_launcher_theme_bundle(
+            &serde_json::to_string(&unknown_token).expect("serialize unknown token")
+        )
+        .is_err());
+
+        let legacy_schema = serde_json::json!({
+            "schema": "suo-theme-v1",
+            "version": 1,
+            "theme": {}
+        });
+        assert!(parse_launcher_theme_bundle(
+            &serde_json::to_string(&legacy_schema).expect("serialize legacy schema")
+        )
+        .is_err());
     }
 
     #[test]
     fn enforces_wallpaper_decoded_byte_limit_and_base64_padding() {
         assert!(validate_wallpaper_data_url(
-            &wallpaper_data_url(MAX_THEME_WALLPAPER_BYTES),
+            &wallpaper_data_url("image/png", &valid_png_bytes(MAX_THEME_WALLPAPER_BYTES)),
             "边界皮肤"
         )
         .is_ok());
         assert!(validate_wallpaper_data_url(
-            &wallpaper_data_url(MAX_THEME_WALLPAPER_BYTES + 1),
+            &wallpaper_data_url("image/png", &valid_png_bytes(MAX_THEME_WALLPAPER_BYTES + 1),),
             "超限皮肤"
         )
         .is_err());
@@ -1220,6 +2776,120 @@ mod tests {
         assert!(validate_wallpaper_data_url("data:image/png;base64,AAA", "错误长度").is_err());
         assert!(validate_wallpaper_data_url("data:image/png;base64,AB==", "非规范填充").is_err());
         assert!(validate_wallpaper_data_url("data:image/png;base64,AAB=", "非规范尾位").is_err());
+        assert!(validate_wallpaper_data_url(
+            "data:image/png;base64,iVBORw0KGgp=",
+            "前端同样拒绝的非规范尾位"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn accepts_complete_structured_wallpapers_for_each_allowed_format() {
+        for (mime_type, bytes) in [
+            ("image/png", encoded_image_bytes(ImageFormat::Png)),
+            ("image/jpeg", valid_jpeg_bytes()),
+            ("image/webp", valid_webp_bytes()),
+        ] {
+            assert!(
+                validate_wallpaper_data_url(&wallpaper_data_url(mime_type, &bytes), "完整图片")
+                    .is_ok(),
+                "{mime_type} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_rgba16_png_with_budget_for_the_maximum_supported_canvas() {
+        const RGBA16_BYTES_PER_PIXEL: u64 = 8;
+        const DECODER_SCRATCH_MARGIN: u64 = 32 * 1024 * 1024;
+        assert!(
+            MAX_THEME_WALLPAPER_ALLOCATION_BYTES
+                >= MAX_THEME_WALLPAPER_PIXELS * RGBA16_BYTES_PER_PIXEL + DECODER_SCRATCH_MARGIN
+        );
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/png", &encoded_rgba16_png_bytes()),
+            "16 位 PNG 皮肤"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_structurally_valid_but_undecodable_wallpapers() {
+        let mut bad_png = valid_png_bytes(73);
+        corrupt_png_idat_with_valid_crc(&mut bad_png);
+        assert!(
+            validate_png(&bad_png),
+            "CRC-correct container remains valid"
+        );
+        assert!(
+            validate_wallpaper_data_url(&wallpaper_data_url("image/png", &bad_png), "坏 IDAT")
+                .is_err()
+        );
+
+        let mut bad_jpeg = valid_jpeg_bytes();
+        let (scan_header, _) = jpeg_scan_positions(&bad_jpeg);
+        // Keep the SOS framing and entropy stream intact, but reference an
+        // undefined frame component. The container parser only sees a valid
+        // one-component scan; the JPEG decoder must reject this selector.
+        bad_jpeg[scan_header + 1] = 0;
+        assert!(validate_jpeg(&bad_jpeg), "marker framing remains valid");
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/jpeg", &bad_jpeg),
+            "坏 JPEG scan"
+        )
+        .is_err());
+
+        let bad_webp = structurally_valid_invalid_webp_bytes();
+        assert!(
+            validate_webp(&bad_webp),
+            "RIFF and VP8 framing remain valid"
+        );
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/webp", &bad_webp),
+            "坏 VP8 bitstream"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_signature_only_truncated_and_forged_wallpapers() {
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/png", b"\x89PNG\r\n\x1a\n"),
+            "只有 PNG 签名"
+        )
+        .is_err());
+
+        let mut truncated_png = valid_png_bytes(73);
+        truncated_png.truncate(truncated_png.len() - 12);
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/png", &truncated_png),
+            "截断 PNG"
+        )
+        .is_err());
+
+        let mut forged_png_length = valid_png_bytes(73);
+        forged_png_length[8..12].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/png", &forged_png_length),
+            "伪造 PNG 长度"
+        )
+        .is_err());
+
+        let mut truncated_jpeg = valid_jpeg_bytes();
+        truncated_jpeg.pop();
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/jpeg", &truncated_jpeg),
+            "截断 JPEG"
+        )
+        .is_err());
+
+        let mut forged_webp_length = valid_webp_bytes();
+        forged_webp_length[4..8].copy_from_slice(&23u32.to_le_bytes());
+        assert!(validate_wallpaper_data_url(
+            &wallpaper_data_url("image/webp", &forged_webp_length),
+            "伪造 WebP 长度"
+        )
+        .is_err());
     }
 
     #[test]

@@ -5,7 +5,7 @@ import {
   aliasesFromText,
   AppConfig,
   AppConfigView,
-  applyAppearance,
+  applySettingsAppearance,
   loadAppConfig,
   ScriptCommandConfig,
   ScriptRuntime,
@@ -137,7 +137,7 @@ function Settings() {
       setView(next);
       setDraft(next.config);
       setEditor(null);
-      applyAppearance(next.config.appearance);
+      applySettingsAppearance(next.config.settingsTheme);
       if (next.configLoadWarning) setError(next.configLoadWarning);
     } catch (loadError) {
       setError(`${t.loadFailed}：${String(loadError)}`);
@@ -180,7 +180,7 @@ function Settings() {
       if (draftRevisionRef.current === startedAtRevision) {
         setDraft(next.config);
         setEditor(null);
-        applyAppearance(next.config.appearance);
+        applySettingsAppearance(next.config.settingsTheme);
         setStatus(zhCN.saved);
       } else {
         setStatus(t.savedWithPendingChanges);
@@ -409,9 +409,9 @@ function Settings() {
       : current);
   };
 
-  const updateAppearance = (appearance: AppConfig["appearance"]) => {
-    applyAppearance(appearance);
-    setDraft((current) => (current ? { ...current, appearance } : current));
+  const updateAppearanceThemes = (themes: Pick<AppConfig, "launcherTheme" | "settingsTheme">) => {
+    applySettingsAppearance(themes.settingsTheme);
+    setDraft((current) => (current ? { ...current, ...themes } : current));
   };
 
   const hotkey = /Mac/i.test(navigator.platform) ? "Command + Space" : "Alt + Space";
@@ -648,9 +648,11 @@ function Settings() {
 
               {section === "appearance" && (
                 <AppearanceEditor
-                  appearance={draft.appearance}
-                  onChange={updateAppearance}
+                  launcherTheme={draft.launcherTheme}
+                  settingsTheme={draft.settingsTheme}
+                  onChange={updateAppearanceThemes}
                   readOnly={Boolean(view?.configReadOnly)}
+                  saving={saving}
                 />
               )}
             </>

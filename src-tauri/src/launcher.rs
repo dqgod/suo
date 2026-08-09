@@ -15,7 +15,7 @@ use crate::{
     config::{AppConfig, ConfigState, ScriptCommandConfig, TranslationConfig, WebSearchConfig},
     file_search::{self, FileSearchOutcome},
     i18n,
-    models::{CancelStatus, IndexStatus, ResultAction, SearchResponse, SearchResult},
+    models::{CancelStatus, IndexStatus, ResultAction, ResultKind, SearchResponse, SearchResult},
     scripts, translator, web_search,
 };
 
@@ -227,7 +227,7 @@ fn search_launcher_blocking(
         return cancelled_response(&state, query);
     }
     let mut provider = "本地应用 + 限定目录索引".to_string();
-    let max_results = config.appearance.max_results();
+    let max_results = config.launcher_theme.max_results();
     let mut provider_detail = if state.indexing.load(Ordering::SeqCst) {
         "正在后台建立限定目录索引".to_string()
     } else {
@@ -239,9 +239,15 @@ fn search_launcher_blocking(
             .applications
             .read()
             .map(|apps| {
-                catalog_results(&apps, "", "app", "应用", max_results, 500, || {
-                    state.search_is_cancelled(generation)
-                })
+                catalog_results(
+                    &apps,
+                    "",
+                    ResultKind::App,
+                    "应用",
+                    max_results,
+                    500,
+                    || state.search_is_cancelled(generation),
+                )
             })
             .unwrap_or_default()
     } else if is_settings_query(&query) {
@@ -251,7 +257,7 @@ fn search_launcher_blocking(
             id: "settings:open".into(),
             title: i18n::SETTINGS_RESULT_TITLE.into(),
             subtitle: i18n::SETTINGS_RESULT_SUBTITLE.into(),
-            kind: "settings".into(),
+            kind: ResultKind::Settings,
             badge: i18n::SETTINGS_BADGE.into(),
             score: 2_100,
             action: ResultAction::OpenSettings,
@@ -263,7 +269,7 @@ fn search_launcher_blocking(
             id: format!("calculator:{query}"),
             title: value.clone(),
             subtitle: query.clone(),
-            kind: "calculator".into(),
+            kind: ResultKind::Calculator,
             badge: "计算".into(),
             score: 2_000,
             action: ResultAction::CopyText { text: value },
@@ -290,7 +296,7 @@ fn search_launcher_blocking(
                     id: format!("translate:{target}:{arguments}"),
                     title: output.clone(),
                     subtitle: format!("微软翻译 · → {target} · {arguments}"),
-                    kind: "translation".into(),
+                    kind: ResultKind::Translation,
                     badge: "翻译".into(),
                     score: 2_050,
                     action: ResultAction::CopyText { text: output },
@@ -303,7 +309,7 @@ fn search_launcher_blocking(
                     } else {
                         "检查网络、区域或微软翻译配置".into()
                     },
-                    kind: "error".into(),
+                    kind: ResultKind::Error,
                     badge: "翻译".into(),
                     score: 2_050,
                     action: if error.contains("尚未配置") {
@@ -343,7 +349,7 @@ fn search_launcher_blocking(
                 id: format!("script:{}:{arguments}", command.id),
                 title: format!("运行 {}", command.name),
                 subtitle: format!("{} {}", command.script_path, arguments),
-                kind: "script".into(),
+                kind: ResultKind::Script,
                 badge: "按 Enter".into(),
                 score: 2_000,
                 action: ResultAction::RunScript {
@@ -366,7 +372,7 @@ fn search_launcher_blocking(
                     id: format!("web:{}:{arguments}", search.id),
                     title: format!("{} 搜索：{arguments}", search.name),
                     subtitle: url.clone(),
-                    kind: "web".into(),
+                    kind: ResultKind::Web,
                     badge: "网络".into(),
                     score: 2_000,
                     action: ResultAction::OpenUrl { url },
@@ -397,7 +403,7 @@ fn search_launcher_blocking(
                     catalog_results(
                         &entries,
                         arguments,
-                        "file",
+                        ResultKind::File,
                         source,
                         max_results,
                         900,
@@ -417,7 +423,7 @@ fn search_launcher_blocking(
                             catalog_results(
                                 &files,
                                 arguments,
-                                "file",
+                                ResultKind::File,
                                 "文件",
                                 max_results,
                                 700,
@@ -438,16 +444,22 @@ fn search_launcher_blocking(
             .applications
             .read()
             .map(|apps| {
-                catalog_results(&apps, &query, "app", "应用", max_results, 800, || {
-                    state.search_is_cancelled(generation)
-                })
+                catalog_results(
+                    &apps,
+                    &query,
+                    ResultKind::App,
+                    "应用",
+                    max_results,
+                    800,
+                    || state.search_is_cancelled(generation),
+                )
             })
             .unwrap_or_default();
         if let Ok(files) = state.files.read() {
             combined.extend(catalog_results(
                 &files,
                 &query,
-                "file",
+                ResultKind::File,
                 "文件",
                 max_results,
                 500,
@@ -631,7 +643,7 @@ pub fn set_launcher_compact(
     } else {
         LAUNCHER_FULL_HEIGHT
     };
-    let target_width = config.snapshot().appearance.launcher_width();
+    let target_width = config.snapshot().launcher_theme.launcher_width();
     if (current.height - target_height).abs() < 0.5 && (current.width - target_width).abs() < 0.5 {
         return Ok(());
     }
@@ -704,7 +716,7 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
     // belong to a different monitor when this position is calculated.
     let launcher_width = app
         .try_state::<Arc<ConfigState>>()
-        .map(|config| config.snapshot().appearance.launcher_width())
+        .map(|config| config.snapshot().launcher_theme.launcher_width())
         .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
     let positioning_width = (launcher_width * monitor.scale_factor()).round() as u32;
     let positioning_height = (LAUNCHER_FULL_HEIGHT * monitor.scale_factor()).round() as u32;
@@ -720,7 +732,7 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
 fn catalog_results<F>(
     entries: &[CatalogEntry],
     query: &str,
-    kind: &str,
+    kind: ResultKind,
     badge: &str,
     limit: usize,
     boost: i32,
@@ -768,16 +780,16 @@ where
     best.into_iter()
         .map(|(score, entry)| {
             let path = entry.path.to_string_lossy().into_owned();
-            let (result_kind, result_badge) = if kind == "file" && entry.is_directory {
-                ("folder", "文件夹")
+            let (result_kind, result_badge) = if kind == ResultKind::File && entry.is_directory {
+                (ResultKind::Directory, "文件夹")
             } else {
                 (kind, badge)
             };
             SearchResult {
-                id: format!("{result_kind}:{path}"),
+                id: format!("{}:{path}", result_kind.as_str()),
                 title: entry.name.clone(),
                 subtitle: path.clone(),
-                kind: result_kind.into(),
+                kind: result_kind,
                 badge: result_badge.into(),
                 score,
                 action: ResultAction::OpenPath { path },
@@ -934,7 +946,7 @@ fn script_output_result(
             output.clone()
         },
         subtitle: format!("{} {}", command.script_path, arguments),
-        kind: "script".into(),
+        kind: ResultKind::Script,
         badge: "脚本".into(),
         score: 2_000,
         action: ResultAction::CopyText { text: output },
@@ -946,7 +958,7 @@ fn error_result(id: String, title: String, subtitle: &str) -> SearchResult {
         id,
         title,
         subtitle: subtitle.into(),
-        kind: "error".into(),
+        kind: ResultKind::Error,
         badge: "错误".into(),
         score: 2_000,
         action: ResultAction::None,
@@ -964,7 +976,7 @@ fn hint_result(title: &str, subtitle: &str) -> SearchResult {
         id: format!("hint:{title}"),
         title: title.into(),
         subtitle: subtitle.into(),
-        kind: "hint".into(),
+        kind: ResultKind::Hint,
         badge: "提示".into(),
         score: 1,
         action: ResultAction::None,
@@ -975,7 +987,7 @@ fn hint_result(title: &str, subtitle: &str) -> SearchResult {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::{catalog::CatalogEntry, config::AppConfig};
+    use crate::{catalog::CatalogEntry, config::AppConfig, models::ResultKind};
 
     use super::{
         calculate, catalog_results, command_arguments, is_settings_query, match_score,
@@ -1015,11 +1027,14 @@ mod tests {
     fn catalog_search_only_materializes_top_results() {
         let entries = (0..100)
             .map(|index| {
-                CatalogEntry::from_path(PathBuf::from(format!("C:/files/item-{index:03}.txt")))
+                CatalogEntry::from_path_with_type(
+                    PathBuf::from(format!("C:/files/item-{index:03}.txt")),
+                    false,
+                )
             })
             .collect::<Vec<_>>();
 
-        let results = catalog_results(&entries, "item", "file", "文件", 8, 0, || false);
+        let results = catalog_results(&entries, "item", ResultKind::File, "文件", 8, 0, || false);
         assert_eq!(results.len(), 8);
         assert_eq!(results[0].title, "item-000");
         assert_eq!(results[7].title, "item-007");
@@ -1032,10 +1047,10 @@ mod tests {
             CatalogEntry::from_path_with_type(PathBuf::from("C:/files/report.txt"), false),
         ];
 
-        let results = catalog_results(&entries, "", "file", "文件", 8, 0, || false);
-        assert_eq!(results[0].kind, "folder");
+        let results = catalog_results(&entries, "", ResultKind::File, "文件", 8, 0, || false);
+        assert_eq!(results[0].kind, ResultKind::Directory);
         assert_eq!(results[0].badge, "文件夹");
-        assert_eq!(results[1].kind, "file");
+        assert_eq!(results[1].kind, ResultKind::File);
         assert_eq!(results[1].badge, "文件");
     }
 

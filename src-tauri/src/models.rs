@@ -1,12 +1,51 @@
 use serde::{Deserialize, Serialize};
 
+/// The fixed result categories sent across the Tauri boundary.
+///
+/// Keeping this as an enum avoids accidentally treating an arbitrary path or
+/// URL as a special icon-bearing result in the webview. `Directory` and
+/// `File` deliberately remain separate: their icons are built into the UI,
+/// while only `App` can request a native icon by opaque result id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResultKind {
+    App,
+    File,
+    Directory,
+    Calculator,
+    Script,
+    Web,
+    Translation,
+    Settings,
+    Hint,
+    Error,
+}
+
+impl ResultKind {
+    /// Prefixes keep result ids opaque and aligned with their serialized kind.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::File => "file",
+            Self::Directory => "directory",
+            Self::Calculator => "calculator",
+            Self::Script => "script",
+            Self::Web => "web",
+            Self::Translation => "translation",
+            Self::Settings => "settings",
+            Self::Hint => "hint",
+            Self::Error => "error",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub id: String,
     pub title: String,
     pub subtitle: String,
-    pub kind: String,
+    pub kind: ResultKind,
     pub badge: String,
     pub score: i32,
     pub action: ResultAction,
@@ -62,9 +101,22 @@ pub struct IndexStatus {
     pub indexed_file_count: usize,
 }
 
+/// RGBA pixels for a native application icon.
+///
+/// The path that produced this value never crosses the webview boundary. The
+/// icon command accepts only an opaque id for an application discovered by the
+/// local catalog, and validates this payload again before serializing it.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAppIcon {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ResultAction;
+    use super::{NativeAppIcon, ResultAction, ResultKind};
 
     #[test]
     fn script_action_uses_camel_case_at_the_webview_boundary() {
@@ -75,5 +127,23 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "runScript");
         assert_eq!(value["commandId"], "demo");
+    }
+
+    #[test]
+    fn result_kinds_and_native_icon_use_the_stable_webview_contract() {
+        assert_eq!(
+            serde_json::to_value(ResultKind::Directory).unwrap(),
+            serde_json::Value::String("directory".into())
+        );
+
+        let value = serde_json::to_value(NativeAppIcon {
+            width: 48,
+            height: 48,
+            pixels: vec![0; 48 * 48 * 4],
+        })
+        .unwrap();
+        assert_eq!(value["width"], 48);
+        assert_eq!(value["height"], 48);
+        assert_eq!(value["pixels"].as_array().unwrap().len(), 48 * 48 * 4);
     }
 }

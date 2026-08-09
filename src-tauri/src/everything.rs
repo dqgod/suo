@@ -134,11 +134,19 @@ where
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(PathBuf::from)
-        .map(CatalogEntry::from_path)
+        .map(catalog_entry_from_export)
         .collect();
 
     EverythingOutcome::Available(entries)
+}
+
+/// Everything marks directory results by retaining a trailing path separator
+/// in its TXT export. Preserve that fact before constructing `PathBuf`: an
+/// index hit may be stale or temporarily inaccessible, so `Path::is_dir()`
+/// alone would otherwise turn a real directory into a file result.
+fn catalog_entry_from_export(line: &str) -> CatalogEntry {
+    let is_directory = line.ends_with(['\\', '/']);
+    CatalogEntry::from_path_with_type(PathBuf::from(line), is_directory)
 }
 
 struct TempExport {
@@ -210,3 +218,17 @@ fn hide_console(command: &mut Command) {
 
 #[cfg(not(target_os = "windows"))]
 fn hide_console(_command: &mut Command) {}
+
+#[cfg(test)]
+mod tests {
+    use super::catalog_entry_from_export;
+
+    #[test]
+    fn keeps_everything_trailing_separator_directory_hint() {
+        let directory = catalog_entry_from_export(r"C:\indexed\folder\");
+        let file = catalog_entry_from_export(r"C:\indexed\report.txt");
+
+        assert!(directory.is_directory);
+        assert!(!file.is_directory);
+    }
+}

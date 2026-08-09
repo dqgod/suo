@@ -24,6 +24,35 @@
   --launcher-width: 720px;
   --wallpaper-image: none;
   --wallpaper-opacity: 0;
+  --launcher-window-bg: #0b1222;
+  --launcher-window-border: #66728f;
+  --launcher-window-border-width: 1px;
+  --launcher-window-radius: 18px;
+  --launcher-window-opacity: 96%;
+  --launcher-window-blur: 18px;
+  --launcher-window-shadow-opacity: 0.45;
+  --launcher-wallpaper-image: none;
+  --launcher-wallpaper-opacity: 0;
+  --launcher-search-bg: #161f39;
+  --launcher-search-border: #66728f;
+  --launcher-search-border-width: 1px;
+  --launcher-search-border-style: solid;
+  --launcher-search-width: 720px;
+  --launcher-search-text: #f7f8ff;
+  --launcher-search-font-size: 20px;
+  --launcher-accent: #8a78ff;
+  --launcher-result-bg: transparent;
+  --launcher-result-primary: #f1f3ff;
+  --launcher-result-secondary: #77839f;
+  --launcher-result-primary-size: 13px;
+  --launcher-result-secondary-size: 10px;
+  --launcher-result-height: 58px;
+  --launcher-selected-bg: #302b63;
+  --launcher-selected-primary: #ffffff;
+  --launcher-selected-secondary: #c8d2eb;
+  --launcher-selected-primary-size: 13px;
+  --launcher-selected-secondary-size: 10px;
+  --launcher-icon-size: 32px;
 }
 
 :root[data-theme="paper"] {
@@ -77,7 +106,7 @@ button {
   height: 100%;
   padding: 0;
   overflow: hidden;
-  border-radius: var(--window-radius);
+  border-radius: var(--launcher-window-radius);
   background: transparent;
   isolation: isolate;
 }
@@ -89,11 +118,11 @@ button {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--window-radius);
-  background: color-mix(in srgb, var(--page) var(--window-opacity), transparent);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--window-shadow-opacity)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(var(--window-blur));
+  border: var(--launcher-window-border-width) solid var(--launcher-window-border);
+  border-radius: var(--launcher-window-radius);
+  background: color-mix(in srgb, var(--launcher-window-bg) var(--launcher-window-opacity), transparent);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--launcher-window-shadow-opacity)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(var(--launcher-window-blur));
   isolation: isolate;
 }
 
@@ -101,13 +130,25 @@ button {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
   border-radius: inherit;
-  background-image: var(--wallpaper-image);
+  background-image: var(--launcher-wallpaper-image);
   background-position: center;
   background-size: cover;
-  opacity: var(--wallpaper-opacity);
+  opacity: var(--launcher-wallpaper-opacity);
   pointer-events: none;
+}
+
+.launcher > .search-box,
+.launcher > .provider-row,
+.launcher > .results,
+.launcher > footer {
+  position: relative;
+  z-index: 1;
+}
+
+.launcher > .toast {
+  z-index: 2;
 }
 
 .launcher.compact-empty {
@@ -118,17 +159,20 @@ button {
   display: flex;
   align-items: center;
   gap: 13px;
-  margin: 10px 12px 8px;
+  width: min(calc(100% - 24px), var(--launcher-search-width));
+  margin: 10px auto 8px;
   padding: 0 18px;
-  border: 1px solid rgba(138, 151, 211, 0.18);
-  border-radius: 15px;
-  background: rgba(22, 31, 57, 0.78);
+  border-width: var(--launcher-search-border-width);
+  border-style: var(--launcher-search-border-style);
+  border-color: var(--launcher-search-border);
+  border-radius: max(7px, calc(var(--launcher-window-radius) * 0.7));
+  background: var(--launcher-search-bg);
   box-shadow: inset 0 1px 12px rgba(0, 0, 0, 0.18), 0 8px 30px rgba(2, 8, 22, 0.22);
 }
 
 .search-box:focus-within {
-  border-color: rgba(128, 112, 255, 0.58);
-  box-shadow: inset 0 1px 12px rgba(0, 0, 0, 0.18), 0 0 0 3px rgba(107, 91, 238, 0.1);
+  border-color: var(--launcher-accent);
+  box-shadow: inset 0 1px 12px rgba(0, 0, 0, 0.18), 0 0 0 3px color-mix(in srgb, var(--launcher-accent) 18%, transparent);
 }
 
 .search-box svg {
@@ -136,7 +180,7 @@ button {
   height: 22px;
   flex: 0 0 auto;
   fill: none;
-  stroke: #91a0c7;
+  stroke: color-mix(in srgb, var(--launcher-search-text) 72%, transparent);
   stroke-width: 1.7;
 }
 
@@ -146,14 +190,19 @@ button {
   min-width: 0;
   border: 0;
   outline: 0;
-  color: #f7f8ff;
+  color: var(--launcher-search-text);
   background: transparent;
-  font-size: 22px;
+  font-size: var(--launcher-search-font-size);
   font-weight: 460;
 }
 
 .search-box input::placeholder {
-  color: #65718f;
+  color: color-mix(in srgb, var(--launcher-search-text) 46%, var(--launcher-search-bg));
+}
+
+:root[data-launcher-show-search-icon="false"] .search-icon,
+:root[data-launcher-show-logo="false"] .brand-button {
+  display: none;
 }
 
 .clear-button {
@@ -269,14 +318,14 @@ button {
 .result {
   position: relative;
   display: grid;
-  grid-template-columns: calc(var(--result-icon-size) + 10px) minmax(0, 1fr) auto 28px;
+  grid-template-columns: calc(var(--launcher-icon-size) + 10px) minmax(0, 1fr) auto 28px;
   align-items: center;
   width: 100%;
-  min-height: var(--result-row-height);
+  min-height: var(--launcher-result-height);
   padding: 6px 10px;
   border: 1px solid transparent;
-  border-radius: min(12px, var(--window-radius));
-  background: transparent;
+  border-radius: min(12px, var(--launcher-window-radius));
+  background: var(--launcher-result-bg);
   text-align: left;
   cursor: default;
 }
@@ -286,17 +335,21 @@ button {
 }
 
 .result.selected {
-  border-color: rgba(130, 116, 255, 0.34);
-  background: linear-gradient(90deg, rgba(99, 84, 217, 0.3), rgba(65, 80, 137, 0.16));
-  box-shadow: inset 3px 0 0 #8a78ff;
+  border-color: color-mix(in srgb, var(--launcher-selected-primary) 34%, transparent);
+  background: var(--launcher-selected-bg);
+  box-shadow: inset 3px 0 0 var(--launcher-accent);
+}
+
+.result:hover:not(.selected) {
+  background: color-mix(in srgb, var(--launcher-result-bg) 82%, var(--launcher-selected-bg));
 }
 
 .result-icon {
   display: grid;
   place-items: center;
-  width: var(--result-icon-size);
-  height: var(--result-icon-size);
-  border-radius: min(9px, calc(var(--window-radius) * 0.55));
+  width: var(--launcher-icon-size);
+  height: var(--launcher-icon-size);
+  border-radius: min(9px, calc(var(--launcher-window-radius) * 0.55));
   color: #ecedff;
   background: linear-gradient(145deg, #7463eb, #5649c5);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
@@ -318,8 +371,9 @@ button {
 }
 
 .path-result-icon { width: 21px; height: 21px; }
-.result-icon.folder { color: #f6c45f; background: color-mix(in srgb, #d99a2c 16%, var(--field)); }
-.result-icon.file { color: color-mix(in srgb, var(--muted) 88%, white); background: color-mix(in srgb, var(--field) 90%, var(--surface-strong)); }
+.result-icon.directory,
+.result-icon.folder { color: #f6c45f; background: color-mix(in srgb, #d99a2c 16%, var(--launcher-search-bg)); }
+.result-icon.file { color: color-mix(in srgb, var(--launcher-result-secondary) 88%, white); background: color-mix(in srgb, var(--launcher-search-bg) 90%, var(--launcher-window-bg)); }
 .result-icon.calculator { background: linear-gradient(145deg, #2eb58e, #217a6d); }
 .result-icon.script { background: linear-gradient(145deg, #3d87be, #315d9e); font-size: 10px; }
 .result-icon.web { background: linear-gradient(145deg, #ca6f55, #9b4d59); }
@@ -342,14 +396,24 @@ button {
 }
 
 .result-copy strong {
-  color: #f1f3ff;
-  font-size: calc(var(--base-font-size) - 1px);
+  color: var(--launcher-result-primary);
+  font-size: var(--launcher-result-primary-size);
   font-weight: 620;
 }
 
 .result-copy small {
-  color: #77839f;
-  font-size: max(9px, calc(var(--base-font-size) - 4px));
+  color: var(--launcher-result-secondary);
+  font-size: var(--launcher-result-secondary-size);
+}
+
+.result.selected .result-copy strong {
+  color: var(--launcher-selected-primary);
+  font-size: var(--launcher-selected-primary-size);
+}
+
+.result.selected .result-copy small {
+  color: var(--launcher-selected-secondary);
+  font-size: var(--launcher-selected-secondary-size);
 }
 
 .result-badge {
@@ -361,6 +425,7 @@ button {
   font-size: 9px;
 }
 
+:root[data-launcher-show-source-badge="false"] .result-badge,
 :root[data-show-source-badge="false"] .result-badge {
   display: none;
 }
@@ -466,63 +531,64 @@ body,
   background: transparent;
 }
 
-.window-stage,
-.settings-stage {
-  color: var(--text);
+.window-stage {
+  color: var(--launcher-result-primary);
 }
 
 .settings-stage {
-  background: var(--page);
+  color: var(--settings-primary-text, var(--text));
+}
+
+.settings-stage {
+  background: var(--settings-window-bg, var(--page));
 }
 
 .launcher {
-  border-color: var(--line);
-  background-color: color-mix(in srgb, var(--page) var(--window-opacity), transparent);
+  border-color: var(--launcher-window-border);
+  background-color: color-mix(in srgb, var(--launcher-window-bg) var(--launcher-window-opacity), transparent);
 }
 
 .search-box {
-  border-color: var(--line);
-  background: var(--field);
+  border-color: var(--launcher-search-border);
+  background: var(--launcher-search-bg);
 }
 
 .search-box:focus-within {
-  border-color: var(--accent);
+  border-color: var(--launcher-accent);
 }
 
-.search-box input,
-.result-copy strong {
-  color: var(--text);
+.search-box input {
+  color: var(--launcher-search-text);
 }
 
 .search-box svg,
-.result-copy small,
 .provider-copy > span:last-child,
 .index-button,
 footer,
 .hotkey {
-  color: var(--subtle);
+  color: var(--launcher-result-secondary);
 }
 
 .provider-row,
 footer {
-  border-color: var(--line);
+  border-color: color-mix(in srgb, var(--launcher-window-border) 72%, transparent);
 }
 
 .provider-copy strong,
 .result-badge,
 kbd,
 .clear-button {
-  color: var(--muted);
+  color: var(--launcher-result-secondary);
 }
 
 .result-badge,
 kbd {
-  border-color: var(--line);
-  background: color-mix(in srgb, var(--field) 78%, transparent);
+  border-color: color-mix(in srgb, var(--launcher-window-border) 78%, transparent);
+  background: color-mix(in srgb, var(--launcher-search-bg) 78%, transparent);
 }
 
 .result.selected {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: var(--selection);
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-color: color-mix(in srgb, var(--launcher-selected-primary) 34%, transparent);
+  background: var(--launcher-selected-bg);
+  box-shadow: inset 3px 0 0 var(--launcher-accent);
 }
