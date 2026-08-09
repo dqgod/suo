@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "macos"))]
 use std::io::{Error, ErrorKind};
 
 use tauri::{
@@ -14,6 +15,9 @@ const SETTINGS_ID: &str = "tray-settings";
 const QUIT_ID: &str = "tray-quit";
 
 pub fn create(app: &App) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    let icon = tauri::include_image!("icons/tray-macos-template.png");
+    #[cfg(not(target_os = "macos"))]
     let icon = app.default_window_icon().cloned().ok_or_else(|| {
         Error::new(
             ErrorKind::NotFound,
@@ -27,32 +31,35 @@ pub fn create(app: &App) -> tauri::Result<()> {
         .text(QUIT_ID, i18n::TRAY_QUIT)
         .build()?;
 
-    TrayIconBuilder::with_id(TRAY_ID)
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip(i18n::TRAY_TOOLTIP)
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            SHOW_ID => show_launcher(app),
-            SETTINGS_ID => {
-                if let Err(error) = launcher::open_settings(app.clone()) {
-                    eprintln!("无法从系统托盘打开设置：{error}");
-                }
+        .show_menu_on_left_click(false);
+    #[cfg(target_os = "macos")]
+    let tray = tray.icon_as_template(true);
+
+    tray.on_menu_event(|app, event| match event.id().as_ref() {
+        SHOW_ID => show_launcher(app),
+        SETTINGS_ID => {
+            if let Err(error) = launcher::open_settings(app.clone()) {
+                eprintln!("无法从系统托盘打开设置：{error}");
             }
-            QUIT_ID => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_launcher(tray.app_handle());
-            }
-        })
-        .build(app)?;
+        }
+        QUIT_ID => app.exit(0),
+        _ => {}
+    })
+    .on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            show_launcher(tray.app_handle());
+        }
+    })
+    .build(app)?;
 
     Ok(())
 }
@@ -60,5 +67,19 @@ pub fn create(app: &App) -> tauri::Result<()> {
 fn show_launcher(app: &tauri::AppHandle) {
     if let Err(error) = launcher::show_launcher(app) {
         eprintln!("无法从系统托盘显示 Suo：{error}");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    #[test]
+    fn macos_tray_template_has_transparent_corners_and_visible_artwork() {
+        let icon = tauri::include_image!("icons/tray-macos-template.png");
+        assert_eq!((icon.width(), icon.height()), (44, 44));
+
+        let rgba = icon.rgba();
+        let corner_alpha = [0, 43, 43 * 44, 44 * 44 - 1].map(|pixel| rgba[pixel * 4 + 3]);
+        assert_eq!(corner_alpha, [0; 4]);
+        assert!(rgba.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 }

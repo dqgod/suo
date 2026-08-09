@@ -3,6 +3,7 @@ mod arguments;
 mod calculator;
 mod catalog;
 mod config;
+mod dock;
 #[cfg(target_os = "windows")]
 mod everything;
 mod file_search;
@@ -43,10 +44,10 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            tray::create(app)?;
-
             let config_state = Arc::new(config::ConfigState::load(app.handle()));
             let initial_config = config_state.snapshot();
+            dock::apply_initial_visibility(app, initial_config.launcher.show_dock_icon);
+            tray::create(app)?;
             app.manage(config_state);
 
             let state = Arc::new(LauncherState::new());

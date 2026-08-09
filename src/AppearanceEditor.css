@@ -202,7 +202,7 @@
 .appearance-live-search i { margin-left: auto; color: var(--preview-accent); font-style: normal; }
 .appearance-live-results { min-height: 0; padding: 0 7px; overflow: hidden; }
 .appearance-live-row { display: grid; grid-template-columns: var(--preview-icon-size) minmax(0, 1fr) auto; min-height: var(--preview-row-height); align-items: center; gap: 8px; padding: 4px 6px; border-radius: calc(var(--preview-radius) * .58); background: var(--preview-row); }
-.appearance-live-row.selected { background: var(--preview-selected); box-shadow: inset 2px 0 0 var(--preview-accent); }
+.appearance-live-row.selected { background: var(--preview-selected); }
 .appearance-live-row > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
 .appearance-live-row strong,
 .appearance-live-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

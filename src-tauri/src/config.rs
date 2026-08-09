@@ -10,9 +10,9 @@ use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{launcher::LauncherState, web_search};
+use crate::{dock, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 8;
+const CONFIG_VERSION: u32 = 10;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -27,6 +27,14 @@ const MAX_THEME_WALLPAPER_ALLOCATION_BYTES: u64 = 160 * 1024 * 1024;
 const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
 const MIN_QUERY_DEBOUNCE_MS: u64 = 0;
 const MAX_QUERY_DEBOUNCE_MS: u64 = 60_000;
+const MIN_LAUNCHER_WIDTH_PX: u32 = 560;
+const MAX_LAUNCHER_WIDTH_PX: u32 = 1_200;
+const MIN_LAUNCHER_HEIGHT_PX: u32 = 320;
+const MAX_LAUNCHER_HEIGHT_PX: u32 = 720;
+const MIN_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = -400;
+const MAX_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = 400;
+const MIN_LAUNCHER_VERTICAL_OFFSET_PX: i32 = -240;
+const MAX_LAUNCHER_VERTICAL_OFFSET_PX: i32 = 240;
 const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
 const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
@@ -123,18 +131,38 @@ pub struct LauncherConfig {
     pub keep_last_input: bool,
     #[serde(default)]
     pub compact_when_empty: bool,
+    #[serde(default = "default_show_dock_icon")]
+    pub show_dock_icon: bool,
     #[serde(default = "default_empty_query_debounce_ms")]
     pub empty_query_debounce_ms: u64,
     #[serde(default = "default_non_empty_query_debounce_ms")]
     pub non_empty_query_debounce_ms: u64,
+    /// `None` keeps the active launcher theme's width. Once the user adjusts
+    /// General settings, the explicit width remains stable across themes.
+    #[serde(default)]
+    pub window_width_px: Option<u32>,
+    #[serde(default = "default_launcher_height_px")]
+    pub window_height_px: u32,
+    #[serde(default)]
+    pub horizontal_offset_px: i32,
+    #[serde(default)]
+    pub vertical_offset_px: i32,
 }
 
 const fn default_empty_query_debounce_ms() -> u64 {
     0
 }
 
+const fn default_show_dock_icon() -> bool {
+    true
+}
+
 const fn default_non_empty_query_debounce_ms() -> u64 {
     50
+}
+
+const fn default_launcher_height_px() -> u32 {
+    520
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -591,8 +619,13 @@ impl Default for AppConfig {
                 close_on_blur: true,
                 keep_last_input: false,
                 compact_when_empty: false,
+                show_dock_icon: default_show_dock_icon(),
                 empty_query_debounce_ms: default_empty_query_debounce_ms(),
                 non_empty_query_debounce_ms: default_non_empty_query_debounce_ms(),
+                window_width_px: None,
+                window_height_px: default_launcher_height_px(),
+                horizontal_offset_px: 0,
+                vertical_offset_px: 0,
             },
             translation: TranslationConfig {
                 enabled: true,
@@ -628,6 +661,19 @@ impl Default for AppConfig {
             launcher_theme: LauncherThemeConfig::default(),
             settings_theme: SettingsThemeConfig::default(),
         }
+    }
+}
+
+impl AppConfig {
+    pub fn launcher_width(&self) -> f64 {
+        self.launcher
+            .window_width_px
+            .map(f64::from)
+            .unwrap_or_else(|| self.launcher_theme.launcher_width())
+    }
+
+    pub fn launcher_height(&self) -> f64 {
+        f64::from(self.launcher.window_height_px)
     }
 }
 
@@ -889,10 +935,12 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // v4 adds per-script debounce, v5 adds custom themes, v6 splits the
         // legacy appearance payload into launcherTheme/settingsTheme, v7 adds
         // the configurable manual/instant settings save mode, and v8 adds
-        // independent empty/non-empty query debounce settings. Older versions
-        // preserve the former 0 ms / 50 ms behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 => config.version = CONFIG_VERSION,
-        8 => {}
+        // independent empty/non-empty query debounce settings, v9 adds the
+        // launcher's cross-platform initial size and position fine tuning, and
+        // v10 adds the macOS Dock visibility preference.
+        // Older versions preserve their former behavior through serde defaults.
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 => config.version = CONFIG_VERSION,
+        10 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -908,6 +956,32 @@ fn validate_launcher(config: &LauncherConfig) -> Result<(), String> {
                 "{label}必须在 {MIN_QUERY_DEBOUNCE_MS}–{MAX_QUERY_DEBOUNCE_MS} ms 之间"
             ));
         }
+    }
+    if let Some(width) = config.window_width_px {
+        if !(MIN_LAUNCHER_WIDTH_PX..=MAX_LAUNCHER_WIDTH_PX).contains(&width) {
+            return Err(format!(
+                "启动器宽度必须在 {MIN_LAUNCHER_WIDTH_PX}–{MAX_LAUNCHER_WIDTH_PX} px 之间"
+            ));
+        }
+    }
+    if !(MIN_LAUNCHER_HEIGHT_PX..=MAX_LAUNCHER_HEIGHT_PX).contains(&config.window_height_px) {
+        return Err(format!(
+            "启动器高度必须在 {MIN_LAUNCHER_HEIGHT_PX}–{MAX_LAUNCHER_HEIGHT_PX} px 之间"
+        ));
+    }
+    if !(MIN_LAUNCHER_HORIZONTAL_OFFSET_PX..=MAX_LAUNCHER_HORIZONTAL_OFFSET_PX)
+        .contains(&config.horizontal_offset_px)
+    {
+        return Err(format!(
+            "启动器水平偏移必须在 {MIN_LAUNCHER_HORIZONTAL_OFFSET_PX}–{MAX_LAUNCHER_HORIZONTAL_OFFSET_PX} px 之间"
+        ));
+    }
+    if !(MIN_LAUNCHER_VERTICAL_OFFSET_PX..=MAX_LAUNCHER_VERTICAL_OFFSET_PX)
+        .contains(&config.vertical_offset_px)
+    {
+        return Err(format!(
+            "启动器垂直偏移必须在 {MIN_LAUNCHER_VERTICAL_OFFSET_PX}–{MAX_LAUNCHER_VERTICAL_OFFSET_PX} px 之间"
+        ));
     }
     Ok(())
 }
@@ -2048,6 +2122,7 @@ pub fn save_app_config(
 ) -> Result<AppConfigView, String> {
     let (previous, config) = state.replace(config)?;
     let providers_changed = provider_settings_changed(&previous, &config);
+    dock::apply_visibility(&app, config.launcher.show_dock_icon)?;
     launcher.update_preferences(
         config.launcher.close_on_blur,
         config.launcher.keep_last_input,
@@ -2215,6 +2290,11 @@ mod tests {
         let launcher = config["launcher"].as_object_mut().expect("launcher object");
         launcher.remove("emptyQueryDebounceMs");
         launcher.remove("nonEmptyQueryDebounceMs");
+        launcher.remove("showDockIcon");
+        launcher.remove("windowWidthPx");
+        launcher.remove("windowHeightPx");
+        launcher.remove("horizontalOffsetPx");
+        launcher.remove("verticalOffsetPx");
         config
     }
 
@@ -2423,6 +2503,7 @@ mod tests {
         let config =
             normalize_and_validate(AppConfig::default()).expect("default config should be valid");
         assert!(config.save_settings_manually);
+        assert!(config.launcher.show_dock_icon);
         assert_eq!(
             config.launcher.empty_query_debounce_ms,
             default_empty_query_debounce_ms()
@@ -2431,6 +2512,14 @@ mod tests {
             config.launcher.non_empty_query_debounce_ms,
             default_non_empty_query_debounce_ms()
         );
+        assert_eq!(config.launcher.window_width_px, None);
+        assert_eq!(config.launcher_width(), 720.0);
+        assert_eq!(
+            config.launcher.window_height_px,
+            default_launcher_height_px()
+        );
+        assert_eq!(config.launcher.horizontal_offset_px, 0);
+        assert_eq!(config.launcher.vertical_offset_px, 0);
     }
 
     #[test]
@@ -2447,6 +2536,36 @@ mod tests {
         let mut non_empty_too_slow = AppConfig::default();
         non_empty_too_slow.launcher.non_empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS + 1;
         assert!(normalize_and_validate(non_empty_too_slow).is_err());
+    }
+
+    #[test]
+    fn validates_launcher_size_and_position_ranges() {
+        let mut boundaries = AppConfig::default();
+        boundaries.launcher.window_width_px = Some(MIN_LAUNCHER_WIDTH_PX);
+        boundaries.launcher.window_height_px = MAX_LAUNCHER_HEIGHT_PX;
+        boundaries.launcher.horizontal_offset_px = MIN_LAUNCHER_HORIZONTAL_OFFSET_PX;
+        boundaries.launcher.vertical_offset_px = MAX_LAUNCHER_VERTICAL_OFFSET_PX;
+        assert!(normalize_and_validate(boundaries).is_ok());
+
+        let mut width_too_small = AppConfig::default();
+        width_too_small.launcher.window_width_px = Some(MIN_LAUNCHER_WIDTH_PX - 1);
+        assert!(normalize_and_validate(width_too_small).is_err());
+
+        let mut width_too_large = AppConfig::default();
+        width_too_large.launcher.window_width_px = Some(MAX_LAUNCHER_WIDTH_PX + 1);
+        assert!(normalize_and_validate(width_too_large).is_err());
+
+        let mut height_too_small = AppConfig::default();
+        height_too_small.launcher.window_height_px = MIN_LAUNCHER_HEIGHT_PX - 1;
+        assert!(normalize_and_validate(height_too_small).is_err());
+
+        let mut horizontal_too_large = AppConfig::default();
+        horizontal_too_large.launcher.horizontal_offset_px = MAX_LAUNCHER_HORIZONTAL_OFFSET_PX + 1;
+        assert!(normalize_and_validate(horizontal_too_large).is_err());
+
+        let mut vertical_too_small = AppConfig::default();
+        vertical_too_small.launcher.vertical_offset_px = MIN_LAUNCHER_VERTICAL_OFFSET_PX - 1;
+        assert!(normalize_and_validate(vertical_too_small).is_err());
     }
 
     #[test]
@@ -2587,6 +2706,11 @@ mod tests {
             .expect("launcher object");
         launcher.remove("emptyQueryDebounceMs");
         launcher.remove("nonEmptyQueryDebounceMs");
+        launcher.remove("showDockIcon");
+        launcher.remove("windowWidthPx");
+        launcher.remove("windowHeightPx");
+        launcher.remove("horizontalOffsetPx");
+        launcher.remove("verticalOffsetPx");
 
         let migrated = normalize_and_validate(
             serde_json::from_value::<AppConfig>(previous).expect("deserialize v7"),
@@ -2601,6 +2725,51 @@ mod tests {
             migrated.launcher.non_empty_query_debounce_ms,
             default_non_empty_query_debounce_ms()
         );
+    }
+
+    #[test]
+    fn migrates_v8_without_launcher_size_or_position_settings() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v8");
+        previous["version"] = serde_json::json!(8);
+        let launcher = previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object");
+        launcher.remove("windowWidthPx");
+        launcher.remove("windowHeightPx");
+        launcher.remove("horizontalOffsetPx");
+        launcher.remove("verticalOffsetPx");
+        launcher.remove("showDockIcon");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v8"),
+        )
+        .expect("migrate v8 launcher geometry defaults");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(migrated.launcher.window_width_px, None);
+        assert_eq!(migrated.launcher_width(), 720.0);
+        assert_eq!(
+            migrated.launcher.window_height_px,
+            default_launcher_height_px()
+        );
+        assert_eq!(migrated.launcher.horizontal_offset_px, 0);
+        assert_eq!(migrated.launcher.vertical_offset_px, 0);
+    }
+
+    #[test]
+    fn migrates_v9_with_visible_dock_icon_default() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v9");
+        previous["version"] = serde_json::json!(9);
+        previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("showDockIcon");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v9"),
+        )
+        .expect("migrate v9 Dock visibility default");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(migrated.launcher.show_dock_icon);
     }
 
     #[test]

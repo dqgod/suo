@@ -7,6 +7,7 @@ import {
   AppConfigView,
   applySettingsAppearance,
   loadAppConfig,
+  resolveLauncherTheme,
   ScriptCommandConfig,
   ScriptRuntime,
   TranslationConfig,
@@ -60,11 +61,76 @@ const runtimeLabels: Record<ScriptRuntime, string> = {
 };
 
 const maximumQueryDebounceMs = 60_000;
+const launcherWidthBounds = { minimum: 560, maximum: 1_200 } as const;
+const launcherHeightBounds = { minimum: 320, maximum: 720 } as const;
+const launcherHorizontalOffsetBounds = { minimum: -400, maximum: 400 } as const;
+const launcherVerticalOffsetBounds = { minimum: -240, maximum: 240 } as const;
 
 function queryDebounceFromInput(value: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Math.min(maximumQueryDebounceMs, Math.max(0, Math.trunc(parsed)));
+}
+
+function boundedIntegerFromInput(value: string, current: number, minimum: number, maximum: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return current;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
+}
+
+type PixelRangeControlProps = {
+  value: number;
+  minimum: number;
+  maximum: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+};
+
+function PixelRangeControl({ value, minimum, maximum, disabled, onChange }: PixelRangeControlProps) {
+  const [numberDraft, setNumberDraft] = useState(String(value));
+  useEffect(() => setNumberDraft(String(value)), [value]);
+  const commitNumberDraft = () => {
+    const next = boundedIntegerFromInput(numberDraft, value, minimum, maximum);
+    setNumberDraft(String(next));
+    if (next !== value) onChange(next);
+  };
+  return (
+    <span className="pixel-range-control">
+      <input
+        type="range"
+        min={minimum}
+        max={maximum}
+        step={1}
+        disabled={disabled}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          setNumberDraft(String(next));
+          onChange(next);
+        }}
+      />
+      <span className="pixel-number-input">
+        <input
+          type="number"
+          min={minimum}
+          max={maximum}
+          step={1}
+          disabled={disabled}
+          value={numberDraft}
+          onChange={(event) => setNumberDraft(event.target.value)}
+          onBlur={commitNumberDraft}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setNumberDraft(String(value));
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <span>{zhCN.pixels}</span>
+      </span>
+    </span>
+  );
 }
 
 function createId(prefix: string) {
@@ -607,7 +673,8 @@ function Settings() {
     }
   };
 
-  const hotkey = /Mac/i.test(navigator.platform) ? "Command + Space" : "Alt + Space";
+  const isMac = /Mac/i.test(navigator.platform);
+  const hotkey = isMac ? "Command + Space" : "Alt + Space";
 
   return (
     <main className="settings-stage">
@@ -696,6 +763,52 @@ function Settings() {
                   <label className="setting-row">
                     <div><strong>{zhCN.compactWhenEmpty}</strong><small>{zhCN.compactWhenEmptyDescription}</small></div>
                     <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.compactWhenEmpty} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, compactWhenEmpty: event.target.checked } })} />
+                  </label>
+                  {isMac && (
+                    <label className="setting-row">
+                      <div><strong>{zhCN.showDockIcon}</strong><small>{zhCN.showDockIconDescription}</small></div>
+                      <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.showDockIcon} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, showDockIcon: event.target.checked } })} />
+                    </label>
+                  )}
+                  <label className="setting-row">
+                    <div><strong>{zhCN.launcherWindowWidth}</strong><small>{zhCN.launcherWindowWidthDescription}</small></div>
+                    <PixelRangeControl
+                      value={draft.launcher.windowWidthPx ?? resolveLauncherTheme(draft.launcherTheme).windowWidthPx}
+                      minimum={launcherWidthBounds.minimum}
+                      maximum={launcherWidthBounds.maximum}
+                      disabled={saving || Boolean(view?.configReadOnly)}
+                      onChange={(windowWidthPx) => setDraft({ ...draft, launcher: { ...draft.launcher, windowWidthPx } })}
+                    />
+                  </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.launcherWindowHeight}</strong><small>{zhCN.launcherWindowHeightDescription}</small></div>
+                    <PixelRangeControl
+                      value={draft.launcher.windowHeightPx}
+                      minimum={launcherHeightBounds.minimum}
+                      maximum={launcherHeightBounds.maximum}
+                      disabled={saving || Boolean(view?.configReadOnly)}
+                      onChange={(windowHeightPx) => setDraft({ ...draft, launcher: { ...draft.launcher, windowHeightPx } })}
+                    />
+                  </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.launcherHorizontalOffset}</strong><small>{zhCN.launcherHorizontalOffsetDescription}</small></div>
+                    <PixelRangeControl
+                      value={draft.launcher.horizontalOffsetPx}
+                      minimum={launcherHorizontalOffsetBounds.minimum}
+                      maximum={launcherHorizontalOffsetBounds.maximum}
+                      disabled={saving || Boolean(view?.configReadOnly)}
+                      onChange={(horizontalOffsetPx) => setDraft({ ...draft, launcher: { ...draft.launcher, horizontalOffsetPx } })}
+                    />
+                  </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.launcherVerticalOffset}</strong><small>{zhCN.launcherVerticalOffsetDescription}</small></div>
+                    <PixelRangeControl
+                      value={draft.launcher.verticalOffsetPx}
+                      minimum={launcherVerticalOffsetBounds.minimum}
+                      maximum={launcherVerticalOffsetBounds.maximum}
+                      disabled={saving || Boolean(view?.configReadOnly)}
+                      onChange={(verticalOffsetPx) => setDraft({ ...draft, launcher: { ...draft.launcher, verticalOffsetPx } })}
+                    />
                   </label>
                   <label className="setting-row">
                     <div><strong>{zhCN.emptyQueryDebounce}</strong><small>{zhCN.emptyQueryDebounceDescription}</small></div>

@@ -387,7 +387,7 @@ function Launcher() {
       setCompactWhenEmpty(config.launcher.compactWhenEmpty);
       emptyQueryDebounceMsRef.current = config.launcher.emptyQueryDebounceMs;
       nonEmptyQueryDebounceMsRef.current = config.launcher.nonEmptyQueryDebounceMs;
-      applyLauncherAppearance(config.launcherTheme);
+      applyLauncherAppearance(config.launcherTheme, config.launcher);
       setAppearanceLayoutRevision((current) => current + 1);
       setConfigReady(true);
     };

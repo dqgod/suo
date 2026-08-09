@@ -1,4 +1,7 @@
-use std::{collections::HashSet, env, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf};
+
+#[cfg(target_os = "windows")]
+use std::env;
 
 use pinyin::ToPinyin;
 use walkdir::{DirEntry, WalkDir};

@@ -337,7 +337,6 @@ button {
 .result.selected {
   border-color: color-mix(in srgb, var(--launcher-selected-primary) 34%, transparent);
   background: var(--launcher-selected-bg);
-  box-shadow: inset 3px 0 0 var(--launcher-accent);
 }
 
 .result:hover:not(.selected) {
@@ -590,5 +589,4 @@ kbd {
 .result.selected {
   border-color: color-mix(in srgb, var(--launcher-selected-primary) 34%, transparent);
   background: var(--launcher-selected-bg);
-  box-shadow: inset 3px 0 0 var(--launcher-accent);
 }

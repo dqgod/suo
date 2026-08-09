@@ -4,8 +4,13 @@ export type LauncherConfig = {
   closeOnBlur: boolean;
   keepLastInput: boolean;
   compactWhenEmpty: boolean;
+  showDockIcon: boolean;
   emptyQueryDebounceMs: number;
   nonEmptyQueryDebounceMs: number;
+  windowWidthPx: number | null;
+  windowHeightPx: number;
+  horizontalOffsetPx: number;
+  verticalOffsetPx: number;
 };
 
 export type TranslationConfig = {
@@ -358,9 +363,12 @@ function setCssVariables(values: Record<string, string>) {
 }
 
 /** Applies only launcher variables; it cannot mutate settings tokens. */
-export function applyLauncherAppearance(scope: LauncherThemeConfig) {
+export function applyLauncherAppearance(scope: LauncherThemeConfig, launcher?: LauncherConfig) {
   const theme = resolveLauncherTheme(scope);
   const material = platformMaterial(theme);
+  const windowWidthPx = launcher?.windowWidthPx ?? theme.windowWidthPx;
+  const searchHorizontalMargin = Math.max(0, theme.windowWidthPx - theme.searchWidthPx);
+  const searchWidthPx = Math.max(320, Math.min(windowWidthPx, windowWidthPx - searchHorizontalMargin));
   const root = document.documentElement;
   root.dataset.launcherShowSearchIcon = String(theme.showSearchIcon);
   root.dataset.launcherShowLogo = String(theme.showLogo);
@@ -379,7 +387,7 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig) {
     "--launcher-search-border": theme.searchBorder,
     "--launcher-search-border-width": `${theme.searchBorderWidthPx}px`,
     "--launcher-search-border-style": theme.searchBorderStyle,
-    "--launcher-search-width": `${theme.searchWidthPx}px`,
+    "--launcher-search-width": `${searchWidthPx}px`,
     "--launcher-search-text": theme.searchTextColor,
     "--launcher-search-font-size": `${theme.searchFontSizePx}px`,
     "--launcher-result-bg": theme.normalRowBackground,
@@ -397,7 +405,7 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig) {
     // Accent is carried by each custom theme, keeping launcher bundles
     // visually self-contained instead of inheriting a settings-side token.
     "--launcher-accent": theme.accentColor,
-    "--launcher-width": `${theme.windowWidthPx}px`,
+    "--launcher-width": `${windowWidthPx}px`,
   });
   return theme;
 }

@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, State};
 
 use crate::{
     arguments,
@@ -21,7 +21,7 @@ use crate::{
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
 const DEFAULT_LAUNCHER_WIDTH: f64 = 720.0;
-const LAUNCHER_FULL_HEIGHT: f64 = 520.0;
+const DEFAULT_LAUNCHER_HEIGHT: f64 = 520.0;
 const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
 
 pub struct LauncherState {
@@ -643,12 +643,13 @@ pub fn set_launcher_compact(
         .inner_size()
         .map_err(|error| error.to_string())?
         .to_logical::<f64>(scale_factor);
+    let snapshot = config.snapshot();
     let target_height = if compact {
         LAUNCHER_COMPACT_HEIGHT
     } else {
-        LAUNCHER_FULL_HEIGHT
+        snapshot.launcher_height()
     };
-    let target_width = config.snapshot().launcher_theme.launcher_width();
+    let target_width = snapshot.launcher_width();
     if (current.height - target_height).abs() < 0.5 && (current.width - target_width).abs() < 0.5 {
         return Ok(());
     }
@@ -715,23 +716,67 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "找不到显示器".to_string())?;
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
+    let work_area = monitor.work_area();
     // Keep the launcher's top edge stable in compact and full modes. Using
     // the current compact height here would make later invocations drift down.
     // Use the destination monitor's DPI because the hidden window may still
     // belong to a different monitor when this position is calculated.
-    let launcher_width = app
+    let (launcher_width, launcher_height, horizontal_offset, vertical_offset) = app
         .try_state::<Arc<ConfigState>>()
-        .map(|config| config.snapshot().launcher_theme.launcher_width())
-        .unwrap_or(DEFAULT_LAUNCHER_WIDTH);
+        .map(|config| {
+            let config = config.snapshot();
+            (
+                config.launcher_width(),
+                config.launcher_height(),
+                config.launcher.horizontal_offset_px,
+                config.launcher.vertical_offset_px,
+            )
+        })
+        .unwrap_or((DEFAULT_LAUNCHER_WIDTH, DEFAULT_LAUNCHER_HEIGHT, 0, 0));
     let positioning_width = (launcher_width * monitor.scale_factor()).round() as u32;
-    let positioning_height = (LAUNCHER_FULL_HEIGHT * monitor.scale_factor()).round() as u32;
-
-    let x = monitor_position.x + (monitor_size.width.saturating_sub(positioning_width) / 2) as i32;
-    let y =
-        monitor_position.y + (monitor_size.height.saturating_sub(positioning_height) / 4) as i32;
+    let positioning_height = (launcher_height * monitor.scale_factor()).round() as u32;
+    let horizontal_offset = (f64::from(horizontal_offset) * monitor.scale_factor()).round() as i32;
+    let vertical_offset = (f64::from(vertical_offset) * monitor.scale_factor()).round() as i32;
+    let position = launcher_position(
+        *monitor_position,
+        *monitor_size,
+        work_area.position,
+        work_area.size,
+        PhysicalSize::new(positioning_width, positioning_height),
+        PhysicalPosition::new(horizontal_offset, vertical_offset),
+    );
     window
-        .set_position(PhysicalPosition::new(x, y))
+        .set_position(position)
         .map_err(|error| error.to_string())
+}
+
+fn launcher_position(
+    monitor_position: PhysicalPosition<i32>,
+    monitor_size: PhysicalSize<u32>,
+    work_area_position: PhysicalPosition<i32>,
+    work_area_size: PhysicalSize<u32>,
+    launcher_size: PhysicalSize<u32>,
+    offset: PhysicalPosition<i32>,
+) -> PhysicalPosition<i32> {
+    // Preserve the pre-v9 default anchor, which used the full monitor bounds.
+    // The work area is only used to keep the adjusted window clear of the
+    // menu bar/taskbar/Dock and visible on screen.
+    let base_x = i64::from(monitor_position.x)
+        + i64::from(monitor_size.width.saturating_sub(launcher_size.width) / 2);
+    let base_y = i64::from(monitor_position.y)
+        + i64::from(monitor_size.height.saturating_sub(launcher_size.height) / 4);
+    let free_width = work_area_size.width.saturating_sub(launcher_size.width);
+    let free_height = work_area_size.height.saturating_sub(launcher_size.height);
+    PhysicalPosition::new(
+        clamped_axis_position(work_area_position.x, free_width, base_x, offset.x),
+        clamped_axis_position(work_area_position.y, free_height, base_y, offset.y),
+    )
+}
+
+fn clamped_axis_position(origin: i32, free_space: u32, base: i64, offset: i32) -> i32 {
+    let minimum = i64::from(origin);
+    let maximum = minimum + i64::from(free_space);
+    (base + i64::from(offset)).clamp(minimum, maximum) as i32
 }
 
 fn catalog_results<F>(
@@ -1029,9 +1074,43 @@ mod tests {
     use crate::{catalog::CatalogEntry, config::AppConfig, models::ResultKind};
 
     use super::{
-        calculate, catalog_results, command_arguments, is_settings_query, match_score,
-        script_command, translation_command, web_search_command,
+        calculate, catalog_results, command_arguments, is_settings_query, launcher_position,
+        match_score, script_command, translation_command, web_search_command,
     };
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn launcher_position_preserves_the_current_default_and_clamps_offsets() {
+        let default = launcher_position(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1_440, 900),
+            PhysicalPosition::new(0, 24),
+            PhysicalSize::new(1_440, 876),
+            PhysicalSize::new(720, 520),
+            PhysicalPosition::new(0, 0),
+        );
+        assert_eq!((default.x, default.y), (360, 95));
+
+        let upper_left = launcher_position(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1_440, 900),
+            PhysicalPosition::new(0, 24),
+            PhysicalSize::new(1_440, 876),
+            PhysicalSize::new(720, 520),
+            PhysicalPosition::new(-1_000, -1_000),
+        );
+        assert_eq!((upper_left.x, upper_left.y), (0, 24));
+
+        let lower_right = launcher_position(
+            PhysicalPosition::new(-1_920, 0),
+            PhysicalSize::new(1_920, 1_080),
+            PhysicalPosition::new(-1_920, 0),
+            PhysicalSize::new(1_920, 1_080),
+            PhysicalSize::new(1_200, 720),
+            PhysicalPosition::new(1_000, 1_000),
+        );
+        assert_eq!((lower_right.x, lower_right.y), (-1_200, 360));
+    }
 
     #[test]
     fn evaluates_basic_calculation() {

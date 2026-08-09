@@ -36,6 +36,9 @@ pub fn search<F>(
 where
     F: Fn() -> bool,
 {
+    #[cfg(target_os = "macos")]
+    let _ = app;
+
     #[cfg(target_os = "windows")]
     {
         return match crate::everything::search(app, query, max_results, is_cancelled) {
