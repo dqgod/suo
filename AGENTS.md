@@ -37,6 +37,19 @@ Before pushing, run the frontend build and Rust tests. When platform integration
 
 The first Apple Silicon hardware pass was completed on 2026-08-08. Treat the commands and scenarios below as the regression checklist for later cross-platform changes. Work from `dev`, do not use `sudo`, and do not commit `node_modules/`, `dist/`, `target/`, `.app`, or `.dmg` artifacts.
 
+### 2026-08-09 dev Delta
+
+The Windows pass for the current `dev` delta is complete. On macOS, do not stop at a successful compile: run the bundled `.app` and regression-test the following changes against a copy of an existing user configuration.
+
+- Configuration is now version 8. Loading a version 7 configuration must preserve every existing command, service, theme and preference while supplying `0 ms` empty-query and `50 ms` non-empty-query debounce defaults. Saving once must produce a valid version 8 file; keep the original config and `.bak` until the migration is verified.
+- In General settings, set visibly different empty/non-empty delays (for example `300 ms` and `600 ms`). Confirm an empty launcher waits for the empty delay, ordinary text uses the non-empty trailing-edge delay, each additional keystroke restarts that timer, and an enabled immediate script still uses only its own per-command delay. Restore the intended values afterward.
+- Application-name pinyin matching is catalog-only and cross-platform. Find an installed application whose discovered display name contains Chinese characters and verify both full pinyin and initials; native English/name/path matching must still rank ahead of a pinyin fallback, and ordinary files must not gain pinyin aliases.
+- For at least one application under `/Applications` and one under `~/Applications`, confirm the result first renders safely and then shows the real `.app` icon, repeated queries use the cache, and activating the row opens the same application. Directories and ordinary files must retain Suo's fixed folder/file icons. Do not loosen the discovered-path allowlist or accept symlink/remote icon sources to make an icon appear.
+- Exercise both settings persistence modes. With unified save enabled, edits must remain page drafts until the top-right save succeeds. With it disabled, valid ordinary changes auto-save; an active custom theme uses one-click `Save and apply`, while an inactive custom theme is saved first and is applied only by a separate explicit action. An unchanged theme must keep its save button disabled.
+- Verify launcher and settings theme libraries remain independent after restart, including active-theme selection, edited-theme selection, import/export scope checks, Retina sizing, wallpaper rendering and search/logo visibility. A save response must not overwrite edits typed while a previous save is in flight.
+
+If a macOS-only fix is required, preserve the Windows acceptance baseline: `weixin` and `wx` find the Chinese WeChat shortcut with its native icon, `steam` shows the Steam icon, Everything fallback order is unchanged, and script cancellation still terminates the Windows Job Object tree.
+
 Record the environment first:
 
 ```bash
@@ -68,6 +81,7 @@ Verify these behaviors on the real machine:
 - `Command+Space` registration and conflict reporting. macOS normally reserves it for Spotlight; first confirm Suo reports the conflict, then temporarily disable or remap the macOS Spotlight shortcut and restart Suo before testing successful invocation. The Suo hotkey recorder is not implemented yet.
 - The menu-bar tray icon, its Show/Settings/Quit menu, the Dock icon, single-instance wake-up, `Esc`, focus loss, and repeated show/hide behavior.
 - Rounded transparent launcher/settings windows on Retina scaling, with no square halo or invisible click region. Enable `Settings -> General -> 空输入时仅显示搜索框`; an empty query must shrink the native window to the search row, typing must restore the full window, and clearing must shrink it again.
+- General settings expose independent empty/non-empty query debounce values (0–60000 ms, defaults 0/50). Verify trailing-edge reset while typing and clearing; immediate scripts must continue using their own per-command 20–60000 ms delay.
 - Launcher and settings themes must remain independent on macOS: switch and edit each scope separately, reject cross-scope/legacy imports, verify launcher width and icon-size changes on Retina, and confirm hiding the search icon or Suo logo does not affect the settings window. Wallpaper readability warnings are only a preview aid; verify translucent or image-backed themes against the real desktop before accepting them.
 - Application discovery under `/Applications`, `/System/Applications`, and `~/Applications`; results should show native `.app` icons and open the selected application. File search results must use the fixed directory/file icons, and replacing a discovered `.app` with a symlink must not make it an approved native-icon source.
 - `f <name>` through `/usr/bin/mdfind -name`, including cancellation under rapid typing. Record any privacy prompt, timeout, or fallback to the Desktop/Documents/Downloads limited index; do not broaden protected-directory scanning just to silence a prompt.
@@ -87,9 +101,10 @@ For each failure, preserve the exact command, exit code, stderr, macOS version, 
 - Script execution defaults to argument arrays. Shell mode is explicit and high-risk.
 - Script argument count and meaning are owned by the script; Suo only performs quote-aware argv splitting and does not declare a parameter schema in the current MVP.
 - Query scripts may run immediately with a per-command 20–60000 ms debounce (default 50 ms); action scripts run on Enter by default. Both must support timeout and process-tree cancellation.
+- Ordinary launcher queries use separate configurable empty/non-empty trailing-edge debounce values (0–60000 ms, defaults 0/50); these settings must never override an immediate script's per-command delay.
 - Web search `{query}` expands the complete post-keyword text without requiring quotes. `{query0}`, `{query1}`… expand quote-aware positional arguments; missing arguments must produce a non-actionable error result.
 - Launcher and settings themes are independent scopes, including their custom theme libraries and accent colours. Imports use the strict `suo-launcher-theme-v1` and `suo-settings-theme-v1` contracts and must reject the wrong scope, the retired `suo-theme-v1`, missing/unknown fields, unsupported versions, and images that fail bounded decoding. Only fixed scope-specific CSS variables may be populated; wallpaper input is limited to local PNG/JPEG/WebP data URLs no larger than 1.5 MB or 4096 px per side, and must never load remote content or execute code.
-- Launcher result icons follow a stable type contract: discovered applications may request whitelisted native icons, directories use the built-in folder icon, and other files use the built-in file icon.
+- Launcher result icons follow a stable type contract: applications discovered in the runtime catalog may request native icons from their validated local paths, directories use the built-in folder icon, and other files use the built-in file icon.
 - `suo-json-v1` is UTF-8. Plain text output may use a configured encoding and is capped independently for stdout/stderr.
 
 ## Security and Privacy

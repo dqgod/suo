@@ -4,6 +4,8 @@ export type LauncherConfig = {
   closeOnBlur: boolean;
   keepLastInput: boolean;
   compactWhenEmpty: boolean;
+  emptyQueryDebounceMs: number;
+  nonEmptyQueryDebounceMs: number;
 };
 
 export type TranslationConfig = {
@@ -293,6 +295,7 @@ export function resolveSettingsTheme(scope: SettingsThemeConfig): SettingsCustom
 
 export type AppConfig = {
   version: number;
+  saveSettingsManually: boolean;
   launcher: LauncherConfig;
   translation: TranslationConfig;
   scriptCommands: ScriptCommandConfig[];

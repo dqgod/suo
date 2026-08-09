@@ -174,15 +174,97 @@ fn insert_cached(cache: &mut IconCache, path: PathBuf, icon: Option<NativeAppIco
 
 #[cfg(target_os = "windows")]
 fn load_platform_icon(path: &Path) -> Option<NativeAppIcon> {
-    // IShellItemImageFactory is the Windows Shell's native icon pipeline. It
-    // reads shortcut metadata and never executes the .lnk target. Some
-    // installed .lnk files are rejected by that API, so fall back to
-    // SHGetFileInfoW, the Shell's compatibility icon lookup.
+    // A Shell API lookup of a .lnk can legally return the generic shortcut
+    // document icon. Resolve only shortcuts discovered in the runtime app
+    // catalog to verified local executables, without calling
+    // IShellLink::Resolve (which may contact the network), so installed apps
+    // retain their own artwork.
+    if is_windows_shortcut(path) {
+        if let Some(target) = resolve_windows_shortcut_target(path) {
+            if let Some(icon) = load_windows_native_icon(&target) {
+                return Some(icon);
+            }
+        }
+    }
+
+    load_windows_native_icon(path)
+}
+
+#[cfg(target_os = "windows")]
+fn load_windows_native_icon(path: &Path) -> Option<NativeAppIcon> {
+    // IShellItemImageFactory is the Windows Shell's native icon pipeline.
+    // Some installed applications are rejected by that API, so fall back to
+    // SHGetFileInfoW and then ExtractAssociatedIconW for compatibility.
     file_icon_provider::get_file_icon(path, ICON_SIZE)
         .ok()
         .and_then(convert_icon)
         .or_else(|| load_windows_shell_icon(path))
         .or_else(|| load_windows_associated_icon(path))
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_shortcut(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_shortcut_target(path: &Path) -> Option<PathBuf> {
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt};
+
+    use windows::{
+        core::{Interface, GUID, HSTRING},
+        Win32::{
+            Storage::FileSystem::WIN32_FIND_DATAW,
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile,
+                CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READ,
+            },
+            UI::Shell::{IShellLinkW, SLGP_RAWPATH},
+        },
+    };
+
+    // `CLSID_ShellLink` is not exported by the windows crate's Shell module,
+    // but its documented value is stable. Keep creation local to this helper
+    // so only a local .lnk reached through the runtime-discovered result-id
+    // catalog is read.
+    const SHELL_LINK_CLSID: GUID = GUID::from_u128(0x00021401_0000_0000_c000_000000000046);
+    const MAX_SHORTCUT_TARGET_UTF16: usize = 32_768;
+
+    let shortcut_path = path.canonicalize().ok()?;
+    let initialized_com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+    let target = (|| {
+        let shell_link: IShellLinkW =
+            unsafe { CoCreateInstance(&SHELL_LINK_CLSID, None, CLSCTX_INPROC_SERVER).ok()? };
+        let persist_file: IPersistFile = shell_link.cast().ok()?;
+        let shortcut = HSTRING::from(shortcut_path.as_path());
+        unsafe { persist_file.Load(&shortcut, STGM_READ).ok()? };
+
+        let mut target = [0u16; MAX_SHORTCUT_TARGET_UTF16];
+        unsafe {
+            shell_link
+                .GetPath(
+                    &mut target,
+                    std::ptr::null_mut::<WIN32_FIND_DATAW>(),
+                    SLGP_RAWPATH.0 as u32,
+                )
+                .ok()?;
+        }
+        let length = target.iter().position(|value| *value == 0)?;
+        let target = PathBuf::from(OsString::from_wide(&target[..length]));
+        // Reject UNC, relative, parent-traversal and reparse-point targets
+        // before canonicalize or any Shell call can touch a remote location.
+        if !is_local_executable_candidate(&target) || !has_no_reparse_components(&target) {
+            return None;
+        }
+        let target = target.canonicalize().ok()?;
+        is_local_executable_path(&target).then_some(target)
+    })();
+    if initialized_com {
+        unsafe { CoUninitialize() };
+    }
+    target
 }
 
 #[cfg(target_os = "windows")]
@@ -200,7 +282,7 @@ fn load_windows_shell_icon(path: &Path) -> Option<NativeAppIcon> {
     let mut file_info = SHFILEINFOW::default();
     // Catalog roots are joined from portable slash-separated literals. The
     // Shell shortcut parser is less tolerant of a mixed-separator .lnk path,
-    // so normalize the already-whitelisted local path first.
+    // so normalize the already-validated local catalog path first.
     let canonical_path = path.canonicalize().ok()?;
     let path = HSTRING::from(canonical_path.as_path());
     let received = unsafe {
@@ -386,19 +468,7 @@ fn convert_icon(icon: file_icon_provider::Icon) -> Option<NativeAppIcon> {
 
 #[cfg(target_os = "windows")]
 fn is_supported_application_path(path: &Path) -> bool {
-    use std::path::{Component, Prefix};
-
-    let is_local_drive = matches!(
-        path.components().next(),
-        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
-    );
-    let is_regular_file = path
-        .symlink_metadata()
-        .map(|metadata| metadata.file_type().is_file())
-        .unwrap_or(false);
-
-    is_local_drive
-        && is_regular_file
+    is_local_regular_file(path)
         && matches!(
             path.extension()
                 .and_then(|value| value.to_str())
@@ -411,11 +481,97 @@ fn is_supported_application_path(path: &Path) -> bool {
         )
 }
 
+#[cfg(target_os = "windows")]
+fn is_local_executable_path(path: &Path) -> bool {
+    is_local_executable_candidate(path) && is_local_regular_file(path)
+}
+
+#[cfg(target_os = "windows")]
+fn is_local_executable_candidate(path: &Path) -> bool {
+    is_fixed_local_disk_path(path)
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        && path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+}
+
+#[cfg(target_os = "windows")]
+fn is_local_regular_file(path: &Path) -> bool {
+    is_fixed_local_disk_path(path)
+        && has_no_reparse_components(path)
+        && path
+            .symlink_metadata()
+            .map(|metadata| metadata.file_type().is_file())
+            .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn is_fixed_local_disk_path(path: &Path) -> bool {
+    use windows::{core::PCWSTR, Win32::Storage::FileSystem::GetDriveTypeW};
+
+    is_fixed_local_disk_path_with(path, |drive_letter| {
+        let root = [
+            u16::from(drive_letter),
+            u16::from(b':'),
+            u16::from(b'\\'),
+            0,
+        ];
+        unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) }
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn is_fixed_local_disk_path_with<F>(path: &Path, drive_type: F) -> bool
+where
+    F: FnOnce(u8) -> u32,
+{
+    use std::path::{Component, Prefix};
+
+    if !path.is_absolute() {
+        return false;
+    }
+    let drive_letter = match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => letter,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    // Win32 DRIVE_FIXED. Reject remote, removable, optical, RAM, unknown and
+    // unavailable drives before any metadata, canonicalize or Shell call.
+    drive_type(drive_letter) == 3
+}
+
+#[cfg(target_os = "windows")]
+fn has_no_reparse_components(path: &Path) -> bool {
+    use std::{os::windows::fs::MetadataExt, path::Component};
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        if matches!(component, Component::Prefix(_) | Component::RootDir) {
+            continue;
+        }
+        let Ok(metadata) = current.symlink_metadata() else {
+            return false;
+        };
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(target_os = "macos")]
 fn is_supported_application_path(path: &Path) -> bool {
     // Do not follow a symlink before handing the path to NSWorkspace. The
     // catalog normally contains real .app bundles, and accepting an alias here
-    // would let a discovered entry resolve outside that startup allowlist.
+    // would let a discovered entry resolve outside the startup application
+    // catalog.
     let Ok(metadata) = path.symlink_metadata() else {
         return false;
     };
@@ -567,6 +723,76 @@ mod tests {
             pixels: vec![0; 1],
         };
         assert!(super::convert_icon(malformed).is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn accepts_only_absolute_fixed_drive_targets_before_filesystem_access() {
+        let fixed_drive = |_: u8| 3;
+        let remote_drive = |_: u8| 4;
+
+        assert!(super::is_fixed_local_disk_path_with(
+            PathBuf::from(r"D:\Software\Steam\steam.exe").as_path(),
+            fixed_drive
+        ));
+        assert!(!super::is_fixed_local_disk_path_with(
+            PathBuf::from(r"Z:\apps\steam.exe").as_path(),
+            remote_drive
+        ));
+        assert!(!super::is_fixed_local_disk_path_with(
+            PathBuf::from(r"C:relative.exe").as_path(),
+            fixed_drive
+        ));
+        assert!(!super::is_fixed_local_disk_path_with(
+            PathBuf::from(r"\\unreachable-host\share\app.exe").as_path(),
+            fixed_drive
+        ));
+        assert!(!super::is_local_executable_candidate(
+            PathBuf::from(r"\\unreachable-host\share\app.exe").as_path()
+        ));
+        assert!(!super::is_local_executable_candidate(
+            PathBuf::from(r"C:\apps\..\remote\app.exe").as_path()
+        ));
+        assert!(!super::is_local_executable_candidate(
+            PathBuf::from(r"C:relative.exe").as_path()
+        ));
+        assert!(super::is_local_executable_candidate(
+            PathBuf::from(r"D:\Software\Weixin\Weixin.exe").as_path()
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolves_and_uses_the_target_icon_for_an_installed_unicode_shortcut() {
+        // This regression fixture is present on the Windows acceptance machine.
+        // Keep it optional so clean developer/CI installations still run the
+        // portable tests, but never fall back to Explorer when the actual
+        // Unicode Start Menu shortcut is available.
+        let Some(program_data) = std::env::var_os("PROGRAMDATA") else {
+            return;
+        };
+        let shortcut = PathBuf::from(program_data)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("微信")
+            .join("微信.lnk");
+        if !shortcut.is_file() {
+            return;
+        }
+
+        let target = super::resolve_windows_shortcut_target(&shortcut)
+            .expect("Unicode Start Menu shortcut should resolve to a local executable");
+        assert!(super::is_local_executable_path(&target));
+
+        let shortcut_icon = load_cached(shortcut)
+            .expect("Unicode Start Menu shortcut should expose its target application icon");
+        let target_icon = super::load_windows_native_icon(&target)
+            .expect("resolved application executable should expose an icon");
+        assert_eq!(shortcut_icon.width, target_icon.width);
+        assert_eq!(shortcut_icon.height, target_icon.height);
+        assert_eq!(shortcut_icon.pixels, target_icon.pixels);
     }
 
     #[cfg(target_os = "windows")]

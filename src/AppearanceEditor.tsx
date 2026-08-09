@@ -16,6 +16,7 @@ import {
   type SettingsCustomThemeConfig,
   type SettingsThemeConfig,
   type ThemeBackgroundConfig,
+  type ThemeSelection,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 import "./AppearanceEditor.css";
@@ -24,7 +25,8 @@ type ThemeScope = "launcher" | "settings";
 type AppearanceEditorProps = {
   launcherTheme: LauncherThemeConfig;
   settingsTheme: SettingsThemeConfig;
-  onChange: (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => void;
+  onChange: (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => Promise<boolean>;
+  saveSettingsManually: boolean;
   readOnly: boolean;
   saving?: boolean;
 };
@@ -58,6 +60,13 @@ function customId(theme: string) {
 
 function sameId(left: string, right: string | null) {
   return right !== null && left.toLowerCase() === right.toLowerCase();
+}
+
+function themeName(selection: ThemeSelection, customThemes: Array<{ id: string; name: string }>) {
+  const id = customId(selection);
+  return id
+    ? customThemes.find((theme) => sameId(theme.id, id))?.name ?? t.unnamedTheme
+    : builtinLabels[selection as keyof typeof builtinLabels];
 }
 
 function isHexColor(value: string) {
@@ -270,20 +279,22 @@ function SettingsPreview({ theme }: { theme: SettingsCustomThemeConfig }) {
   return <div className="appearance-settings-preview" style={style}><header><strong>{t.previewSettingsTitle}</strong><span>×</span></header><div><aside><span>{t.previewGeneral}</span><span>{t.previewSearch}</span><span>{t.previewCommands}</span><strong>{t.previewAppearance}</strong></aside><main><h3>{t.previewPageTitle}</h3><p>{t.previewPageCopy}</p><section><strong>{t.previewCardTitle}</strong><p>{t.previewCardCopy}</p><i /><i /><i /></section></main></div></div>;
 }
 
-export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, readOnly, saving = false }: AppearanceEditorProps) {
+export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, saveSettingsManually, readOnly, saving = false }: AppearanceEditorProps) {
   const [scope, setScope] = useState<ThemeScope>("launcher");
   const [workingLauncher, setWorkingLauncher] = useState(() => cloneLauncherScope(launcherTheme));
   const [workingSettings, setWorkingSettings] = useState(() => cloneSettingsScope(settingsTheme));
+  const [editingLauncherTheme, setEditingLauncherTheme] = useState<ThemeSelection>(launcherTheme.theme);
+  const [editingSettingsTheme, setEditingSettingsTheme] = useState<ThemeSelection>(settingsTheme.theme);
   const [notice, setNotice] = useState("");
-  const [warnedScope, setWarnedScope] = useState<ThemeScope | null>(null);
   const [importing, setImporting] = useState(false);
+  const [committing, setCommitting] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
   const importRequestRef = useRef(0);
   const tabRefs = useRef<Record<ThemeScope, HTMLButtonElement | null>>({ launcher: null, settings: null });
   const wallpaperRequestsRef = useRef(new Map<string, number>());
-  const launcherSignature = useMemo(() => JSON.stringify(launcherTheme), [launcherTheme]);
-  const settingsSignature = useMemo(() => JSON.stringify(settingsTheme), [settingsTheme]);
-  const disabled = readOnly || saving || importing;
+  const launcherLibrarySignature = useMemo(() => JSON.stringify(launcherTheme.customThemes), [launcherTheme.customThemes]);
+  const settingsLibrarySignature = useMemo(() => JSON.stringify(settingsTheme.customThemes), [settingsTheme.customThemes]);
+  const disabled = readOnly || saving || importing || committing;
 
   useEffect(() => {
     importRequestRef.current += 1;
@@ -291,30 +302,72 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     for (const [key, version] of wallpaperRequestsRef.current) {
       if (key.startsWith("launcher:")) wallpaperRequestsRef.current.set(key, version + 1);
     }
-    setWorkingLauncher(cloneLauncherScope(launcherTheme));
-    setWarnedScope(null);
-  }, [launcherSignature]);
+    setWorkingLauncher((current) => ({
+      ...current,
+      customThemes: launcherTheme.customThemes.map((theme) => ({ ...theme, ...cloneBackground(theme) })),
+    }));
+    setEditingLauncherTheme((current) => {
+      const id = customId(current);
+      return id && !launcherTheme.customThemes.some((theme) => sameId(theme.id, id))
+        ? launcherTheme.theme
+        : current;
+    });
+  }, [launcherLibrarySignature]);
   useEffect(() => {
     importRequestRef.current += 1;
     setImporting(false);
     for (const [key, version] of wallpaperRequestsRef.current) {
       if (key.startsWith("settings:")) wallpaperRequestsRef.current.set(key, version + 1);
     }
-    setWorkingSettings(cloneSettingsScope(settingsTheme));
-    setWarnedScope(null);
-  }, [settingsSignature]);
+    setWorkingSettings((current) => ({
+      ...current,
+      customThemes: settingsTheme.customThemes.map((theme) => ({ ...theme, ...cloneBackground(theme) })),
+    }));
+    setEditingSettingsTheme((current) => {
+      const id = customId(current);
+      return id && !settingsTheme.customThemes.some((theme) => sameId(theme.id, id))
+        ? settingsTheme.theme
+        : current;
+    });
+  }, [settingsLibrarySignature]);
 
-  const selectedLauncherId = customId(workingLauncher.theme);
+  useEffect(() => {
+    setWorkingLauncher((current) => ({ ...current, theme: launcherTheme.theme, accentColor: launcherTheme.accentColor }));
+  }, [launcherTheme.theme, launcherTheme.accentColor]);
+
+  useEffect(() => {
+    setWorkingSettings((current) => ({ ...current, theme: settingsTheme.theme, accentColor: settingsTheme.accentColor }));
+  }, [settingsTheme.theme, settingsTheme.accentColor]);
+
+  const selectedLauncherId = customId(editingLauncherTheme);
   const selectedLauncher = selectedLauncherId ? workingLauncher.customThemes.find((theme) => sameId(theme.id, selectedLauncherId)) ?? null : null;
-  const launcherPreview = resolveLauncherTheme(workingLauncher);
-  const selectedSettingsId = customId(workingSettings.theme);
+  const committedLauncher = selectedLauncherId ? launcherTheme.customThemes.find((theme) => sameId(theme.id, selectedLauncherId)) ?? null : null;
+  const launcherEditingHasChanges = selectedLauncher !== null
+    && (committedLauncher === null || JSON.stringify(selectedLauncher) !== JSON.stringify(committedLauncher));
+  const launcherPreview = resolveLauncherTheme({ ...workingLauncher, theme: editingLauncherTheme });
+  const selectedSettingsId = customId(editingSettingsTheme);
   const selectedSettings = selectedSettingsId ? workingSettings.customThemes.find((theme) => sameId(theme.id, selectedSettingsId)) ?? null : null;
-  const settingsPreview = resolveSettingsTheme(workingSettings);
+  const committedSettings = selectedSettingsId ? settingsTheme.customThemes.find((theme) => sameId(theme.id, selectedSettingsId)) ?? null : null;
+  const settingsEditingHasChanges = selectedSettings !== null
+    && (committedSettings === null || JSON.stringify(selectedSettings) !== JSON.stringify(committedSettings));
+  const settingsPreview = resolveSettingsTheme({ ...workingSettings, theme: editingSettingsTheme });
   const checks = scope === "launcher" ? launcherChecks(launcherPreview) : settingsChecks(settingsPreview);
   const checksPass = checks.every((check) => check.ratio >= check.minimum);
   const sceneReview = needsSceneContrastReview(scope === "launcher" ? launcherPreview : settingsPreview);
   const contrastVerified = checksPass && !sceneReview;
   const selectedCustom = scope === "launcher" ? selectedLauncher : selectedSettings;
+  const editingHasChanges = scope === "launcher" ? launcherEditingHasChanges : settingsEditingHasChanges;
+
+  const commitThemes = async (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => {
+    setCommitting(true);
+    try {
+      return await onChange(themes);
+    } catch {
+      return false;
+    } finally {
+      setCommitting(false);
+    }
+  };
 
   const advanceWallpaperRequest = (target: ThemeTarget) => {
     const key = `${target.scope}:${target.themeId.toLowerCase()}`;
@@ -324,7 +377,7 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
 
   const currentWallpaperTarget = (): ThemeTarget | null => {
-    const themeId = customId(scope === "launcher" ? workingLauncher.theme : workingSettings.theme);
+    const themeId = customId(scope === "launcher" ? editingLauncherTheme : editingSettingsTheme);
     return themeId ? { scope, themeId } : null;
   };
 
@@ -335,15 +388,18 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
 
   const updateLauncher = (updater: (theme: LauncherCustomThemeConfig) => LauncherCustomThemeConfig) => {
     if (!selectedLauncher || disabled) return;
-    setWarnedScope(null);
-    setWorkingLauncher((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(current.theme)) ? updater(theme) : theme) }));
+    setWorkingLauncher((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(editingLauncherTheme)) ? updater(theme) : theme) }));
   };
   const updateSettings = (updater: (theme: SettingsCustomThemeConfig) => SettingsCustomThemeConfig) => {
     if (!selectedSettings || disabled) return;
-    setWarnedScope(null);
-    setWorkingSettings((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(current.theme)) ? updater(theme) : theme) }));
+    setWorkingSettings((current) => ({ ...current, customThemes: current.customThemes.map((theme) => sameId(theme.id, customId(editingSettingsTheme)) ? updater(theme) : theme) }));
   };
-  const chooseScope = (next: ThemeScope) => { setScope(next); setNotice(""); setWarnedScope(null); };
+  const chooseScope = (next: ThemeScope) => {
+    if (disabled) return;
+    invalidateCurrentWallpaperRequest();
+    setScope(next);
+    setNotice("");
+  };
   const onScopeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
     event.preventDefault();
@@ -352,39 +408,124 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
   const chooseBuiltin = (id: typeof builtinThemeIds[number]) => {
     if (disabled) return;
-    setWarnedScope(null);
-    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: id, accentColor: createLauncherTheme(id).accentColor }));
-    else setWorkingSettings((current) => ({ ...current, theme: id, accentColor: createSettingsTheme(id).accentColor }));
+    if (scope === "launcher") setEditingLauncherTheme(id);
+    else setEditingSettingsTheme(id);
+    setNotice("");
   };
   const chooseCustom = (id: string) => {
     if (disabled) return;
-    setWarnedScope(null);
-    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: `custom:${id}` }));
-    else setWorkingSettings((current) => ({ ...current, theme: `custom:${id}` }));
+    if (scope === "launcher") setEditingLauncherTheme(`custom:${id}`);
+    else setEditingSettingsTheme(`custom:${id}`);
+    setNotice("");
+  };
+  const chooseEditingTheme = (selection: ThemeSelection) => {
+    const current = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
+    if (selection === current) return;
+    if (editingHasChanges) {
+      setNotice(t.saveBeforeSwitchingTheme);
+      return;
+    }
+    invalidateCurrentWallpaperRequest();
+    const id = customId(selection);
+    if (id) chooseCustom(id);
+    else chooseBuiltin(selection as typeof builtinThemeIds[number]);
+  };
+
+  const chooseActiveTheme = async (selection: ThemeSelection) => {
+    if (disabled) return;
+    const commitScope = scope;
+    let themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig };
+    if (commitScope === "launcher") {
+      const next = {
+        ...cloneLauncherScope(launcherTheme),
+        theme: selection,
+        accentColor: customId(selection) ? launcherTheme.accentColor : createLauncherTheme(selection).accentColor,
+      };
+      themes = { launcherTheme: next, settingsTheme: cloneSettingsScope(settingsTheme) };
+    } else {
+      const next = {
+        ...cloneSettingsScope(settingsTheme),
+        theme: selection,
+        accentColor: customId(selection) ? settingsTheme.accentColor : createSettingsTheme(selection).accentColor,
+      };
+      themes = { launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: next };
+    }
+    const saved = await commitThemes(themes);
+    if (!saved) {
+      setNotice(t.themeSaveFailed);
+      return;
+    }
+    if (commitScope === "launcher") {
+      setWorkingLauncher((current) => ({ ...current, theme: themes.launcherTheme.theme, accentColor: themes.launcherTheme.accentColor }));
+    } else {
+      setWorkingSettings((current) => ({ ...current, theme: themes.settingsTheme.theme, accentColor: themes.settingsTheme.accentColor }));
+    }
+    setNotice(saveSettingsManually ? t.activeThemeAddedToDraft : t.activeThemeApplied);
   };
   const createTheme = () => {
     if (disabled) return;
+    if (editingHasChanges) return setNotice(t.saveBeforeSwitchingTheme);
     if (scope === "launcher") {
       if (workingLauncher.customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
       const seed = createLauncherTheme();
       const source = selectedLauncher;
-      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createLauncherTheme(workingLauncher.theme), name: t.copyName.replace("{name}", builtinLabels[workingLauncher.theme as keyof typeof builtinLabels] ?? t.midnight) };
-      setWorkingLauncher((current) => ({ ...current, theme: `custom:${next.id}`, customThemes: [...current.customThemes, next] }));
+      const builtin = (customId(editingLauncherTheme) ? "midnight" : editingLauncherTheme) as keyof typeof builtinLabels;
+      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createLauncherTheme(builtin), name: t.copyName.replace("{name}", builtinLabels[builtin] ?? t.midnight) };
+      setWorkingLauncher((current) => ({ ...current, customThemes: [...current.customThemes, next] }));
+      setEditingLauncherTheme(`custom:${next.id}`);
     } else {
       if (workingSettings.customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
       const seed = createSettingsTheme();
       const source = selectedSettings;
-      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createSettingsTheme(workingSettings.theme), name: t.copyName.replace("{name}", builtinLabels[workingSettings.theme as keyof typeof builtinLabels] ?? t.midnight) };
-      setWorkingSettings((current) => ({ ...current, theme: `custom:${next.id}`, customThemes: [...current.customThemes, next] }));
+      const builtin = (customId(editingSettingsTheme) ? "midnight" : editingSettingsTheme) as keyof typeof builtinLabels;
+      const next = source ? { ...source, id: seed.id, name: t.copyName.replace("{name}", source.name), ...cloneBackground(source) } : { ...createSettingsTheme(builtin), name: t.copyName.replace("{name}", builtinLabels[builtin] ?? t.midnight) };
+      setWorkingSettings((current) => ({ ...current, customThemes: [...current.customThemes, next] }));
+      setEditingSettingsTheme(`custom:${next.id}`);
     }
-    setWarnedScope(null); setNotice(t.createdTheme);
+    setNotice(t.createdTheme);
   };
-  const deleteTheme = () => {
+  const deleteTheme = async () => {
     if (!selectedCustom || disabled) return;
     invalidateCurrentWallpaperRequest();
-    if (scope === "launcher") setWorkingLauncher((current) => ({ ...current, theme: "midnight", accentColor: createLauncherTheme("midnight").accentColor, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, customId(current.theme))) }));
-    else setWorkingSettings((current) => ({ ...current, theme: "midnight", accentColor: createSettingsTheme("midnight").accentColor, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, customId(current.theme))) }));
-    setWarnedScope(null); setNotice(t.deletedTheme);
+    const commitScope = scope;
+    if (commitScope === "launcher") {
+      const deletedId = customId(editingLauncherTheme);
+      if (!deletedId) return;
+      if (!committedLauncher) {
+        setWorkingLauncher((current) => ({ ...current, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, deletedId)) }));
+        setEditingLauncherTheme("midnight");
+        setNotice(t.deletedUnsavedTheme);
+        return;
+      }
+      const next = {
+        ...cloneLauncherScope(launcherTheme),
+        ...(customId(launcherTheme.theme) === deletedId ? { theme: "midnight" as const, accentColor: createLauncherTheme("midnight").accentColor } : {}),
+        customThemes: launcherTheme.customThemes.filter((theme) => !sameId(theme.id, deletedId)),
+      };
+      const saved = await commitThemes({ launcherTheme: next, settingsTheme: cloneSettingsScope(settingsTheme) });
+      if (!saved) return setNotice(t.themeSaveFailed);
+      setWorkingLauncher(cloneLauncherScope(next));
+      setEditingLauncherTheme("midnight");
+    } else {
+      const deletedId = customId(editingSettingsTheme);
+      if (!deletedId) return;
+      if (!committedSettings) {
+        setWorkingSettings((current) => ({ ...current, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, deletedId)) }));
+        setEditingSettingsTheme("midnight");
+        setNotice(t.deletedUnsavedTheme);
+        return;
+      }
+      const next = {
+        ...cloneSettingsScope(settingsTheme),
+        ...(customId(settingsTheme.theme) === deletedId ? { theme: "midnight" as const, accentColor: createSettingsTheme("midnight").accentColor } : {}),
+        customThemes: settingsTheme.customThemes.filter((theme) => !sameId(theme.id, deletedId)),
+      };
+      const saved = await commitThemes({ launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: next });
+      if (!saved) return setNotice(t.themeSaveFailed);
+      setWorkingSettings(cloneSettingsScope(next));
+      setEditingSettingsTheme("midnight");
+    }
+    setNotice(saveSettingsManually ? t.deletedThemeToDraft : t.deletedTheme);
   };
   const resetTheme = () => {
     if (!selectedCustom || disabled) return;
@@ -415,6 +556,7 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
   const importTheme = (file: File) => {
     if (disabled || importing) return;
+    if (editingHasChanges) return setNotice(t.saveBeforeSwitchingTheme);
     if (file.size > MAX_THEME_BUNDLE_BYTES) return setNotice(t.bundleTooLarge);
     if ((scope === "launcher" ? workingLauncher : workingSettings).customThemes.length >= MAX_CUSTOM_THEMES) return setNotice(t.customThemeLimit.replace("{max}", String(MAX_CUSTOM_THEMES)));
     // FileReader completes asynchronously. Keep the destination fixed even if
@@ -433,17 +575,18 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
           await validateWallpaperImageDataUrl(bundle.theme.wallpaperDataUrl);
           if (importRequestRef.current !== importRequest) return;
           const theme: LauncherCustomThemeConfig = { ...bundle.theme, id: createLauncherTheme().id, platformOverrides: { ...bundle.theme.platformOverrides } };
-          setWorkingLauncher((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, theme: `custom:${theme.id}`, customThemes: [...current.customThemes, theme] });
+          setWorkingLauncher((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, customThemes: [...current.customThemes, theme] });
+          setEditingLauncherTheme(`custom:${theme.id}`);
           setNotice(t.importedTheme.replace("{name}", theme.name));
         } else {
           const bundle = parseSettingsThemeBundle(value);
           await validateWallpaperImageDataUrl(bundle.theme.wallpaperDataUrl);
           if (importRequestRef.current !== importRequest) return;
           const theme: SettingsCustomThemeConfig = { ...bundle.theme, id: createSettingsTheme().id, platformOverrides: { ...bundle.theme.platformOverrides } };
-          setWorkingSettings((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, theme: `custom:${theme.id}`, customThemes: [...current.customThemes, theme] });
+          setWorkingSettings((current) => current.customThemes.length >= MAX_CUSTOM_THEMES ? current : { ...current, customThemes: [...current.customThemes, theme] });
+          setEditingSettingsTheme(`custom:${theme.id}`);
           setNotice(t.importedTheme.replace("{name}", theme.name));
         }
-        setWarnedScope(null);
       } catch (error) {
         if (importRequestRef.current === importRequest) setNotice(t.importFailed.replace("{reason}", importError(importScope, value, error)));
       } finally {
@@ -519,37 +662,106 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     if (scope === "launcher") updateLauncher((theme) => ({ ...theme, wallpaperDataUrl: "" }));
     else updateSettings((theme) => ({ ...theme, wallpaperDataUrl: "" }));
   };
-  const applyDraft = () => {
-    if (disabled) return;
+  const applyDraft = async () => {
+    if (disabled || !editingHasChanges) return;
+    const commitScope = scope;
+    const editingSelection = commitScope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
+    const activeSelection = commitScope === "launcher" ? launcherTheme.theme : settingsTheme.theme;
     try {
-      if (scope === "launcher") buildLauncherThemeBundle(launcherPreview);
+      if (commitScope === "launcher") buildLauncherThemeBundle(launcherPreview);
       else buildSettingsThemeBundle(settingsPreview);
     } catch {
       setNotice(t.invalidThemeDraft);
       return;
     }
-    if ((!checksPass || sceneReview) && warnedScope !== scope) { setWarnedScope(scope); setNotice(checksPass ? t.pendingSceneReadability : t.pendingReadability); return; }
-    onChange(scope === "launcher"
-      ? { launcherTheme: cloneLauncherScope(workingLauncher), settingsTheme: cloneSettingsScope(settingsTheme) }
-      : { launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: cloneSettingsScope(workingSettings) });
-    setNotice(t.appliedTheme); setWarnedScope(null);
+    let themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig };
+    if (commitScope === "launcher" && selectedLauncherId && selectedLauncher) {
+      const next = cloneLauncherScope(launcherTheme);
+      const found = next.customThemes.some((theme) => sameId(theme.id, selectedLauncherId));
+      next.customThemes = found
+        ? next.customThemes.map((theme) => sameId(theme.id, selectedLauncherId) ? { ...selectedLauncher, ...cloneBackground(selectedLauncher) } : theme)
+        : [...next.customThemes, { ...selectedLauncher, ...cloneBackground(selectedLauncher) }];
+      themes = { launcherTheme: next, settingsTheme: cloneSettingsScope(settingsTheme) };
+    } else if (commitScope === "settings" && selectedSettingsId && selectedSettings) {
+      const next = cloneSettingsScope(settingsTheme);
+      const found = next.customThemes.some((theme) => sameId(theme.id, selectedSettingsId));
+      next.customThemes = found
+        ? next.customThemes.map((theme) => sameId(theme.id, selectedSettingsId) ? { ...selectedSettings, ...cloneBackground(selectedSettings) } : theme)
+        : [...next.customThemes, { ...selectedSettings, ...cloneBackground(selectedSettings) }];
+      themes = { launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: next };
+    } else {
+      setNotice(t.invalidThemeDraft);
+      return;
+    }
+    const saved = await commitThemes(themes);
+    if (!saved) {
+      setNotice(t.themeSaveFailed);
+      return;
+    }
+    if (commitScope === "launcher") setWorkingLauncher(cloneLauncherScope(themes.launcherTheme));
+    else setWorkingSettings(cloneSettingsScope(themes.settingsTheme));
+    const savedNotice = saveSettingsManually
+      ? t.savedThemeToDraft
+      : editingSelection === activeSelection ? t.savedThemeAndApplied : t.savedThemeWithoutSwitching;
+    setNotice((!checksPass || sceneReview) ? `${savedNotice} ${t.savedWithReadabilityWarning}` : savedNotice);
   };
-  const selectedBuiltin = scope === "launcher" ? (selectedLauncher ? null : workingLauncher.theme) : (selectedSettings ? null : workingSettings.theme);
+  const selectedBuiltin = scope === "launcher" ? (selectedLauncher ? null : editingLauncherTheme) : (selectedSettings ? null : editingSettingsTheme);
+  const activeSelection = scope === "launcher" ? launcherTheme.theme : settingsTheme.theme;
+  const editingSelection = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
+  const activeCustomThemes = scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes;
+  const editingCustomThemes = scope === "launcher" ? workingLauncher.customThemes : workingSettings.customThemes;
+  const editingName = themeName(editingSelection, editingCustomThemes);
+  const editingIsActive = editingSelection === activeSelection;
+  const hasThemeChanges = editingHasChanges;
+  const canApplySavedInactiveTheme = !saveSettingsManually && !editingIsActive && !hasThemeChanges;
+  const primaryActionLabel = canApplySavedInactiveTheme
+    ? t.applyTheme
+    : !saveSettingsManually && editingIsActive ? t.saveAndApply : t.saveTheme;
+  const primaryActionHint = hasThemeChanges
+    ? (saveSettingsManually ? t.saveThemeManualHint : editingIsActive ? t.saveActiveThemeHint : t.saveInactiveThemeHint)
+    : canApplySavedInactiveTheme ? t.applySavedThemeHint : t.noThemeChanges;
+  const runPrimaryAction = () => {
+    if (canApplySavedInactiveTheme) {
+      void chooseActiveTheme(editingSelection);
+      return;
+    }
+    void applyDraft();
+  };
+  const editingSwatchStyle = selectedCustom
+    ? { background: `linear-gradient(135deg, ${selectedCustom.windowBackground}, ${scope === "launcher" ? (selectedCustom as LauncherCustomThemeConfig).selectedRowBackground : (selectedCustom as SettingsCustomThemeConfig).selectedNavBackground})` }
+    : undefined;
   return <section className="appearance-editor" aria-label={t.ariaLabel}>
     <header className="appearance-editor-heading"><div><h2>{t.title}</h2><p>{t.description}</p></div></header>
-    <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
-      {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={scope === id ? "active" : ""} onClick={() => chooseScope(id)}><span aria-hidden="true">{id === "launcher" ? "⌕" : "⚙"}</span><span><strong>{id === "launcher" ? t.launcherScope : t.settingsScope}</strong><small>{id === "launcher" ? t.launcherScopeHint : t.settingsScopeHint}</small></span></button>)}
-    </nav>
-    <p className="appearance-separation-note">{t.separateNotice}</p>
+    <section className={`appearance-scope-zone ${scope}`}>
+      <div>
+        <span className="appearance-step-label">{t.chooseScopeStep}</span>
+        <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
+          {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={`${id} ${scope === id ? "active" : ""}`} onClick={() => chooseScope(id)}><span aria-hidden="true">{id === "launcher" ? "⌕" : "⚙"}</span><span><strong>{id === "launcher" ? t.launcherScope : t.settingsScope}</strong><small>{id === "launcher" ? t.launcherScopeHint : t.settingsScopeHint}</small></span><em>{scope === id ? t.designing : t.switchScope}</em></button>)}
+        </nav>
+      </div>
+      <label className="appearance-active-theme">
+        <span><i className="appearance-active-dot" aria-hidden="true" /><strong>{scope === "launcher" ? t.launcherActiveTheme : t.settingsActiveTheme}</strong><small>{t.activeThemeHint}</small></span>
+        <select value={activeSelection} disabled={disabled} onChange={(event) => void chooseActiveTheme(event.target.value as ThemeSelection)}>
+          {builtinThemeIds.map((id) => <option key={id} value={id}>{builtinLabels[id]} · {t.builtin}</option>)}
+          {activeCustomThemes.map((theme) => <option key={theme.id} value={`custom:${theme.id}`}>{theme.name} · {t.custom}</option>)}
+        </select>
+      </label>
+      <p className="appearance-separation-note"><strong>{t.scopeRule}</strong>{t.separateNotice}</p>
+    </section>
     <div id={`appearance-${scope}-panel`} role="tabpanel" aria-labelledby={`appearance-${scope}-tab`} className="appearance-workbench">
       <section className="appearance-edit-panel">
-        <header className="appearance-library-heading"><div><h3>{scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}</h3><p>{scope === "launcher" ? t.launcherLibraryHint : t.settingsLibraryHint}</p></div><span>{t.isolated}</span></header>
+        <header className="appearance-library-heading"><div><span className="appearance-step-label">{t.chooseEditingStep}</span><h3>{scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}</h3><p>{t.editingThemeHint}</p></div><span>{t.isolated}</span></header>
         <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
-        <div className="appearance-theme-grid" aria-label={scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}>{builtinThemeIds.map((id) => <button key={id} type="button" className={`appearance-theme-card ${selectedBuiltin === id ? "selected" : ""}`} aria-pressed={selectedBuiltin === id} disabled={disabled} onClick={() => chooseBuiltin(id)}><span className={`appearance-theme-swatch appearance-theme-swatch-${id}`} /><span><strong>{builtinLabels[id]}</strong><small>{t.builtin} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span></button>)}{(scope === "launcher" ? workingLauncher.customThemes : workingSettings.customThemes).map((theme) => <button key={theme.id} type="button" className={`appearance-theme-card ${selectedCustom?.id === theme.id ? "selected" : ""}`} aria-pressed={selectedCustom?.id === theme.id} disabled={disabled} onClick={() => chooseCustom(theme.id)}><span className="appearance-theme-swatch" style={{ background: `linear-gradient(135deg, ${theme.windowBackground}, ${scope === "launcher" ? (theme as LauncherCustomThemeConfig).selectedRowBackground : (theme as SettingsCustomThemeConfig).selectedNavBackground})` }} /><span><strong>{theme.name}</strong><small>{t.custom} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span></button>)}</div>
+        <div className="appearance-theme-picker">
+          <span className={`appearance-theme-swatch ${selectedBuiltin ? `appearance-theme-swatch-${selectedBuiltin}` : ""}`} style={editingSwatchStyle} aria-hidden="true" />
+          <label><span><strong>{t.chooseEditingTheme}</strong><small>{t.editingOnlyHint}</small></span><select value={editingSelection} disabled={disabled} onChange={(event) => chooseEditingTheme(event.target.value as ThemeSelection)}>{builtinThemeIds.map((id) => <option key={id} value={id}>{builtinLabels[id]} · {t.builtin}{id === activeSelection ? ` · ${t.inUse}` : ""}</option>)}{editingCustomThemes.map((theme) => { const selection = `custom:${theme.id}` as ThemeSelection; return <option key={theme.id} value={selection}>{theme.name} · {t.custom}{selection === activeSelection ? ` · ${t.inUse}` : ""}</option>; })}</select></label>
+          <span className="appearance-theme-status"><em className="editing">✎ {t.editing}</em>{editingIsActive && <em className="in-use"><i className="appearance-active-dot" aria-hidden="true" />{t.inUse}</em>}<small>{selectedCustom ? t.custom : t.builtin} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span>
+        </div>
+        <header className="appearance-editing-banner"><span aria-hidden="true">✎</span><div><small>{t.editingStep}</small><strong>{t.editingThemeName.replace("{name}", editingName)}</strong><p>{editingIsActive ? t.editingActiveThemeHint : t.editingInactiveThemeHint}</p></div></header>
         {selectedCustom ? <div className="appearance-custom-editor"><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
-        <footer className="appearance-edit-footer"><span>{notice}</span><button type="button" className="primary" disabled={disabled} onClick={applyDraft}>{t.applyToDraft}</button></footer>
+        <footer className="appearance-edit-footer"><span aria-live="polite">{notice || primaryActionHint}</span><button type="button" className={`primary ${canApplySavedInactiveTheme ? "apply" : ""}`} title={!hasThemeChanges && !canApplySavedInactiveTheme ? t.noThemeChanges : undefined} disabled={disabled || (!hasThemeChanges && !canApplySavedInactiveTheme)} onClick={runPrimaryAction}>{primaryActionLabel}</button></footer>
       </section>
-      <aside className="appearance-preview-panel" aria-label={t.previewAriaLabel}><header><div><strong>{scope === "launcher" ? t.previewLauncher : t.previewSettings}</strong><small>{t.previewDraftOnly}</small></div><span className={contrastVerified ? "ok" : "warning"}>{contrastVerified ? t.contrastPass : checksPass ? t.contrastSceneReview : t.contrastAdjust}</span></header><div className="appearance-preview-canvas">{scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}</div><ContrastAudit checks={checks} sceneReview={sceneReview} /></aside>
+      <aside className="appearance-preview-panel" aria-label={t.previewAriaLabel}><header><div><strong>{scope === "launcher" ? t.previewLauncher : t.previewSettings}：{editingName}</strong><small>{editingIsActive ? t.previewEditingActive : t.previewEditingInactive}</small></div><span className={contrastVerified ? "ok" : "warning"}>{contrastVerified ? t.contrastPass : checksPass ? t.contrastSceneReview : t.contrastAdjust}</span></header><div className="appearance-preview-canvas">{scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}</div><ContrastAudit checks={checks} sceneReview={sceneReview} /></aside>
     </div>
   </section>;
 }

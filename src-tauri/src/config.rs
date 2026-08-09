@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 6;
+const CONFIG_VERSION: u32 = 8;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -25,6 +25,8 @@ const MAX_THEME_WALLPAPER_PIXELS: u64 = 16_777_216;
 // passes the frontend's dimension contract can also pass the Rust decoder.
 const MAX_THEME_WALLPAPER_ALLOCATION_BYTES: u64 = 160 * 1024 * 1024;
 const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
+const MIN_QUERY_DEBOUNCE_MS: u64 = 0;
+const MAX_QUERY_DEBOUNCE_MS: u64 = 60_000;
 const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
 const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
@@ -32,6 +34,7 @@ const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub version: u32,
+    pub save_settings_manually: bool,
     pub launcher: LauncherConfig,
     pub translation: TranslationConfig,
     pub script_commands: Vec<ScriptCommandConfig>,
@@ -44,6 +47,8 @@ pub struct AppConfig {
 #[serde(rename_all = "camelCase")]
 struct AppConfigWire {
     version: u32,
+    #[serde(default)]
+    save_settings_manually: Option<bool>,
     launcher: LauncherConfig,
     translation: TranslationConfig,
     script_commands: Vec<ScriptCommandConfig>,
@@ -77,7 +82,7 @@ impl<'de> Deserialize<'de> for AppConfig {
                 }
                 (None, None) => {
                     return Err(D::Error::custom(
-                        "v6 配置必须同时包含 launcherTheme 和 settingsTheme",
+                        "v6 及更新配置必须同时包含 launcherTheme 和 settingsTheme",
                     ));
                 }
                 _ => {
@@ -91,8 +96,16 @@ impl<'de> Deserialize<'de> for AppConfig {
         // empty or malformed accent still reaches normal validation and fails.
         launcher_theme.fill_missing_custom_accents();
         settings_theme.fill_missing_custom_accents();
+        let save_settings_manually = match wire.save_settings_manually {
+            Some(value) => value,
+            None if wire.version <= 6 => true,
+            None => {
+                return Err(D::Error::custom("v7 配置必须包含 saveSettingsManually"));
+            }
+        };
         Ok(Self {
             version: wire.version,
+            save_settings_manually,
             launcher: wire.launcher,
             translation: wire.translation,
             script_commands: wire.script_commands,
@@ -110,6 +123,18 @@ pub struct LauncherConfig {
     pub keep_last_input: bool,
     #[serde(default)]
     pub compact_when_empty: bool,
+    #[serde(default = "default_empty_query_debounce_ms")]
+    pub empty_query_debounce_ms: u64,
+    #[serde(default = "default_non_empty_query_debounce_ms")]
+    pub non_empty_query_debounce_ms: u64,
+}
+
+const fn default_empty_query_debounce_ms() -> u64 {
+    0
+}
+
+const fn default_non_empty_query_debounce_ms() -> u64 {
+    50
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -561,10 +586,13 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             version: CONFIG_VERSION,
+            save_settings_manually: true,
             launcher: LauncherConfig {
                 close_on_blur: true,
                 keep_last_input: false,
                 compact_when_empty: false,
+                empty_query_debounce_ms: default_empty_query_debounce_ms(),
+                non_empty_query_debounce_ms: default_non_empty_query_debounce_ms(),
             },
             translation: TranslationConfig {
                 enabled: true,
@@ -833,6 +861,7 @@ fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
         return Err(format!("脚本命令和网络搜索分别最多允许 {MAX_COMMANDS} 项"));
     }
 
+    validate_launcher(&config.launcher)?;
     normalize_translation(&mut config.translation)?;
     for command in &mut config.script_commands {
         normalize_script(command)?;
@@ -857,14 +886,30 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
 
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
-        // v4 adds per-script debounce, v5 adds custom themes, and v6 splits
-        // the legacy appearance payload into launcherTheme/settingsTheme during
-        // deserialization. Both copies are subsequently validated independently.
-        0 | 1 | 2 | 3 | 4 | 5 => config.version = CONFIG_VERSION,
-        6 => {}
+        // v4 adds per-script debounce, v5 adds custom themes, v6 splits the
+        // legacy appearance payload into launcherTheme/settingsTheme, v7 adds
+        // the configurable manual/instant settings save mode, and v8 adds
+        // independent empty/non-empty query debounce settings. Older versions
+        // preserve the former 0 ms / 50 ms behavior through serde defaults.
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 => config.version = CONFIG_VERSION,
+        8 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
+}
+
+fn validate_launcher(config: &LauncherConfig) -> Result<(), String> {
+    for (label, value) in [
+        ("空输入防抖", config.empty_query_debounce_ms),
+        ("非空输入防抖", config.non_empty_query_debounce_ms),
+    ] {
+        if !(MIN_QUERY_DEBOUNCE_MS..=MAX_QUERY_DEBOUNCE_MS).contains(&value) {
+            return Err(format!(
+                "{label}必须在 {MIN_QUERY_DEBOUNCE_MS}–{MAX_QUERY_DEBOUNCE_MS} ms 之间"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_unique_ids(config: &AppConfig) -> Result<(), String> {
@@ -2155,6 +2200,7 @@ mod tests {
     fn legacy_config_value(version: u32) -> serde_json::Value {
         let mut config = serde_json::to_value(AppConfig::default()).expect("serialize defaults");
         let object = config.as_object_mut().expect("config object");
+        object.remove("saveSettingsManually");
         object.remove("launcherTheme");
         object.remove("settingsTheme");
         object.insert("version".into(), serde_json::json!(version));
@@ -2166,6 +2212,9 @@ mod tests {
                 "customThemes": [],
             }),
         );
+        let launcher = config["launcher"].as_object_mut().expect("launcher object");
+        launcher.remove("emptyQueryDebounceMs");
+        launcher.remove("nonEmptyQueryDebounceMs");
         config
     }
 
@@ -2371,7 +2420,33 @@ mod tests {
 
     #[test]
     fn defaults_are_valid() {
-        normalize_and_validate(AppConfig::default()).expect("default config should be valid");
+        let config =
+            normalize_and_validate(AppConfig::default()).expect("default config should be valid");
+        assert!(config.save_settings_manually);
+        assert_eq!(
+            config.launcher.empty_query_debounce_ms,
+            default_empty_query_debounce_ms()
+        );
+        assert_eq!(
+            config.launcher.non_empty_query_debounce_ms,
+            default_non_empty_query_debounce_ms()
+        );
+    }
+
+    #[test]
+    fn validates_general_query_debounce_range() {
+        let mut maximum = AppConfig::default();
+        maximum.launcher.empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS;
+        maximum.launcher.non_empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS;
+        assert!(normalize_and_validate(maximum).is_ok());
+
+        let mut empty_too_slow = AppConfig::default();
+        empty_too_slow.launcher.empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS + 1;
+        assert!(normalize_and_validate(empty_too_slow).is_err());
+
+        let mut non_empty_too_slow = AppConfig::default();
+        non_empty_too_slow.launcher.non_empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS + 1;
+        assert!(normalize_and_validate(non_empty_too_slow).is_err());
     }
 
     #[test]
@@ -2379,6 +2454,7 @@ mod tests {
         let original = AppConfig::default();
         let mut launcher_change = original.clone();
         launcher_change.launcher.compact_when_empty = true;
+        launcher_change.launcher.non_empty_query_debounce_ms = 80;
         assert!(!provider_settings_changed(&original, &launcher_change));
 
         let mut provider_change = original.clone();
@@ -2503,6 +2579,31 @@ mod tests {
     }
 
     #[test]
+    fn migrates_v7_without_general_query_debounce_settings() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v7");
+        previous["version"] = serde_json::json!(7);
+        let launcher = previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object");
+        launcher.remove("emptyQueryDebounceMs");
+        launcher.remove("nonEmptyQueryDebounceMs");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v7"),
+        )
+        .expect("migrate v7 debounce defaults");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.launcher.empty_query_debounce_ms,
+            default_empty_query_debounce_ms()
+        );
+        assert_eq!(
+            migrated.launcher.non_empty_query_debounce_ms,
+            default_non_empty_query_debounce_ms()
+        );
+    }
+
+    #[test]
     fn migrates_v4_without_custom_themes() {
         let mut legacy = legacy_config_value(4);
         legacy["appearance"]
@@ -2574,6 +2675,11 @@ mod tests {
             .push(settings_custom_theme("settings-v6"));
 
         let mut intermediate = serde_json::to_value(config).expect("serialize v6 config");
+        intermediate["version"] = serde_json::json!(6);
+        intermediate
+            .as_object_mut()
+            .expect("v6 config object")
+            .remove("saveSettingsManually");
         intermediate["launcherTheme"]["customThemes"][0]
             .as_object_mut()
             .expect("launcher custom theme")
@@ -2596,11 +2702,13 @@ mod tests {
             repaired.settings_theme.custom_themes[0].accent_color,
             "#2a9d8f"
         );
+        assert!(repaired.save_settings_manually);
+        assert_eq!(repaired.version, CONFIG_VERSION);
     }
 
     #[test]
     fn rejects_incomplete_v6_theme_scopes_instead_of_falling_back_to_appearance() {
-        let mut malformed = legacy_config_value(CONFIG_VERSION);
+        let mut malformed = legacy_config_value(6);
         malformed["appearance"] = serde_json::json!({
             "theme": "midnight",
             "accentColor": "#8a78ff",
@@ -2609,11 +2717,30 @@ mod tests {
         assert!(serde_json::from_value::<AppConfig>(malformed).is_err());
 
         let mut incomplete = serde_json::to_value(AppConfig::default()).expect("serialize v6");
+        incomplete["version"] = serde_json::json!(6);
+        incomplete
+            .as_object_mut()
+            .expect("v6 config object")
+            .remove("saveSettingsManually");
         incomplete
             .as_object_mut()
             .expect("v6 config object")
             .remove("settingsTheme");
         assert!(serde_json::from_value::<AppConfig>(incomplete).is_err());
+    }
+
+    #[test]
+    fn rejects_v7_and_newer_without_save_mode() {
+        for version in [7, CONFIG_VERSION] {
+            let mut current =
+                serde_json::to_value(AppConfig::default()).expect("serialize current config");
+            current["version"] = serde_json::json!(version);
+            current
+                .as_object_mut()
+                .expect("config object")
+                .remove("saveSettingsManually");
+            assert!(serde_json::from_value::<AppConfig>(current).is_err());
+        }
     }
 
     #[test]

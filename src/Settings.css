@@ -15,6 +15,8 @@
   --settings-opacity: 96%;
   --settings-blur: 18px;
   --settings-shadow-opacity: 0.45;
+  --settings-success: #65dca9;
+  --settings-success-foreground: #ffffff;
   --settings-wallpaper-image: none;
   --settings-wallpaper-opacity: 0;
   --page: var(--settings-window-bg);
@@ -26,6 +28,10 @@
   --subtle: color-mix(in srgb, var(--settings-secondary-text) 78%, var(--settings-content-bg));
   --line: var(--settings-border);
   --accent: var(--settings-accent, var(--settings-nav-selected-bg));
+  --configuration-switch-on-bg: var(--settings-success);
+  --configuration-switch-on-border: var(--settings-success);
+  --configuration-switch-on-knob: var(--settings-success-foreground);
+  --configuration-switch-on-focus: color-mix(in srgb, var(--settings-success) 64%, transparent);
 }
 
 .settings-stage {
@@ -235,6 +241,51 @@
   white-space: nowrap;
 }
 
+.millisecond-input {
+  display: inline-flex;
+  min-width: 118px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--settings-secondary-text);
+  background: var(--field);
+}
+
+.millisecond-input:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.millisecond-input input {
+  width: 88px;
+  height: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--settings-primary-text);
+  background: transparent;
+  font: inherit;
+  text-align: right;
+}
+
+.millisecond-input > span {
+  padding: 0 10px 0 6px;
+  font-size: calc(var(--settings-font-size) - 3px);
+}
+
+.millisecond-input:has(input:disabled),
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.millisecond-input input:disabled {
+  cursor: not-allowed;
+}
+
 .switch {
   width: 38px;
   height: 22px;
@@ -336,7 +387,37 @@
 .settings-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.settings-save-mode {
+  display: flex;
+  min-width: 270px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--field));
+}
+
+.settings-save-mode > span {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-save-mode strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.settings-save-mode small {
+  color: var(--subtle);
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .primary-button,
@@ -584,8 +665,8 @@ button:disabled {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #65dca9;
-  box-shadow: 0 0 8px rgba(101, 220, 169, 0.5);
+  background: var(--settings-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--settings-success) 50%, transparent);
 }
 
 .configuration-status-dot.off {
@@ -674,7 +755,7 @@ button:disabled {
   border: 1px solid color-mix(in srgb, var(--muted) 34%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--field) 86%, var(--subtle));
-  transition: background 140ms ease, border-color 140ms ease;
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .configuration-enable-switch span::after {
@@ -690,18 +771,23 @@ button:disabled {
 }
 
 .configuration-enable-switch input:checked + span {
-  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
-  background: color-mix(in srgb, var(--accent) 62%, var(--field));
+  border-color: var(--configuration-switch-on-border);
+  background: var(--configuration-switch-on-bg);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--settings-success) 28%, transparent);
 }
 
 .configuration-enable-switch input:checked + span::after {
   left: 16px;
-  background: var(--text);
+  background: var(--configuration-switch-on-knob);
 }
 
 .configuration-enable-switch input:focus-visible + span {
   outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
   outline-offset: 2px;
+}
+
+.configuration-enable-switch input:checked:focus-visible + span {
+  outline-color: var(--configuration-switch-on-focus);
 }
 
 .configuration-enable-switch:has(input:disabled) {
@@ -810,6 +896,17 @@ button:disabled {
 
   .settings-content {
     padding: 20px;
+  }
+
+  .settings-heading {
+    gap: 14px;
+    flex-direction: column;
+  }
+
+  .settings-actions,
+  .settings-save-mode {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .form-grid {

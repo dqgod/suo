@@ -80,14 +80,37 @@ const initialResponse: SearchResponse = {
   results: [],
 };
 
-const defaultQueryDebounceMs = 50;
+const defaultEmptyQueryDebounceMs = 0;
+const defaultNonEmptyQueryDebounceMs = 50;
+const minimumQueryDebounceMs = 0;
+const maximumQueryDebounceMs = 60_000;
 const minimumScriptDebounceMs = 20;
 const maximumScriptDebounceMs = 60_000;
 
-function queryDebounceMs(query: string, commands: ScriptCommandConfig[]) {
-  if (query.length === 0) return 0;
+function boundedQueryDebounceMs(value: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(
+    maximumQueryDebounceMs,
+    Math.max(minimumQueryDebounceMs, Math.trunc(value)),
+  );
+}
+
+function queryDebounceMs(
+  query: string,
+  commands: ScriptCommandConfig[],
+  emptyQueryDebounceMs: number,
+  nonEmptyQueryDebounceMs: number,
+) {
+  if (query.length === 0) {
+    return boundedQueryDebounceMs(emptyQueryDebounceMs, defaultEmptyQueryDebounceMs);
+  }
   const keyword = query.trim().split(/\s+/, 1)[0]?.toLowerCase();
-  if (!keyword) return defaultQueryDebounceMs;
+  if (!keyword) {
+    return boundedQueryDebounceMs(
+      nonEmptyQueryDebounceMs,
+      defaultNonEmptyQueryDebounceMs,
+    );
+  }
   const command = commands.find((candidate) => (
     candidate.enabled &&
     candidate.immediate &&
@@ -95,7 +118,12 @@ function queryDebounceMs(query: string, commands: ScriptCommandConfig[]) {
       (value) => value.toLowerCase() === keyword,
     )
   ));
-  if (!command || !Number.isFinite(command.debounceMs)) return defaultQueryDebounceMs;
+  if (!command || !Number.isFinite(command.debounceMs)) {
+    return boundedQueryDebounceMs(
+      nonEmptyQueryDebounceMs,
+      defaultNonEmptyQueryDebounceMs,
+    );
+  }
   return Math.min(
     maximumScriptDebounceMs,
     Math.max(minimumScriptDebounceMs, command.debounceMs),
@@ -297,6 +325,8 @@ function Launcher() {
   const activationReadyRef = useRef(false);
   const preserveCancellationRef = useRef<number | null>(null);
   const keepLastInputRef = useRef(false);
+  const emptyQueryDebounceMsRef = useRef(defaultEmptyQueryDebounceMs);
+  const nonEmptyQueryDebounceMsRef = useRef(defaultNonEmptyQueryDebounceMs);
   const scriptCommandsRef = useRef<ScriptCommandConfig[]>([]);
   const configRevisionRef = useRef(0);
   const compactDesiredRef = useRef(false);
@@ -355,6 +385,8 @@ function Launcher() {
       keepLastInputRef.current = config.launcher.keepLastInput;
       scriptCommandsRef.current = config.scriptCommands;
       setCompactWhenEmpty(config.launcher.compactWhenEmpty);
+      emptyQueryDebounceMsRef.current = config.launcher.emptyQueryDebounceMs;
+      nonEmptyQueryDebounceMsRef.current = config.launcher.nonEmptyQueryDebounceMs;
       applyLauncherAppearance(config.launcherTheme);
       setAppearanceLayoutRevision((current) => current + 1);
       setConfigReady(true);
@@ -401,10 +433,15 @@ function Launcher() {
   }, [search, updateQuery]);
 
   useEffect(() => {
-    if (composing || (!configReady && query.trim().length > 0)) return;
+    if (composing || !configReady) return;
     const timer = window.setTimeout(
       () => void search(query),
-      queryDebounceMs(query, scriptCommandsRef.current),
+      queryDebounceMs(
+        query,
+        scriptCommandsRef.current,
+        emptyQueryDebounceMsRef.current,
+        nonEmptyQueryDebounceMsRef.current,
+      ),
     );
     return () => window.clearTimeout(timer);
   }, [composing, configReady, query, search]);

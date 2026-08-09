@@ -59,6 +59,14 @@ const runtimeLabels: Record<ScriptRuntime, string> = {
   executable: "Executable",
 };
 
+const maximumQueryDebounceMs = 60_000;
+
+function queryDebounceFromInput(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(maximumQueryDebounceMs, Math.max(0, Math.trunc(parsed)));
+}
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -111,17 +119,58 @@ function applyEditor(config: AppConfig, editor: EditorState): AppConfig {
   };
 }
 
+function settleEditorForNavigation(config: AppConfig, editor: EditorState): AppConfig {
+  if (editor.original !== null) return applyEditor(config, editor);
+  if (editor.kind === "script") {
+    return {
+      ...config,
+      scriptCommands: config.scriptCommands.filter((command) => command.id !== editor.id),
+    };
+  }
+  if (editor.kind === "web") {
+    return {
+      ...config,
+      webSearches: config.webSearches.filter((search) => search.id !== editor.id),
+    };
+  }
+  return config;
+}
+
 function Settings() {
   const [section, setSection] = useState<Section>("general");
   const [category, setCategory] = useState<ConfigurationCategory>("scripts");
   const [view, setView] = useState<AppConfigView | null>(null);
-  const [draft, setDraft] = useState<AppConfig | null>(null);
+  const [draft, setDraftState] = useState<AppConfig | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [autoSaveNeedsRetry, setAutoSaveNeedsRetry] = useState(false);
   const draftRevisionRef = useRef(0);
+  const draftRef = useRef<AppConfig | null>(null);
+  const persistedSignatureRef = useRef("");
+  const autoSaveDesiredRef = useRef<{ config: AppConfig; signature: string; revision: number } | null>(null);
+  const autoSaveRevisionRef = useRef(0);
+  const autoSaveBlockedRef = useRef(false);
+  const autoSaveRunningRef = useRef(false);
+  const statusTimerRef = useRef<number | null>(null);
+
+  const setDraft = useCallback((update: AppConfig | null | ((current: AppConfig | null) => AppConfig | null)) => {
+    const next = typeof update === "function" ? update(draftRef.current) : update;
+    draftRef.current = next;
+    setDraftState(next);
+  }, []);
+
+  const showStatus = useCallback((message: string) => {
+    if (statusTimerRef.current !== null) window.clearTimeout(statusTimerRef.current);
+    setStatus(message);
+    statusTimerRef.current = window.setTimeout(() => {
+      setStatus("");
+      statusTimerRef.current = null;
+    }, 1600);
+  }, []);
 
   const close = useCallback(async () => {
     try {
@@ -131,9 +180,75 @@ function Settings() {
     }
   }, []);
 
+  const queueAutoSave = useCallback((config: AppConfig) => {
+    const request = {
+      config,
+      signature: JSON.stringify(config),
+      revision: ++autoSaveRevisionRef.current,
+    };
+    autoSaveDesiredRef.current = request;
+    autoSaveBlockedRef.current = false;
+    setAutoSaveNeedsRetry(false);
+    if (autoSaveRunningRef.current) return;
+
+    const flush = async () => {
+      autoSaveRunningRef.current = true;
+      setAutoSaving(true);
+      try {
+        while (autoSaveDesiredRef.current && !autoSaveBlockedRef.current) {
+          const currentRequest = autoSaveDesiredRef.current;
+          if (currentRequest.signature === persistedSignatureRef.current) {
+            if (autoSaveDesiredRef.current?.revision === currentRequest.revision) {
+              autoSaveDesiredRef.current = null;
+            }
+            continue;
+          }
+          setError("");
+          try {
+            const next = await invoke<AppConfigView>("save_app_config", { config: currentRequest.config });
+            const normalizedSignature = JSON.stringify(next.config);
+            persistedSignatureRef.current = normalizedSignature;
+            setView(next);
+            const currentDraft = draftRef.current;
+            if (currentDraft && JSON.stringify(currentDraft) === currentRequest.signature) {
+              draftRef.current = next.config;
+              setDraft(next.config);
+              applySettingsAppearance(next.config.settingsTheme);
+              showStatus(t.savedAutomatically);
+            }
+            const latest = autoSaveDesiredRef.current;
+            if (
+              latest?.revision === currentRequest.revision
+              || latest?.signature === currentRequest.signature
+              || latest?.signature === normalizedSignature
+            ) {
+              autoSaveDesiredRef.current = null;
+            }
+          } catch (saveError) {
+            const latest = autoSaveDesiredRef.current;
+            if (!latest || latest.revision === currentRequest.revision) {
+              autoSaveBlockedRef.current = true;
+              setAutoSaveNeedsRetry(true);
+              setError(`${t.autoSaveFailed}：${String(saveError)}`);
+            }
+          }
+        }
+      } finally {
+        autoSaveRunningRef.current = false;
+        setAutoSaving(false);
+      }
+    };
+    void flush();
+  }, [showStatus]);
+
   const refresh = useCallback(async () => {
     try {
       const next = await loadAppConfig();
+      persistedSignatureRef.current = JSON.stringify(next.config);
+      autoSaveDesiredRef.current = null;
+      autoSaveBlockedRef.current = false;
+      setAutoSaveNeedsRetry(false);
+      draftRef.current = next.config;
       setView(next);
       setDraft(next.config);
       setEditor(null);
@@ -148,9 +263,26 @@ function Settings() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => () => {
+    if (statusTimerRef.current !== null) window.clearTimeout(statusTimerRef.current);
+  }, []);
+
   useEffect(() => {
     draftRevisionRef.current += 1;
   }, [draft, editor]);
+
+  useEffect(() => {
+    if (
+      !draft
+      || draft.saveSettingsManually
+      || editor
+      || saving
+      || view?.configReadOnly
+      || JSON.stringify(draft) === persistedSignatureRef.current
+    ) return;
+    const timer = window.setTimeout(() => queueAutoSave(draft), 180);
+    return () => window.clearTimeout(timer);
+  }, [draft, editor, queueAutoSave, saving, view?.configReadOnly]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -176,16 +308,20 @@ function Settings() {
     setError("");
     try {
       const next = await invoke<AppConfigView>("save_app_config", { config });
+      persistedSignatureRef.current = JSON.stringify(next.config);
+      autoSaveDesiredRef.current = null;
+      autoSaveBlockedRef.current = false;
+      setAutoSaveNeedsRetry(false);
       setView(next);
       if (draftRevisionRef.current === startedAtRevision) {
+        draftRef.current = next.config;
         setDraft(next.config);
         setEditor(null);
         applySettingsAppearance(next.config.settingsTheme);
-        setStatus(zhCN.saved);
+        showStatus(zhCN.saved);
       } else {
-        setStatus(t.savedWithPendingChanges);
+        showStatus(t.savedWithPendingChanges);
       }
-      window.setTimeout(() => setStatus(""), 1600);
     } catch (saveError) {
       setError(String(saveError));
     } finally {
@@ -265,20 +401,20 @@ function Settings() {
   }
 
   const changeSection = (next: Section) => {
-    if (draft && editor) setDraft(applyEditor(draft, editor));
+    if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
     setEditor(null);
     setSection(next);
   };
 
   const changeCategory = (next: ConfigurationCategory) => {
-    if (draft && editor) setDraft(applyEditor(draft, editor));
+    if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
     setEditor(null);
     setCategory(next);
   };
 
   const openScript = (command: ScriptCommandConfig) => {
     if (!draft) return;
-    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     setDraft(nextDraft);
     if (editor?.kind === "script" && editor.id === command.id) {
       setEditor(null);
@@ -291,7 +427,7 @@ function Settings() {
 
   const openWebSearch = (search: WebSearchConfig) => {
     if (!draft) return;
-    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     setDraft(nextDraft);
     if (editor?.kind === "web" && editor.id === search.id) {
       setEditor(null);
@@ -304,7 +440,7 @@ function Settings() {
 
   const openTranslation = () => {
     if (!draft) return;
-    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     setDraft(nextDraft);
     if (editor?.kind === "translation") {
       setEditor(null);
@@ -321,7 +457,7 @@ function Settings() {
 
   const addScript = () => {
     if (!draft) return;
-    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     const command: ScriptCommandConfig = {
       id: createId("script"),
       name: t.newScript,
@@ -342,7 +478,7 @@ function Settings() {
 
   const addWebSearch = () => {
     if (!draft) return;
-    const nextDraft = editor ? applyEditor(draft, editor) : draft;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     const search: WebSearchConfig = {
       id: createId("web"),
       name: t.newWebSearch,
@@ -358,7 +494,7 @@ function Settings() {
   };
 
   const removeScript = (command: ScriptCommandConfig) => {
-    if (!draft || !window.confirm(t.confirmRemove.replace("{name}", command.name))) return;
+    if (!draft || !window.confirm((draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant).replace("{name}", command.name))) return;
     setDraft({
       ...draft,
       scriptCommands: draft.scriptCommands.filter((item) => item.id !== command.id),
@@ -367,12 +503,40 @@ function Settings() {
   };
 
   const removeWebSearch = (search: WebSearchConfig) => {
-    if (!draft || !window.confirm(t.confirmRemove.replace("{name}", search.name))) return;
+    if (!draft || !window.confirm((draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant).replace("{name}", search.name))) return;
     setDraft({
       ...draft,
       webSearches: draft.webSearches.filter((item) => item.id !== search.id),
     });
     setEditor(null);
+  };
+
+  const changeSaveMode = async (saveSettingsManually: boolean) => {
+    if (!draft || editor || saving || autoSaving || view?.configReadOnly) return;
+    const previous = draft;
+    const next = { ...draft, saveSettingsManually };
+    draftRef.current = next;
+    setDraft(next);
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await invoke<AppConfigView>("save_app_config", { config: next });
+      persistedSignatureRef.current = JSON.stringify(saved.config);
+      autoSaveDesiredRef.current = null;
+      autoSaveBlockedRef.current = false;
+      setAutoSaveNeedsRetry(false);
+      draftRef.current = saved.config;
+      setView(saved);
+      setDraft(saved.config);
+      applySettingsAppearance(saved.config.settingsTheme);
+      showStatus(saveSettingsManually ? t.manualSaveEnabled : t.instantSaveEnabled);
+    } catch (saveError) {
+      draftRef.current = previous;
+      setDraft(previous);
+      setError(String(saveError));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const setScriptEnabled = (id: string, enabled: boolean) => {
@@ -409,9 +573,38 @@ function Settings() {
       : current);
   };
 
-  const updateAppearanceThemes = (themes: Pick<AppConfig, "launcherTheme" | "settingsTheme">) => {
-    applySettingsAppearance(themes.settingsTheme);
-    setDraft((current) => (current ? { ...current, ...themes } : current));
+  const updateAppearanceThemes = async (themes: Pick<AppConfig, "launcherTheme" | "settingsTheme">) => {
+    const current = draftRef.current;
+    if (!current || view?.configReadOnly) return false;
+    const nextConfig = { ...current, ...themes };
+    if (current.saveSettingsManually) {
+      setDraft(nextConfig);
+      return true;
+    }
+    if (saving || autoSaving) return false;
+
+    // Skin saves are an explicit product boundary even in instant-save mode.
+    // Persist them directly and lock the editor until the normalized response
+    // returns, so a delayed generic autosave cannot overwrite a second edit.
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await invoke<AppConfigView>("save_app_config", { config: nextConfig });
+      persistedSignatureRef.current = JSON.stringify(saved.config);
+      autoSaveDesiredRef.current = null;
+      autoSaveBlockedRef.current = false;
+      setAutoSaveNeedsRetry(false);
+      setView(saved);
+      setDraft(saved.config);
+      applySettingsAppearance(saved.config.settingsTheme);
+      showStatus(t.savedAutomatically);
+      return true;
+    } catch (saveError) {
+      setError(String(saveError));
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
   const hotkey = /Mac/i.test(navigator.platform) ? "Command + Space" : "Alt + Space";
@@ -455,10 +648,30 @@ function Settings() {
               <p>{sectionCopy[section].description}</p>
             </div>
             <div className="settings-actions">
-              {status && <span className="saved-indicator visible">{status}</span>}
-              <button className="primary-button" type="button" disabled={!draft || saving || view?.configReadOnly} onClick={() => void save()}>
-                {saving ? t.saving : t.save}
-              </button>
+              {(status || autoSaving) && <span className="saved-indicator visible">{autoSaving ? t.savingAutomatically : status}</span>}
+              {draft && (
+                <label className="settings-save-mode">
+                  <span><strong>{t.unifiedSave}</strong><small>{draft.saveSettingsManually ? t.unifiedSaveManual : t.unifiedSaveInstant}</small></span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={draft.saveSettingsManually}
+                    disabled={saving || autoSaving || Boolean(editor) || view?.configReadOnly}
+                    aria-label={t.unifiedSave}
+                    onChange={(event) => void changeSaveMode(event.target.checked)}
+                  />
+                </label>
+              )}
+              {draft?.saveSettingsManually && (
+                <button className="primary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly} onClick={() => void save()}>
+                  {saving ? t.saving : t.save}
+                </button>
+              )}
+              {draft && !draft.saveSettingsManually && autoSaveNeedsRetry && (
+                <button className="secondary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly} onClick={() => queueAutoSave(draft)}>
+                  {t.retrySave}
+                </button>
+              )}
             </div>
           </div>
 
@@ -474,15 +687,57 @@ function Settings() {
                   </div>
                   <label className="setting-row">
                     <div><strong>{zhCN.closeOnBlur}</strong><small>{zhCN.closeOnBlurDescription}</small></div>
-                    <input className="switch" type="checkbox" checked={draft.launcher.closeOnBlur} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, closeOnBlur: event.target.checked } })} />
+                    <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.closeOnBlur} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, closeOnBlur: event.target.checked } })} />
                   </label>
                   <label className="setting-row">
                     <div><strong>{zhCN.keepLastInputSetting}</strong><small>{zhCN.keepLastInputDescription}</small></div>
-                    <input className="switch" type="checkbox" checked={draft.launcher.keepLastInput} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, keepLastInput: event.target.checked } })} />
+                    <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.keepLastInput} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, keepLastInput: event.target.checked } })} />
                   </label>
                   <label className="setting-row">
                     <div><strong>{zhCN.compactWhenEmpty}</strong><small>{zhCN.compactWhenEmptyDescription}</small></div>
-                    <input className="switch" type="checkbox" checked={draft.launcher.compactWhenEmpty} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, compactWhenEmpty: event.target.checked } })} />
+                    <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.compactWhenEmpty} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, compactWhenEmpty: event.target.checked } })} />
+                  </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.emptyQueryDebounce}</strong><small>{zhCN.emptyQueryDebounceDescription}</small></div>
+                    <span className="millisecond-input">
+                      <input
+                        type="number"
+                        min={0}
+                        max={maximumQueryDebounceMs}
+                        step={1}
+                        disabled={saving || Boolean(view?.configReadOnly)}
+                        value={draft.launcher.emptyQueryDebounceMs}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          launcher: {
+                            ...draft.launcher,
+                            emptyQueryDebounceMs: queryDebounceFromInput(event.target.value),
+                          },
+                        })}
+                      />
+                      <span>{zhCN.milliseconds}</span>
+                    </span>
+                  </label>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.nonEmptyQueryDebounce}</strong><small>{zhCN.nonEmptyQueryDebounceDescription}</small></div>
+                    <span className="millisecond-input">
+                      <input
+                        type="number"
+                        min={0}
+                        max={maximumQueryDebounceMs}
+                        step={1}
+                        disabled={saving || Boolean(view?.configReadOnly)}
+                        value={draft.launcher.nonEmptyQueryDebounceMs}
+                        onChange={(event) => setDraft({
+                          ...draft,
+                          launcher: {
+                            ...draft.launcher,
+                            nonEmptyQueryDebounceMs: queryDebounceFromInput(event.target.value),
+                          },
+                        })}
+                      />
+                      <span>{zhCN.milliseconds}</span>
+                    </span>
                   </label>
                   <div className="setting-row">
                     <div><strong>{zhCN.trayIcon}</strong><small>{zhCN.trayIconDescription}</small></div>
@@ -536,7 +791,7 @@ function Settings() {
                               {activeEditor && (
                                 <>
                                   <div className="configuration-editor-header">
-                                    <span>{t.pageDraftHint}</span>
+                                    <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                                   </div>
                                   <div className="form-grid">
                                     <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
@@ -587,7 +842,7 @@ function Settings() {
                               {activeEditor && (
                                 <>
                                   <div className="configuration-editor-header">
-                                    <span>{t.pageDraftHint}</span>
+                                    <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                                   </div>
                                   <div className="form-grid">
                                     <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
@@ -624,7 +879,7 @@ function Settings() {
                           {activeEditor && (
                             <>
                               <div className="configuration-editor-header">
-                                <span>{t.pageDraftHint}</span>
+                                <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                               </div>
                               <div className="form-grid">
                                 <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
@@ -642,7 +897,7 @@ function Settings() {
                       );
                     })()}
                   </div>
-                  <p className="configuration-hint">{t.configurationHint}</p>
+                  <p className="configuration-hint">{draft.saveSettingsManually ? t.configurationHint : t.configurationHintInstant}</p>
                 </div>
               )}
 
@@ -651,8 +906,9 @@ function Settings() {
                   launcherTheme={draft.launcherTheme}
                   settingsTheme={draft.settingsTheme}
                   onChange={updateAppearanceThemes}
+                  saveSettingsManually={draft.saveSettingsManually}
                   readOnly={Boolean(view?.configReadOnly)}
-                  saving={saving}
+                  saving={saving || autoSaving}
                 />
               )}
             </>

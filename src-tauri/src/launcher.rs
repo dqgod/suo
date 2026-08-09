@@ -246,6 +246,7 @@ fn search_launcher_blocking(
                     "应用",
                     max_results,
                     500,
+                    true,
                     || state.search_is_cancelled(generation),
                 )
             })
@@ -407,6 +408,7 @@ fn search_launcher_blocking(
                         source,
                         max_results,
                         900,
+                        false,
                         || state.search_is_cancelled(generation),
                     )
                 }
@@ -427,6 +429,7 @@ fn search_launcher_blocking(
                                 "文件",
                                 max_results,
                                 700,
+                                false,
                                 || state.search_is_cancelled(generation),
                             )
                         })
@@ -451,6 +454,7 @@ fn search_launcher_blocking(
                     "应用",
                     max_results,
                     800,
+                    true,
                     || state.search_is_cancelled(generation),
                 )
             })
@@ -463,6 +467,7 @@ fn search_launcher_blocking(
                 "文件",
                 max_results,
                 500,
+                false,
                 || state.search_is_cancelled(generation),
             ));
         }
@@ -736,6 +741,7 @@ fn catalog_results<F>(
     badge: &str,
     limit: usize,
     boost: i32,
+    allow_pinyin: bool,
     is_cancelled: F,
 ) -> Vec<SearchResult>
 where
@@ -755,6 +761,7 @@ where
                 &entry.normalized_name,
                 &entry.normalized_path,
                 &normalized_query,
+                allow_pinyin.then_some((&entry.pinyin_name, &entry.pinyin_initials)),
             ) else {
                 continue;
             };
@@ -804,10 +811,16 @@ fn match_score(name: &str, path: &str, query: &str) -> Option<i32> {
         &name.to_lowercase(),
         &path.to_lowercase(),
         &query.to_lowercase(),
+        None,
     )
 }
 
-fn match_score_normalized(name: &str, path: &str, query: &str) -> Option<i32> {
+fn match_score_normalized(
+    name: &str,
+    path: &str,
+    query: &str,
+    pinyin: Option<(&str, &str)>,
+) -> Option<i32> {
     if name == query {
         return Some(1_000);
     }
@@ -822,6 +835,32 @@ fn match_score_normalized(name: &str, path: &str, query: &str) -> Option<i32> {
     }
     if is_subsequence(&name, &query) {
         return Some(420 - (name.len().saturating_sub(query.len())).min(200) as i32);
+    }
+    // Pinyin is intentionally only a fallback after native text/path matching.
+    // Its best score remains below an exact file result after catalog boosts,
+    // so an English/file exact match keeps its established priority.
+    if query.is_ascii()
+        && query
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        if let Some((full, initials)) = pinyin {
+            if full == query {
+                return Some(680);
+            }
+            if full.starts_with(query) {
+                return Some(640 - query.len() as i32);
+            }
+            if let Some(position) = full.find(query) {
+                return Some(580 - position.min(200) as i32);
+            }
+            if initials == query {
+                return Some(540);
+            }
+            if initials.starts_with(query) {
+                return Some(500 - query.len() as i32);
+            }
+        }
     }
     None
 }
@@ -1034,7 +1073,16 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let results = catalog_results(&entries, "item", ResultKind::File, "文件", 8, 0, || false);
+        let results = catalog_results(
+            &entries,
+            "item",
+            ResultKind::File,
+            "文件",
+            8,
+            0,
+            false,
+            || false,
+        );
         assert_eq!(results.len(), 8);
         assert_eq!(results[0].title, "item-000");
         assert_eq!(results[7].title, "item-007");
@@ -1047,11 +1095,122 @@ mod tests {
             CatalogEntry::from_path_with_type(PathBuf::from("C:/files/report.txt"), false),
         ];
 
-        let results = catalog_results(&entries, "", ResultKind::File, "文件", 8, 0, || false);
+        let results = catalog_results(
+            &entries,
+            "",
+            ResultKind::File,
+            "文件",
+            8,
+            0,
+            false,
+            || false,
+        );
         assert_eq!(results[0].kind, ResultKind::Directory);
         assert_eq!(results[0].badge, "文件夹");
         assert_eq!(results[1].kind, ResultKind::File);
         assert_eq!(results[1].badge, "文件");
+    }
+
+    #[test]
+    fn chinese_applications_match_full_pinyin_without_displacing_english_matches() {
+        let entries = vec![
+            CatalogEntry::from_application_path_with_type(PathBuf::from("C:/apps/微信.lnk"), false),
+            CatalogEntry::from_application_path_with_type(
+                PathBuf::from("C:/apps/Weixin.lnk"),
+                false,
+            ),
+        ];
+
+        let results = catalog_results(
+            &entries,
+            "weixin",
+            ResultKind::App,
+            "应用",
+            8,
+            800,
+            true,
+            || false,
+        );
+
+        assert_eq!(results[0].title, "Weixin");
+        assert!(results.iter().any(|result| result.title == "微信"));
+    }
+
+    #[test]
+    fn pinyin_catalog_matching_keeps_the_top_k_limit() {
+        let entries = (0..100)
+            .map(|index| {
+                CatalogEntry::from_application_path_with_type(
+                    PathBuf::from(format!("C:/apps/微信工具-{index:03}.lnk")),
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let results = catalog_results(
+            &entries,
+            "weixin",
+            ResultKind::App,
+            "应用",
+            8,
+            800,
+            true,
+            || false,
+        );
+
+        assert_eq!(results.len(), 8);
+        assert_eq!(results[0].title, "微信工具-000");
+        assert_eq!(results[7].title, "微信工具-007");
+    }
+
+    #[test]
+    fn pinyin_catalog_matching_still_stops_on_cancellation() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let entries = (0..100)
+            .map(|index| {
+                CatalogEntry::from_application_path_with_type(
+                    PathBuf::from(format!("C:/apps/微信工具-{index:03}.lnk")),
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let checks = AtomicUsize::new(0);
+
+        let results = catalog_results(
+            &entries,
+            "weixin",
+            ResultKind::App,
+            "应用",
+            8,
+            800,
+            true,
+            || checks.fetch_add(1, Ordering::SeqCst) >= 5,
+        );
+
+        assert!(checks.load(Ordering::SeqCst) <= 6);
+        assert!(results.len() <= 5);
+    }
+
+    #[test]
+    fn pinyin_is_not_enabled_for_file_catalog_results() {
+        let entries = vec![CatalogEntry::from_path_with_type(
+            PathBuf::from("C:/files/微信.txt"),
+            false,
+        )];
+
+        let results = catalog_results(
+            &entries,
+            "weixin",
+            ResultKind::File,
+            "文件",
+            8,
+            500,
+            false,
+            || false,
+        );
+
+        assert!(results.is_empty());
     }
 
     #[test]
