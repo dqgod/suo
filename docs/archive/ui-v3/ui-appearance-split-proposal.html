@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Suo 第三版外观设计：搜索与设置皮肤分离</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #070b13;
+      --window: #0b101c;
+      --surface: #11192a;
+      --surface-2: #151f34;
+      --field: #0c1322;
+      --line: #26334d;
+      --line-soft: #1b263b;
+      --text: #f4f7ff;
+      --muted: #9aa8c2;
+      --subtle: #687795;
+      --accent: #7d6cff;
+      --accent-2: #4ea9ff;
+      --good: #62e0ae;
+
+      --launcher-outer: #070707;
+      --launcher-outer-border: #5d6675;
+      --launcher-outer-border-width: 2px;
+      --launcher-radius: 18px;
+      --launcher-search-bg: #292929;
+      --launcher-search-border: #777b82;
+      --launcher-search-border-width: 1px;
+      --launcher-search-border-style: dashed;
+      --launcher-query: #f6f7fb;
+      --launcher-query-size: 22px;
+      --launcher-row-bg: #070707;
+      --launcher-row-primary: #f8f9ff;
+      --launcher-row-primary-size: 15px;
+      --launcher-row-secondary: #b7bfd0;
+      --launcher-row-secondary-size: 11px;
+      --launcher-row-height: 60px;
+      --launcher-selected-bg: #0868d7;
+      --launcher-selected-primary: #ffffff;
+      --launcher-selected-secondary: #e7f2ff;
+      --launcher-selected-primary-size: 15px;
+      --launcher-selected-secondary-size: 11px;
+      --launcher-icon-size: 38px;
+
+      --settings-preview-window: #111827;
+      --settings-preview-titlebar: #172036;
+      --settings-preview-sidebar: #0c1424;
+      --settings-preview-content: #10192b;
+      --settings-preview-card: #172239;
+      --settings-preview-line: #2a3855;
+      --settings-preview-text: #f4f7ff;
+      --settings-preview-muted: #91a0bc;
+      --settings-preview-nav: #7c8ba8;
+      --settings-preview-nav-selected: #302a68;
+      --settings-preview-font-size: 14px;
+      --settings-preview-radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 12% 5%, rgba(69, 107, 207, .2), transparent 29%),
+        radial-gradient(circle at 92% 16%, rgba(125, 79, 238, .18), transparent 28%),
+        linear-gradient(145deg, #070b13, #0a1020 52%, #080c15);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+
+    .board {
+      width: min(1560px, calc(100vw - 48px));
+      margin: 24px auto 48px;
+    }
+
+    .board-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 0 8px 18px;
+    }
+
+    .board-heading h1 { margin: 0 0 7px; font-size: 26px; letter-spacing: -.03em; }
+    .board-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+    .version-badge { padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; color: #c9d2e7; background: rgba(17, 25, 42, .8); font-size: 10px; }
+
+    .settings-window {
+      overflow: hidden;
+      border: 1px solid #34425f;
+      border-radius: 19px;
+      background: rgba(9, 14, 25, .96);
+      box-shadow: 0 34px 100px rgba(0, 0, 0, .48), inset 0 1px rgba(255, 255, 255, .05);
+    }
+
+    .titlebar {
+      display: flex;
+      height: 52px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px 0 18px;
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(15, 23, 39, .96);
+    }
+
+    .brand, .title-actions, .page-actions, .scope-copy, .theme-card, .control-heading, .preview-toolbar, .switch-row, .legend, .item-title, .result-icon-wrap { display: flex; align-items: center; }
+    .brand { gap: 9px; }
+    .brand-mark { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid rgba(136, 119, 255, .55); border-radius: 8px; color: #a99cff; background: rgba(80, 67, 168, .18); font-size: 15px; }
+    .brand strong { font-size: 12px; letter-spacing: .03em; }
+    .title-actions { gap: 8px; color: var(--subtle); font-size: 9px; }
+    .status-pill { padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--field); }
+
+    .window-layout { display: grid; grid-template-columns: 166px minmax(0, 1fr); min-height: 930px; }
+
+    .sidebar {
+      padding: 17px 11px;
+      border-right: 1px solid var(--line-soft);
+      background: #09111f;
+    }
+
+    .sidebar button {
+      width: 100%;
+      margin-bottom: 4px;
+      padding: 10px 11px;
+      border: 0;
+      border-radius: 8px;
+      color: #70809d;
+      background: transparent;
+      text-align: left;
+      font-size: 11px;
+    }
+
+    .sidebar button.active { color: #f4f5ff; background: rgba(113, 91, 231, .25); }
+
+    .content { min-width: 0; padding: 26px 28px 34px; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+    .page-heading h2 { margin: 0 0 6px; font-size: 22px; }
+    .page-heading p { max-width: 760px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .page-actions { gap: 8px; }
+
+    .button {
+      min-height: 31px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .button.primary { border-color: #806dff; background: linear-gradient(180deg, #6f5bd7, #5443ad); }
+    .button.ghost { color: var(--muted); background: transparent; }
+
+    .scope-switcher {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 7px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(11, 17, 30, .88);
+    }
+
+    .scope-button {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+      padding: 11px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      color: var(--muted);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .scope-button.active { border-color: rgba(130, 113, 255, .62); color: var(--text); background: linear-gradient(135deg, rgba(104, 84, 219, .28), rgba(30, 50, 88, .35)); box-shadow: inset 0 1px rgba(255, 255, 255, .04); }
+    .scope-icon { display: grid; width: 42px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: #101a2d; font-size: 18px; }
+    .scope-copy { min-width: 0; align-items: flex-start; flex-direction: column; gap: 3px; }
+    .scope-copy strong { font-size: 12px; }
+    .scope-copy small { overflow: hidden; color: var(--subtle); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .scope-code { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; color: #9eaac1; background: #0b1322; font: 8px ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    .separation-note { display: flex; gap: 8px; margin: 10px 2px 18px; align-items: center; color: #8d9bb5; font-size: 9px; }
+    .separation-note b { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px rgba(98, 224, 174, .58); }
+
+    .scope-panel { display: none; }
+    .scope-panel.active { display: block; }
+    .workbench { display: grid; grid-template-columns: minmax(580px, 1.15fr) minmax(390px, .85fr); gap: 14px; }
+
+    .editor, .preview {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(15, 23, 39, .88);
+    }
+
+    .editor { overflow: hidden; }
+    .section-block { padding: 15px 16px; border-bottom: 1px solid var(--line-soft); }
+    .section-block:last-child { border-bottom: 0; }
+    .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .section-heading h3 { margin: 0 0 4px; font-size: 13px; }
+    .section-heading p { margin: 0; color: var(--subtle); font-size: 9px; line-height: 1.45; }
+    .independent-tag { padding: 4px 7px; border: 1px solid rgba(89, 204, 161, .3); border-radius: 999px; color: #73dcb5; background: rgba(53, 153, 117, .08); font-size: 8px; white-space: nowrap; }
+
+    .theme-library { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .theme-card { min-width: 0; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: var(--field); text-align: left; }
+    .theme-card.selected { border-color: #7f6dff; color: var(--text); box-shadow: 0 0 0 2px rgba(127, 109, 255, .12); }
+    .theme-swatch { width: 31px; height: 28px; flex: 0 0 auto; border: 1px solid rgba(255, 255, 255, .13); border-radius: 7px; }
+    .theme-card span:last-child { display: grid; min-width: 0; gap: 2px; }
+    .theme-card strong, .theme-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .theme-card strong { font-size: 10px; }
+    .theme-card small { color: var(--subtle); font-size: 8px; }
+    .swatch-launcher-default { background: linear-gradient(135deg, #070707 50%, #0878ed 50%); }
+    .swatch-launcher-light { background: linear-gradient(135deg, #f4f1ea 50%, #5269df 50%); }
+    .swatch-launcher-custom { background: linear-gradient(135deg, #0b1528 45%, #4f8eff 45%); }
+    .swatch-settings-default { background: linear-gradient(135deg, #0c1424 48%, #302a68 48%); }
+    .swatch-settings-light { background: linear-gradient(135deg, #e9e5dd 48%, #ffffff 48%); }
+    .swatch-settings-custom { background: linear-gradient(135deg, #152013 48%, #365e45 48%); }
+
+    .control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .control { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: rgba(10, 17, 30, .62); }
+    .control.wide { grid-column: 1 / -1; }
+    .control-heading { min-width: 0; align-items: flex-start; flex-direction: column; gap: 3px; }
+    .control-heading strong { font-size: 10px; font-weight: 620; }
+    .control-heading small { color: var(--subtle); font-size: 8px; line-height: 1.35; }
+    .color-control { display: flex; align-items: center; gap: 6px; }
+    .color-control input[type="color"] { width: 29px; height: 27px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--field); }
+    .color-value { width: 62px; color: #aab5ca; font: 8px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .range-control { display: grid; grid-template-columns: 82px 36px; align-items: center; gap: 5px; }
+    .range-control input { width: 82px; accent-color: var(--accent); }
+    .range-control output { color: #b6c0d4; font-size: 8px; text-align: right; }
+    .select-control { height: 28px; border: 1px solid var(--line); border-radius: 7px; color: #cbd3e2; background: var(--field); font-size: 9px; }
+
+    .mini-switch { position: relative; width: 32px; height: 18px; appearance: none; border: 1px solid #475471; border-radius: 999px; background: #222e44; cursor: pointer; }
+    .mini-switch::before { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #8794aa; content: ""; transition: transform .15s ease; }
+    .mini-switch:checked { border-color: #7869e6; background: #6253c9; }
+    .mini-switch:checked::before { background: #fff; transform: translateX(14px); }
+
+    .contrast-audit { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+    .control.contrast-control { grid-template-columns: 1fr; }
+    .contrast-control .contrast-audit { justify-content: flex-start; }
+    .contrast-result { padding: 4px 7px; border: 1px solid rgba(72, 215, 159, .28); border-radius: 999px; color: #78dfb6; background: rgba(35, 145, 104, .09); font: 8px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .contrast-result.fail { border-color: rgba(255, 179, 71, .34); color: #ffc46f; background: rgba(196, 117, 20, .1); }
+
+    .preview { position: sticky; top: 14px; align-self: start; overflow: hidden; }
+    .preview-toolbar { justify-content: space-between; gap: 10px; padding: 12px 13px; border-bottom: 1px solid var(--line-soft); }
+    .preview-toolbar strong { font-size: 11px; }
+    .preview-toolbar span { color: var(--subtle); font-size: 8px; }
+    .preview-canvas { padding: 20px; background: linear-gradient(135deg, #13213a, #0b1120 70%); }
+    .legend { flex-wrap: wrap; gap: 5px; margin-bottom: 12px; }
+    .legend span { padding: 4px 6px; border: 1px solid #31415f; border-radius: 6px; color: #91a0b9; background: rgba(7, 12, 21, .55); font-size: 7px; }
+
+    .launcher-preview {
+      overflow: hidden;
+      border: var(--launcher-outer-border-width) solid var(--launcher-outer-border);
+      border-radius: var(--launcher-radius);
+      background: var(--launcher-outer);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, .48);
+    }
+
+    .launcher-search {
+      display: flex;
+      height: 65px;
+      margin: 10px;
+      align-items: center;
+      gap: 11px;
+      padding: 0 13px;
+      border: var(--launcher-search-border-width) var(--launcher-search-border-style) var(--launcher-search-border);
+      border-radius: max(7px, calc(var(--launcher-radius) * .55));
+      color: var(--launcher-query);
+      background: var(--launcher-search-bg);
+    }
+
+    .search-magnifier { display: grid; width: 23px; place-items: center; color: #c9d5e8; }
+    .search-magnifier svg { width: 20px; height: 20px; }
+    .launcher-search strong { min-width: 0; flex: 1; font-size: var(--launcher-query-size); font-weight: 450; letter-spacing: .01em; }
+    .launcher-logo { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid rgba(125, 108, 255, .55); border-radius: 8px; color: #a798ff; background: rgba(80, 67, 168, .23); }
+    .launcher-preview.hide-search-icon .search-magnifier, .launcher-preview.hide-logo .launcher-logo { display: none; }
+
+    .results-preview { padding: 0 9px 10px; }
+    .result-row {
+      display: grid;
+      min-height: var(--launcher-row-height);
+      grid-template-columns: calc(var(--launcher-icon-size) + 10px) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 9px;
+      border-radius: 8px;
+      color: var(--launcher-row-primary);
+      background: var(--launcher-row-bg);
+    }
+
+    .result-row.selected { color: var(--launcher-selected-primary); background: var(--launcher-selected-bg); }
+    .result-icon-wrap { width: var(--launcher-icon-size); height: var(--launcher-icon-size); justify-content: center; }
+    .result-icon-wrap svg { width: 100%; height: 100%; }
+    .item-copy { display: grid; min-width: 0; gap: 3px; }
+    .item-copy strong, .item-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-copy strong { color: var(--launcher-row-primary); font-size: var(--launcher-row-primary-size); font-weight: 600; }
+    .item-copy small { color: var(--launcher-row-secondary); font-size: var(--launcher-row-secondary-size); }
+    .selected .item-copy strong { color: var(--launcher-selected-primary); font-size: var(--launcher-selected-primary-size); }
+    .selected .item-copy small { color: var(--launcher-selected-secondary); font-size: var(--launcher-selected-secondary-size); }
+    .result-badge { padding: 3px 6px; border: 1px solid currentColor; border-radius: 5px; color: inherit; opacity: .7; font-size: 7px; }
+    .native-note { display: block; padding: 9px 11px 12px; border-top: 1px solid rgba(255, 255, 255, .08); color: #929db2; font-size: 8px; line-height: 1.45; }
+
+    .wechat-icon { display: grid; width: 100%; height: 100%; place-items: center; border-radius: 10px; background: #22c55e; box-shadow: inset 0 1px rgba(255, 255, 255, .28); }
+    .wechat-icon svg { width: 88%; height: 88%; }
+    .folder-icon { color: #f4c24f; }
+    .file-icon { color: #77a7ff; }
+
+    .settings-live-preview { overflow: hidden; border: 1px solid var(--settings-preview-line); border-radius: var(--settings-preview-radius); color: var(--settings-preview-text); background: var(--settings-preview-window); box-shadow: 0 18px 42px rgba(0, 0, 0, .42); font-size: var(--settings-preview-font-size); }
+    .settings-live-titlebar { display: flex; height: 42px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--settings-preview-line); background: var(--settings-preview-titlebar); font-size: calc(var(--settings-preview-font-size) * .65); }
+    .settings-live-body { display: grid; min-height: 370px; grid-template-columns: 104px minmax(0, 1fr); }
+    .settings-live-sidebar { display: grid; align-content: start; gap: 4px; padding: 12px 8px; border-right: 1px solid var(--settings-preview-line); color: var(--settings-preview-nav); background: var(--settings-preview-sidebar); font-size: calc(var(--settings-preview-font-size) * .57); }
+    .settings-live-sidebar span { padding: 7px; border-radius: 6px; }
+    .settings-live-sidebar span.active { color: var(--settings-preview-text); background: var(--settings-preview-nav-selected); }
+    .settings-live-content { padding: 16px; background: var(--settings-preview-content); }
+    .settings-live-content h4 { margin: 0 0 4px; font-size: calc(var(--settings-preview-font-size) * 1.07); }
+    .settings-live-content > p { margin: 0 0 14px; color: var(--settings-preview-muted); font-size: calc(var(--settings-preview-font-size) * .57); }
+    .settings-live-card { margin-bottom: 9px; padding: 12px; border: 1px solid var(--settings-preview-line); border-radius: 10px; background: var(--settings-preview-card); }
+    .settings-live-card strong { display: block; margin-bottom: 5px; font-size: calc(var(--settings-preview-font-size) * .71); }
+    .settings-live-card p { margin: 0; color: var(--settings-preview-muted); font-size: calc(var(--settings-preview-font-size) * .57); line-height: 1.45; }
+    .settings-live-lines { display: grid; gap: 6px; margin-top: 10px; }
+    .settings-live-lines i { display: block; height: 7px; border-radius: 3px; background: color-mix(in srgb, var(--settings-preview-card) 65%, var(--settings-preview-text)); opacity: .32; }
+    .settings-live-lines i:nth-child(2) { width: 78%; }
+    .settings-live-lines i:nth-child(3) { width: 56%; }
+
+    .design-decisions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 14px; }
+    .decision { padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; color: var(--muted); background: rgba(15, 23, 39, .75); font-size: 9px; line-height: 1.5; }
+    .decision strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 10px; }
+
+    @media (max-width: 1180px) {
+      .board { width: min(100% - 24px, 980px); }
+      .workbench { grid-template-columns: 1fr; }
+      .preview { position: static; }
+      .window-layout { grid-template-columns: 136px minmax(0, 1fr); }
+      .scope-switcher { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .window-layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .content { padding: 18px; }
+      .control-grid, .design-decisions { grid-template-columns: 1fr; }
+      .theme-library { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .page-heading { flex-direction: column; }
+    }
+  </style>
+</head>
+<body data-scope="launcher">
+  <main class="board">
+    <header class="board-heading">
+      <div>
+        <h1>外观设计 · 界面皮肤完全分离</h1>
+        <p>搜索窗口与设置窗口不共享主题、自定义皮肤或导入导出文件；本稿只定义 UI 与交互，不代表已实现。</p>
+      </div>
+      <span class="version-badge">UI V3 · 2026-08-09</span>
+    </header>
+
+    <section class="settings-window">
+      <header class="titlebar">
+        <div class="brand"><span class="brand-mark">◇</span><strong>Suo 设置</strong></div>
+        <div class="title-actions"><span class="status-pill">页面草稿 · 尚未保存</span><span>×</span></div>
+      </header>
+
+      <div class="window-layout">
+        <aside class="sidebar">
+          <button>通用</button>
+          <button>搜索与索引</button>
+          <button>命令与服务</button>
+          <button class="active">外观</button>
+        </aside>
+
+        <section class="content">
+          <header class="page-heading">
+            <div><h2>外观</h2><p>分别管理搜索窗口与设置窗口的皮肤。切换界面不会带入另一边的自定义颜色、字体或背景图。</p></div>
+            <div class="page-actions"><button class="button ghost">导入当前界面皮肤</button><button class="button ghost">导出当前界面皮肤</button><button class="button primary">保存设置</button></div>
+          </header>
+
+          <nav class="scope-switcher" role="tablist" aria-label="皮肤所属界面">
+            <button class="scope-button active" id="launcherThemeTab" role="tab" aria-selected="true" aria-controls="launcherThemePanel" tabindex="0" data-scope-target="launcher"><span class="scope-icon">⌕</span><span class="scope-copy"><strong>搜索界面皮肤</strong><small>搜索框、结果列表、选中状态与结果图标</small></span><code class="scope-code">launcherTheme</code></button>
+            <button class="scope-button" id="settingsThemeTab" role="tab" aria-selected="false" aria-controls="settingsThemePanel" tabindex="-1" data-scope-target="settings"><span class="scope-icon">⚙</span><span class="scope-copy"><strong>设置界面皮肤</strong><small>标题栏、侧栏、内容区、卡片与设置文字</small></span><code class="scope-code">settingsTheme</code></button>
+          </nav>
+          <p class="separation-note"><b></b>两套主题库完全独立：删除、导入、重命名或保存一边的皮肤，不改变另一边。</p>
+
+          <section class="scope-panel active" id="launcherThemePanel" role="tabpanel" aria-labelledby="launcherThemeTab" data-scope-panel="launcher">
+            <div class="workbench">
+              <div class="editor">
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>搜索界面皮肤库</h3><p>只出现在搜索界面；自定义皮肤使用独立 launcher theme ID。</p></div><span class="independent-tag">与设置皮肤隔离</span></div>
+                  <div class="theme-library">
+                    <button class="theme-card"><span class="theme-swatch swatch-launcher-default"></span><span><strong>火柴黑蓝</strong><small>内置 · 搜索</small></span></button>
+                    <button class="theme-card"><span class="theme-swatch swatch-launcher-light"></span><span><strong>轻纸</strong><small>内置 · 搜索</small></span></button>
+                    <button class="theme-card selected"><span class="theme-swatch swatch-launcher-custom"></span><span><strong>我的搜索皮肤</strong><small>自定义 · launcher</small></span></button>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>1–3. 搜索窗口与输入框</h3><p>外层边框、搜索框边框、输入文字和输入背景分别配置。</p></div></div>
+                  <div class="control-grid">
+                    <label class="control"><span class="control-heading"><strong>搜索外层背景</strong><small>整个搜索窗口的底色</small></span><span class="color-control"><input id="outerBackgroundColor" type="color" value="#070707" data-css-var="--launcher-outer"><code class="color-value">#070707</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>搜索外层边框</strong><small>窗口轮廓颜色</small></span><span class="color-control"><input id="outerBorderColor" type="color" value="#5d6675" data-css-var="--launcher-outer-border"><code class="color-value">#5D6675</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>外层边框宽度</strong><small>0 px 时隐藏外边框</small></span><span class="range-control"><input type="range" min="0" max="6" value="2" data-css-var="--launcher-outer-border-width" data-unit="px"><output>2 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>窗口圆角</strong><small>搜索窗口整体圆角</small></span><span class="range-control"><input type="range" min="0" max="30" value="18" data-css-var="--launcher-radius" data-unit="px"><output>18 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>搜索框背景</strong><small>输入框内部底色</small></span><span class="color-control"><input id="searchBackgroundColor" type="color" value="#292929" data-css-var="--launcher-search-bg"><code class="color-value">#292929</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>搜索框边框</strong><small>虚线或实线轮廓颜色</small></span><span class="color-control"><input id="searchBorderColor" type="color" value="#777b82" data-css-var="--launcher-search-border"><code class="color-value">#777B82</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>搜索框边框样式</strong><small>实线 / 虚线 / 点线 / 无</small></span><select class="select-control" id="searchBorderStyle"><option value="dashed">虚线</option><option value="solid">实线</option><option value="dotted">点线</option><option value="none">无</option></select></label>
+                    <label class="control"><span class="control-heading"><strong>搜索框边框宽度</strong><small>单独控制输入框轮廓</small></span><span class="range-control"><input type="range" min="0" max="5" value="1" data-css-var="--launcher-search-border-width" data-unit="px"><output>1 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>输入文字颜色</strong><small>查询文本和占位文本</small></span><span class="color-control"><input id="queryTextColor" type="color" value="#f6f7fb" data-css-var="--launcher-query"><code class="color-value">#F6F7FB</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>输入文字大小</strong><small>12–32 px</small></span><span class="range-control"><input type="range" min="12" max="32" value="22" data-css-var="--launcher-query-size" data-unit="px"><output>22 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>显示放大镜</strong><small>关闭后不占据搜索框空间</small></span><input class="mini-switch" id="showSearchIcon" type="checkbox" checked></label>
+                    <label class="control"><span class="control-heading"><strong>显示 Suo Logo</strong><small>关闭后右侧 Logo 完全隐藏</small></span><input class="mini-switch" id="showLogo" type="checkbox" checked></label>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>4. 普通结果选项</h3><p>结果背景、主文字、次要文字、字号与行高独立设置。</p></div></div>
+                  <div class="control-grid">
+                    <label class="control"><span class="control-heading"><strong>普通选项背景</strong><small>未选中结果的底色</small></span><span class="color-control"><input id="rowBackgroundColor" type="color" value="#070707" data-css-var="--launcher-row-bg"><code class="color-value">#070707</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>结果行高</strong><small>图标随行高居中</small></span><span class="range-control"><input type="range" min="44" max="84" value="60" data-css-var="--launcher-row-height" data-unit="px"><output>60 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>主要文字颜色</strong><small>文件名或应用名</small></span><span class="color-control"><input id="rowPrimaryColor" type="color" value="#f8f9ff" data-css-var="--launcher-row-primary"><code class="color-value">#F8F9FF</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>主要文字大小</strong><small>10–24 px</small></span><span class="range-control"><input type="range" min="10" max="24" value="15" data-css-var="--launcher-row-primary-size" data-unit="px"><output>15 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>次要文字颜色</strong><small>路径、说明和来源</small></span><span class="color-control"><input id="rowSecondaryColor" type="color" value="#b7bfd0" data-css-var="--launcher-row-secondary"><code class="color-value">#B7BFD0</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>次要文字大小</strong><small>8–18 px</small></span><span class="range-control"><input type="range" min="8" max="18" value="11" data-css-var="--launcher-row-secondary-size" data-unit="px"><output>11 px</output></span></label>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>5–6. 选中结果与图标</h3><p>选中态文字可覆盖普通字号；应用读取系统原生图标，目录与文件使用统一图标。</p></div></div>
+                  <div class="control-grid">
+                    <label class="control"><span class="control-heading"><strong>选中项背景</strong><small>当前键盘焦点结果</small></span><span class="color-control"><input id="selectedBackgroundColor" type="color" value="#0868d7" data-css-var="--launcher-selected-bg"><code class="color-value">#0868D7</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>选中主文字</strong><small>可独立于普通文字颜色</small></span><span class="color-control"><input id="selectedPrimaryColor" type="color" value="#ffffff" data-css-var="--launcher-selected-primary"><code class="color-value">#FFFFFF</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>选中次要文字</strong><small>选中项路径颜色</small></span><span class="color-control"><input id="selectedSecondaryColor" type="color" value="#e7f2ff" data-css-var="--launcher-selected-secondary"><code class="color-value">#E7F2FF</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>图标尺寸</strong><small>原生应用/文件夹/文件统一槽位</small></span><span class="range-control"><input type="range" min="24" max="56" value="38" data-css-var="--launcher-icon-size" data-unit="px"><output>38 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>选中主文字大小</strong><small>10–24 px</small></span><span class="range-control"><input type="range" min="10" max="24" value="15" data-css-var="--launcher-selected-primary-size" data-unit="px"><output>15 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>选中次文字大小</strong><small>8–18 px</small></span><span class="range-control"><input type="range" min="8" max="18" value="11" data-css-var="--launcher-selected-secondary-size" data-unit="px"><output>11 px</output></span></label>
+                    <div class="control wide contrast-control"><span class="control-heading"><strong>实时可读性</strong><small>文字按 4.5:1、外层与搜索框边界按 3:1 检查。本稿实时标记结果；正式版保存时复用同一校验并提示不合格项。</small></span><span class="contrast-audit" id="contrastAudit" aria-live="polite"><span class="contrast-result" data-contrast="query">输入 --</span><span class="contrast-result" data-contrast="row-primary">普通主字 --</span><span class="contrast-result" data-contrast="row-secondary">普通次字 --</span><span class="contrast-result" data-contrast="selected-primary">选中主字 --</span><span class="contrast-result" data-contrast="selected-secondary">选中次字 --</span><span class="contrast-result" data-contrast="outer-border">外层边界 --</span><span class="contrast-result" data-contrast="search-border">搜索框边界 --</span></span></div>
+                    <div class="control wide"><span class="control-heading"><strong>结果状态规则</strong><small>default 使用普通结果 token；hover 从普通与选中背景自动插值得到；selected 使用显式选中 token；disabled 固定降低透明度并保留文字提示，焦点环使用选中背景对应的可见前景色。</small></span><span class="independent-tag">状态不只靠颜色</span></div>
+                    <div class="control wide"><span class="control-heading"><strong>应用图标来源</strong><small>正式实现必须读取 `.exe` / `.lnk` / `.app` 对应的系统原生图标；失败才显示应用回退图标。文件夹与文件不请求应用图标接口。</small></span><span class="independent-tag">类型化图标管线</span></div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="preview">
+                <header class="preview-toolbar"><strong>搜索界面实时预览</strong><span>仅使用 launcherTheme 草稿</span></header>
+                <div class="preview-canvas">
+                  <div class="legend"><span>① 外层边框</span><span>② 搜索边框</span><span>③ 输入文字 / 背景</span><span>④ 普通结果</span><span>⑤ 选中结果</span><span>⑥ 图标与显隐</span></div>
+                  <div class="launcher-preview" id="launcherPreview">
+                    <div class="launcher-search">
+                      <span class="search-magnifier" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.2" stroke="currentColor" stroke-width="1.8"/><path d="m15.2 15.2 4.4 4.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+                      <strong>微信</strong>
+                      <span class="launcher-logo">◇</span>
+                    </div>
+                    <div class="results-preview">
+                      <div class="result-row selected">
+                        <span class="result-icon-wrap"><span class="wechat-icon"><svg viewBox="0 0 48 48"><ellipse cx="20" cy="21" rx="13" ry="10.5" fill="#fff"/><path d="M10 29l2-5 5 4" fill="#fff"/><ellipse cx="30.5" cy="28.5" rx="11" ry="8.5" fill="#fff" stroke="#22c55e" stroke-width="1.5"/><path d="m38 35-1.8-4-4.2 3" fill="#fff"/><circle cx="16" cy="19" r="1.4" fill="#22c55e"/><circle cx="23.5" cy="19" r="1.4" fill="#22c55e"/><circle cx="27.5" cy="27" r="1.2" fill="#22c55e"/><circle cx="33.5" cy="27" r="1.2" fill="#22c55e"/></svg></span></span>
+                        <span class="item-copy"><strong>微信</strong><small>D:\Software\Weixin\Weixin.exe</small></span><span class="result-badge">应用</span>
+                      </div>
+                      <div class="result-row">
+                        <span class="result-icon-wrap folder-icon"><svg viewBox="0 0 48 48"><path d="M5 14a5 5 0 0 1 5-5h10l5 5h13a5 5 0 0 1 5 5v18H5V14Z" fill="currentColor" opacity=".95"/><path d="M5 20h38v15a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V20Z" fill="#ffd86a"/></svg></span>
+                        <span class="item-copy"><strong>微信资料</strong><small>D:\Documents\产品资料\微信</small></span><span class="result-badge">文件夹</span>
+                      </div>
+                      <div class="result-row">
+                        <span class="result-icon-wrap file-icon"><svg viewBox="0 0 48 48"><path d="M11 5h17l10 10v28H11V5Z" fill="currentColor" opacity=".25"/><path d="M28 5v11h10M11 5h17l10 10v28H11V5Z" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linejoin="round"/><path d="M17 25h15M17 31h12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></span>
+                        <span class="item-copy"><strong>微信产品需求.md</strong><small>D:\Documents\产品资料\微信产品需求.md</small></span><span class="result-badge">文件</span>
+                      </div>
+                      <div class="result-row">
+                        <span class="result-icon-wrap" style="color:#aa93ff;font-size:27px">↗</span>
+                        <span class="item-copy"><strong>Google 搜索微信</strong><small>在默认浏览器中打开搜索结果</small></span><span class="result-badge">网络</span>
+                      </div>
+                    </div>
+                    <small class="native-note">微信图标在此稿中是视觉占位；正式版从匹配到的应用路径读取系统原生图标并缓存。目录与普通文件始终使用上面的统一图标。</small>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="scope-panel" id="settingsThemePanel" role="tabpanel" aria-labelledby="settingsThemeTab" data-scope-panel="settings" hidden>
+            <div class="workbench">
+              <div class="editor">
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>设置界面皮肤库</h3><p>只改变设置窗口；不修改搜索框、结果行或选中结果。</p></div><span class="independent-tag">与搜索皮肤隔离</span></div>
+                  <div class="theme-library">
+                    <button class="theme-card"><span class="theme-swatch swatch-settings-default"></span><span><strong>午夜设置</strong><small>内置 · 设置</small></span></button>
+                    <button class="theme-card"><span class="theme-swatch swatch-settings-light"></span><span><strong>纸张设置</strong><small>内置 · 设置</small></span></button>
+                    <button class="theme-card selected"><span class="theme-swatch swatch-settings-custom"></span><span><strong>我的设置皮肤</strong><small>自定义 · settings</small></span></button>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>设置窗口结构</h3><p>设置页使用自己的窗口、标题栏、侧栏和内容区颜色。</p></div></div>
+                  <div class="control-grid">
+                    <label class="control"><span class="control-heading"><strong>窗口背景</strong><small>设置窗口最外层底色</small></span><span class="color-control"><input type="color" value="#111827" data-settings-var="--settings-preview-window"><code class="color-value">#111827</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>窗口边框</strong><small>标题栏和卡片共用基础线条</small></span><span class="color-control"><input type="color" value="#2a3855" data-settings-var="--settings-preview-line"><code class="color-value">#2A3855</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>标题栏背景</strong><small>Suo 设置标题区</small></span><span class="color-control"><input type="color" value="#172036" data-settings-var="--settings-preview-titlebar"><code class="color-value">#172036</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>侧栏背景</strong><small>设置分类导航区域</small></span><span class="color-control"><input type="color" value="#0c1424" data-settings-var="--settings-preview-sidebar"><code class="color-value">#0C1424</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>内容区背景</strong><small>表单与编辑器外部底色</small></span><span class="color-control"><input type="color" value="#10192b" data-settings-var="--settings-preview-content"><code class="color-value">#10192B</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>设置卡片背景</strong><small>表单、摘要卡与编辑器</small></span><span class="color-control"><input type="color" value="#172239" data-settings-var="--settings-preview-card"><code class="color-value">#172239</code></span></label>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>设置文字与导航</h3><p>这些字段不影响搜索结果的主文字和次要文字。</p></div></div>
+                  <div class="control-grid">
+                    <label class="control"><span class="control-heading"><strong>设置主要文字</strong><small>标题、标签和按钮</small></span><span class="color-control"><input type="color" value="#f4f7ff" data-settings-var="--settings-preview-text"><code class="color-value">#F4F7FF</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>设置次要文字</strong><small>说明、状态和提示</small></span><span class="color-control"><input type="color" value="#91a0bc" data-settings-var="--settings-preview-muted"><code class="color-value">#91A0BC</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>侧栏普通文字</strong><small>未选中的设置分类</small></span><span class="color-control"><input type="color" value="#7c8ba8" data-settings-var="--settings-preview-nav"><code class="color-value">#7C8BA8</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>侧栏选中背景</strong><small>当前设置分类</small></span><span class="color-control"><input type="color" value="#302a68" data-settings-var="--settings-preview-nav-selected"><code class="color-value">#302A68</code></span></label>
+                    <label class="control"><span class="control-heading"><strong>基础字号</strong><small>仅设置窗口 11–18 px</small></span><span class="range-control"><input type="range" min="11" max="18" value="14" data-settings-var="--settings-preview-font-size" data-unit="px"><output>14 px</output></span></label>
+                    <label class="control"><span class="control-heading"><strong>设置窗口圆角</strong><small>不改变搜索窗口圆角</small></span><span class="range-control"><input type="range" min="0" max="28" value="18" data-settings-var="--settings-preview-radius" data-unit="px"><output>18 px</output></span></label>
+                  </div>
+                </section>
+
+                <section class="section-block">
+                  <div class="section-heading"><div><h3>独立自定义皮肤操作</h3><p>导入导出文件明确包含 scope=settings，拒绝导入到搜索界面。</p></div></div>
+                  <div class="control-grid"><div class="control wide"><span class="control-heading"><strong>文件边界</strong><small>`suo-settings-theme-v1` 与 `suo-launcher-theme-v1` 使用不同 schema；背景图、颜色和布局不会跨界复制。</small></span><span class="independent-tag">强类型 scope</span></div></div>
+                </section>
+              </div>
+
+              <aside class="preview">
+                <header class="preview-toolbar"><strong>设置界面实时预览</strong><span>仅使用 settingsTheme 草稿</span></header>
+                <div class="preview-canvas">
+                  <div class="legend"><span>标题栏</span><span>侧栏</span><span>内容区</span><span>设置卡片</span><span>主要 / 次要文字</span></div>
+                  <div class="settings-live-preview">
+                    <div class="settings-live-titlebar"><strong>◇　Suo 设置</strong><span>×</span></div>
+                    <div class="settings-live-body">
+                      <aside class="settings-live-sidebar"><span>通用</span><span>搜索与索引</span><span>命令与服务</span><span class="active">外观</span></aside>
+                      <main class="settings-live-content"><h4>外观</h4><p>设置窗口使用独立皮肤，不跟随搜索窗口。</p><section class="settings-live-card"><strong>设置界面皮肤</strong><p>标题栏、导航、表单与说明文字均由 settingsTheme 控制。</p><div class="settings-live-lines"><i></i><i></i><i></i></div></section><section class="settings-live-card"><strong>页面草稿</strong><p>预览确认后点击保存；不会覆盖 launcherTheme。</p><div class="settings-live-lines"><i></i><i></i></div></section></main>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <footer class="design-decisions">
+            <div class="decision"><strong>Token 与数据模型分离</strong>两种 scope 都采用“原始值 → 语义 → 组件”三层 token；`launcherTheme` 与 `settingsTheme` 各自保存主题和自定义列表，禁止跨 scope 引用。</div>
+            <div class="decision"><strong>结果图标契约</strong>应用结果请求安全白名单中的系统原生图标；文件夹和普通文件分别使用固定 SVG，图标加载失败不阻塞结果。</div>
+            <div class="decision"><strong>参考边界</strong>参考火柴的黑底、蓝色选中项和清晰两行结果，也参考 Wox 的主题实时预览与图标缓存思路，但保持 Suo 自己的结构。</div>
+          </footer>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const scopeButtons = document.querySelectorAll('[data-scope-target]');
+    const scopePanels = document.querySelectorAll('[data-scope-panel]');
+
+    const activateScope = (scope) => {
+      if (!['launcher', 'settings'].includes(scope)) return;
+      document.body.dataset.scope = scope;
+      scopeButtons.forEach((candidate) => {
+        const active = candidate.dataset.scopeTarget === scope;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-selected', String(active));
+        candidate.tabIndex = active ? 0 : -1;
+      });
+      scopePanels.forEach((panel) => {
+        const active = panel.dataset.scopePanel === scope;
+        panel.classList.toggle('active', active);
+        panel.hidden = !active;
+      });
+    };
+
+    scopeButtons.forEach((button) => {
+      button.addEventListener('click', () => activateScope(button.dataset.scopeTarget));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        const currentIndex = [...scopeButtons].indexOf(button);
+        const step = event.key === 'ArrowRight' ? 1 : -1;
+        const nextButton = scopeButtons[(currentIndex + step + scopeButtons.length) % scopeButtons.length];
+        activateScope(nextButton.dataset.scopeTarget);
+        nextButton.focus();
+      });
+    });
+
+    activateScope(new URLSearchParams(window.location.search).get('scope') || 'launcher');
+
+    document.querySelectorAll('input[data-css-var]').forEach((input) => {
+      const update = () => {
+        const unit = input.dataset.unit || '';
+        root.style.setProperty(input.dataset.cssVar, `${input.value}${unit}`);
+        const output = input.closest('.range-control')?.querySelector('output');
+        if (output) output.textContent = `${input.value} ${unit}`.trim();
+        const code = input.closest('.color-control')?.querySelector('.color-value');
+        if (code && input.type === 'color') code.textContent = input.value.toUpperCase();
+        updateContrastAudit();
+      };
+      input.addEventListener('input', update);
+    });
+
+    document.querySelectorAll('input[data-settings-var]').forEach((input) => {
+      input.addEventListener('input', () => {
+        const unit = input.dataset.unit || '';
+        root.style.setProperty(input.dataset.settingsVar, `${input.value}${unit}`);
+        const output = input.closest('.range-control')?.querySelector('output');
+        if (output) output.textContent = `${input.value} ${unit}`.trim();
+        const code = input.closest('.color-control')?.querySelector('.color-value');
+        if (code) code.textContent = input.value.toUpperCase();
+      });
+    });
+
+    document.getElementById('searchBorderStyle').addEventListener('change', (event) => {
+      root.style.setProperty('--launcher-search-border-style', event.target.value);
+    });
+
+    const launcherPreview = document.getElementById('launcherPreview');
+    document.getElementById('showSearchIcon').addEventListener('change', (event) => launcherPreview.classList.toggle('hide-search-icon', !event.target.checked));
+    document.getElementById('showLogo').addEventListener('change', (event) => launcherPreview.classList.toggle('hide-logo', !event.target.checked));
+
+    const contrastPairs = [
+      { name: 'query', label: '输入', foregroundId: 'queryTextColor', backgroundId: 'searchBackgroundColor', minimum: 4.5 },
+      { name: 'row-primary', label: '普通主字', foregroundId: 'rowPrimaryColor', backgroundId: 'rowBackgroundColor', minimum: 4.5 },
+      { name: 'row-secondary', label: '普通次字', foregroundId: 'rowSecondaryColor', backgroundId: 'rowBackgroundColor', minimum: 4.5 },
+      { name: 'selected-primary', label: '选中主字', foregroundId: 'selectedPrimaryColor', backgroundId: 'selectedBackgroundColor', minimum: 4.5 },
+      { name: 'selected-secondary', label: '选中次字', foregroundId: 'selectedSecondaryColor', backgroundId: 'selectedBackgroundColor', minimum: 4.5 },
+      { name: 'outer-border', label: '外层边界', foregroundId: 'outerBorderColor', backgroundId: 'outerBackgroundColor', minimum: 3 },
+      { name: 'search-border', label: '搜索框边界', foregroundId: 'searchBorderColor', backgroundId: 'searchBackgroundColor', minimum: 3 },
+    ];
+
+    const relativeLuminance = (hex) => {
+      const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
+      const [red, green, blue] = channels.map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+      return .2126 * red + .7152 * green + .0722 * blue;
+    };
+
+    function updateContrastAudit() {
+      contrastPairs.forEach(({ name, label, foregroundId, backgroundId, minimum }) => {
+        const foreground = relativeLuminance(document.getElementById(foregroundId).value);
+        const background = relativeLuminance(document.getElementById(backgroundId).value);
+        const ratio = (Math.max(foreground, background) + .05) / (Math.min(foreground, background) + .05);
+        const output = document.querySelector(`[data-contrast="${name}"]`);
+        const passes = ratio >= minimum;
+        output.textContent = `${label} ${ratio.toFixed(1)}:1 · ${passes ? (minimum === 4.5 ? 'AA' : '通过') : '需调整'}`;
+        output.classList.toggle('fail', !passes);
+      });
+    }
+
+    updateContrastAudit();
+  </script>
+</body>
+</html>

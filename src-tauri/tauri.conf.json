@@ -10,14 +10,39 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Suo / 梭",
         "width": 720,
         "height": 520,
         "minWidth": 560,
-        "minHeight": 420,
-        "center": true
+        "minHeight": 74,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "visible": false,
+        "resizable": false
+      },
+      {
+        "label": "settings",
+        "title": "Suo 设置",
+        "width": 1180,
+        "height": 720,
+        "minWidth": 680,
+        "minHeight": 520,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {
@@ -27,6 +52,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../examples/timestamp.py": "examples/timestamp.py",
+      "../examples/open_path.py": "examples/open_path.py"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

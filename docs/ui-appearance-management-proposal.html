@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Suo 第四版外观设计：使用、编辑与保存状态分离</title>
+  <style>
+    :root {
+      color-scheme: dark;
+
+      /* Primitive tokens */
+      --ink-950: #050811;
+      --ink-925: #080d18;
+      --ink-900: #0b1120;
+      --ink-875: #0e1628;
+      --ink-850: #111b30;
+      --ink-825: #162139;
+      --slate-700: #2b3955;
+      --slate-650: #364662;
+      --slate-500: #697a99;
+      --slate-400: #91a0bb;
+      --slate-300: #bac5d9;
+      --white: #f6f8ff;
+      --violet-600: #7563ee;
+      --violet-500: #8a78ff;
+      --violet-300: #b3a7ff;
+      --blue-500: #4297ff;
+      --cyan-500: #3fbad4;
+      --teal-500: #42d2ae;
+      --green-500: #57dda8;
+      --green-300: #9af0cd;
+      --amber-500: #e8b85c;
+      --red-500: #e46e7e;
+      --wechat: #20c66a;
+      --folder: #f2c14e;
+      --file: #7fa8e7;
+
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --radius-sm: 7px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 19px;
+      --duration-fast: 150ms;
+
+      /* Semantic tokens */
+      --page-bg: var(--ink-950);
+      --window-bg: var(--ink-925);
+      --surface: var(--ink-900);
+      --surface-raised: var(--ink-875);
+      --surface-strong: var(--ink-850);
+      --field-bg: var(--ink-925);
+      --border: var(--slate-700);
+      --border-strong: var(--slate-650);
+      --text: var(--white);
+      --text-muted: var(--slate-400);
+      --text-subtle: var(--slate-500);
+      --focus: var(--violet-500);
+      --success: var(--green-500);
+      --warning: var(--amber-500);
+      --danger: var(--red-500);
+      --scope: var(--violet-500);
+      --scope-soft: color-mix(in srgb, var(--scope) 15%, transparent);
+      --scope-line: color-mix(in srgb, var(--scope) 68%, var(--border));
+
+      /* Component tokens */
+      --button-bg: var(--surface-strong);
+      --button-border: var(--border-strong);
+      --card-bg: var(--surface);
+      --card-border: var(--border);
+      --input-bg: var(--field-bg);
+      --input-border: var(--border-strong);
+      --active-marker: var(--success);
+      --editing-marker: var(--scope);
+    }
+
+    body[data-scope="settings"] {
+      --scope: var(--teal-500);
+      --scope-soft: color-mix(in srgb, var(--scope) 12%, transparent);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, color-mix(in srgb, var(--violet-600) 24%, transparent), transparent 28%),
+        radial-gradient(circle at 96% 8%, color-mix(in srgb, var(--cyan-500) 13%, transparent), transparent 26%),
+        linear-gradient(145deg, var(--page-bg), var(--ink-900));
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .board { width: min(1540px, calc(100vw - 40px)); margin: 20px auto 42px; }
+    .spec-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-5); margin: 0 var(--space-2) var(--space-4); }
+    .spec-heading h1 { margin: 0 0 var(--space-2); font-size: 25px; letter-spacing: -.035em; }
+    .spec-heading p { margin: 0; color: var(--text-muted); font-size: 11px; }
+    .version { padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--slate-300); background: color-mix(in srgb, var(--surface) 86%, transparent); font-size: 9px; }
+
+    .settings-window { overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--window-bg) 97%, transparent); box-shadow: 0 32px 100px rgb(0 0 0 / .48), inset 0 1px rgb(255 255 255 / .05); }
+    .titlebar { display: flex; height: 50px; align-items: center; justify-content: space-between; padding: 0 var(--space-4); border-bottom: 1px solid var(--border); background: var(--surface); }
+    .brand, .title-status, .page-actions, .scope-main, .active-theme-copy, .library-actions, .theme-name, .editor-title, .preview-title, .mode-heading, .legend, .legend-item, .field-inline { display: flex; align-items: center; }
+    .brand { gap: 9px; }
+    .brand-mark { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid color-mix(in srgb, var(--violet-500) 65%, var(--border)); border-radius: 8px; color: var(--violet-300); background: color-mix(in srgb, var(--violet-600) 18%, transparent); }
+    .brand strong { font-size: 12px; }
+    .title-status { gap: var(--space-2); }
+    .draft-pill, .instant-pill { padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 8px; }
+    .draft-pill { color: var(--amber-500); }
+    .instant-pill { display: none; color: var(--green-300); border-color: color-mix(in srgb, var(--success) 42%, var(--border)); }
+    body[data-save="instant"] .draft-pill { display: none; }
+    body[data-save="instant"] .instant-pill { display: inline-flex; }
+
+    .window-grid { display: grid; grid-template-columns: 158px minmax(0, 1fr); min-height: 1030px; }
+    .sidebar { padding: 16px 10px; border-right: 1px solid var(--border); background: var(--ink-900); }
+    .sidebar button { width: 100%; margin-bottom: 4px; padding: 10px; border: 0; border-radius: 8px; color: var(--text-subtle); background: transparent; text-align: left; font-size: 10px; }
+    .sidebar button.active { color: var(--text); background: color-mix(in srgb, var(--violet-600) 26%, transparent); }
+
+    main { min-width: 0; padding: 23px 25px 30px; }
+    .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-4); }
+    .page-heading h2 { margin: 0 0 5px; font-size: 21px; }
+    .page-heading p { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+    .page-actions { align-items: stretch; gap: var(--space-2); }
+    .save-mode { display: flex; min-width: 300px; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+    .mode-heading { gap: var(--space-2); }
+    .mode-heading span { display: grid; gap: 2px; }
+    .mode-heading strong { font-size: 10px; }
+    .mode-heading small { color: var(--text-subtle); font-size: 8px; }
+    .switch { position: relative; width: 34px; height: 19px; flex: 0 0 auto; }
+    .switch input { position: absolute; opacity: 0; }
+    .switch i { position: absolute; inset: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface-strong); transition: background var(--duration-fast); }
+    .switch i::after { content: ""; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; border-radius: 50%; background: var(--slate-300); transition: transform var(--duration-fast), background var(--duration-fast); }
+    .switch input:checked + i { border-color: var(--violet-500); background: color-mix(in srgb, var(--violet-600) 68%, var(--surface)); }
+    .switch input:checked + i::after { transform: translateX(15px); background: var(--white); }
+
+    .button { min-height: 34px; padding: 0 12px; border: 1px solid var(--button-border); border-radius: 8px; color: var(--text); background: var(--button-bg); font-size: 9px; transition: border-color var(--duration-fast), background var(--duration-fast); }
+    .button:hover { border-color: var(--focus); }
+    .button.primary { border-color: color-mix(in srgb, var(--violet-500) 70%, var(--border)); background: linear-gradient(180deg, var(--violet-600), color-mix(in srgb, var(--violet-600) 72%, var(--ink-900))); }
+    .button.scope-primary { border-color: var(--scope-line); background: linear-gradient(180deg, color-mix(in srgb, var(--scope) 70%, var(--surface)), color-mix(in srgb, var(--scope) 42%, var(--surface))); }
+    .button.ghost { color: var(--text-muted); background: transparent; }
+    body[data-save="instant"] #global-save { display: none; }
+
+    .scope-zone { margin-bottom: var(--space-4); overflow: hidden; border: 1px solid var(--scope-line); border-radius: var(--radius-lg); background: linear-gradient(135deg, var(--scope-soft), var(--surface)); box-shadow: inset 3px 0 0 var(--scope); }
+    .scope-top { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: var(--space-5); padding: 15px 16px; }
+    .eyebrow { display: block; margin-bottom: 7px; color: var(--scope); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .scope-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+    .scope-tab { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--text-muted); background: color-mix(in srgb, var(--field-bg) 86%, transparent); text-align: left; }
+    .scope-tab.active { border-color: var(--scope-line); color: var(--text); background: color-mix(in srgb, var(--scope) 15%, var(--surface)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--scope) 10%, transparent); }
+    .scope-icon { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-strong); font-size: 15px; }
+    .scope-tab span:nth-child(2) { display: grid; gap: 2px; }
+    .scope-tab strong { font-size: 11px; }
+    .scope-tab small { color: var(--text-subtle); font-size: 8px; }
+    .selected-scope { padding: 3px 6px; border-radius: 999px; color: var(--scope); background: var(--scope-soft); font-size: 7px; }
+
+    .active-theme-panel { align-self: stretch; padding: 10px 11px; border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--success) 5%, var(--field-bg)); }
+    .active-theme-copy { justify-content: space-between; gap: var(--space-3); margin-bottom: 7px; }
+    .active-theme-copy span { display: grid; gap: 2px; }
+    .active-theme-copy strong { font-size: 10px; }
+    .active-theme-copy small { color: var(--text-subtle); font-size: 8px; }
+    .active-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--active-marker); box-shadow: 0 0 9px color-mix(in srgb, var(--active-marker) 68%, transparent); }
+    .theme-select { width: 100%; height: 34px; padding: 0 34px 0 10px; border: 1px solid color-mix(in srgb, var(--success) 38%, var(--input-border)); border-radius: 8px; color: var(--text); background: var(--input-bg); font-size: 10px; }
+    .scope-rule { display: flex; align-items: center; gap: 7px; padding: 8px 16px; border-top: 1px solid color-mix(in srgb, var(--scope) 22%, var(--border)); color: var(--text-muted); background: color-mix(in srgb, var(--surface) 68%, transparent); font-size: 8px; }
+    .scope-rule b { color: var(--scope); }
+
+    .workbench { display: grid; grid-template-columns: minmax(610px, 1.18fr) minmax(390px, .82fr); gap: 14px; align-items: start; }
+    .editor-card, .preview-card { min-width: 0; overflow: hidden; border: 1px solid var(--card-border); border-radius: var(--radius-lg); background: var(--card-bg); }
+    .scope-ribbon { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 13px 15px; border-bottom: 1px solid var(--scope-line); background: linear-gradient(100deg, color-mix(in srgb, var(--scope) 18%, var(--surface-raised)), var(--surface)); }
+    .scope-main { gap: 10px; }
+    .scope-main-icon { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid var(--scope-line); border-radius: 9px; color: var(--scope); background: var(--scope-soft); }
+    .scope-main span { display: grid; gap: 2px; }
+    .scope-main strong { font-size: 13px; }
+    .scope-main small { color: var(--text-muted); font-size: 8px; }
+    .scope-lock { padding: 5px 8px; border: 1px solid var(--scope-line); border-radius: 999px; color: var(--scope); background: var(--scope-soft); font-size: 8px; }
+
+    .library { padding: 14px 15px; border-bottom: 1px solid var(--border); }
+    .library-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); margin-bottom: 10px; }
+    .library-heading h3, .editor-heading h3 { margin: 0 0 4px; font-size: 12px; }
+    .library-heading p, .editor-heading p { margin: 0; color: var(--text-subtle); font-size: 8px; line-height: 1.45; }
+    .library-actions { gap: 6px; }
+    .library-actions .button { min-height: 28px; padding: 0 9px; }
+    .theme-picker { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid color-mix(in srgb, var(--scope) 28%, var(--border)); border-radius: var(--radius-md); background: var(--field-bg); }
+    .theme-picker-swatch { width: 40px; height: 40px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--scope-soft); }
+    .theme-picker-field { display: grid; min-width: 0; gap: 5px; }
+    .theme-picker-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .theme-picker-label strong { color: var(--text); font-size: 9px; }
+    .theme-picker-label small { color: var(--text-subtle); font-size: 7px; }
+    .editing-theme-select { width: 100%; height: 35px; padding: 0 34px 0 10px; border: 1px solid var(--scope-line); border-radius: 8px; color: var(--text); background: var(--input-bg); font-size: 10px; }
+    .theme-picker-status { display: flex; max-width: 150px; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+    .theme-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 999px; font-size: 7px; }
+    .theme-badge.in-use { color: var(--green-300); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); background: color-mix(in srgb, var(--success) 8%, transparent); }
+    .theme-badge.editing { color: color-mix(in srgb, var(--scope) 75%, var(--white)); border-color: var(--scope-line); background: var(--scope-soft); }
+    .theme-kind { color: var(--text-subtle); font-size: 7px; }
+    .mini-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--active-marker); }
+
+    .editor-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 13px 15px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--scope) 8%, var(--surface-raised)); }
+    .editor-title { min-width: 0; gap: 10px; }
+    .edit-pencil { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 9px; color: var(--scope); background: var(--scope-soft); font-size: 15px; }
+    .editor-title > span:last-child { display: grid; gap: 2px; }
+    .editing-name { color: var(--scope); }
+    .editor-actions { display: flex; gap: 6px; }
+    .dirty { padding: 4px 6px; border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border)); border-radius: 999px; color: var(--warning); font-size: 7px; }
+    .editor-controls { padding: 13px 15px 15px; }
+    .control-section { margin-bottom: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--field-bg); }
+    .control-section summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 10px 11px; list-style: none; cursor: pointer; }
+    .control-section summary::-webkit-details-marker { display: none; }
+    .control-section summary span { display: grid; gap: 2px; }
+    .control-section summary strong { font-size: 9px; }
+    .control-section summary small { color: var(--text-subtle); font-size: 7px; }
+    .control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; padding: 0 11px 10px; border-top: 1px solid var(--border); }
+    .control { display: flex; min-height: 45px; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 56%, transparent); }
+    .control span { display: grid; gap: 2px; }
+    .control strong { font-size: 8px; }
+    .control small { color: var(--text-subtle); font-size: 7px; }
+    .field-inline { gap: 6px; }
+    .color-chip { width: 27px; height: 24px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--chip, var(--scope)); }
+    .hex { min-width: 58px; padding: 5px 6px; border: 1px solid var(--input-border); border-radius: 6px; color: var(--slate-300); background: var(--input-bg); font: 7px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .range { width: 82px; accent-color: var(--scope); }
+    .value { min-width: 32px; color: var(--text-muted); font-size: 7px; text-align: right; }
+    .settings-only { display: none; }
+    body[data-scope="settings"] .launcher-only { display: none; }
+    body[data-scope="settings"] .settings-only { display: block; }
+
+    .save-hint { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--scope) 24%, var(--border)); border-radius: var(--radius-md); color: var(--text-muted); background: var(--scope-soft); font-size: 8px; }
+    .instant-copy { display: none; }
+    body[data-save="instant"] .manual-copy { display: none; }
+    body[data-save="instant"] .instant-copy { display: inline; }
+
+    .preview-card { position: sticky; top: 14px; }
+    .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 13px; border-bottom: 1px solid var(--border); background: var(--surface-raised); }
+    .preview-title { min-width: 0; gap: 8px; }
+    .preview-title span { display: grid; gap: 2px; }
+    .preview-title strong { font-size: 10px; }
+    .preview-title small { color: var(--text-subtle); font-size: 7px; }
+    .preview-state { padding: 4px 6px; border: 1px solid var(--scope-line); border-radius: 999px; color: var(--scope); background: var(--scope-soft); font-size: 7px; }
+    .preview-canvas { padding: 17px 14px; background: radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--scope) 12%, transparent), transparent 48%), var(--ink-950); }
+
+    .launcher-preview { overflow: hidden; border: 1px solid var(--slate-650); border-radius: 16px; background: var(--ink-950); box-shadow: 0 18px 46px rgb(0 0 0 / .4); }
+    .launcher-input { display: flex; height: 49px; align-items: center; gap: 10px; margin: 10px; padding: 0 12px; border: 1px solid var(--scope-line); border-radius: 12px; color: var(--white); background: var(--ink-875); font-size: 17px; }
+    .launcher-input b { margin-left: auto; color: var(--scope); }
+    .result-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; min-height: 53px; align-items: center; gap: 9px; padding: 7px 10px; }
+    .result-row.selected { background: color-mix(in srgb, var(--scope) 30%, var(--surface-strong)); box-shadow: inset 3px 0 0 var(--scope); }
+    .result-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; overflow: hidden; }
+    .result-icon svg { width: 100%; height: 100%; }
+    .result-icon.folder { color: var(--folder); background: color-mix(in srgb, var(--folder) 15%, var(--field-bg)); }
+    .result-icon.file { color: var(--file); background: color-mix(in srgb, var(--file) 16%, var(--field-bg)); }
+    .result-copy { display: grid; min-width: 0; gap: 2px; }
+    .result-copy strong, .result-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .result-copy strong { font-size: 11px; }
+    .result-copy small { color: var(--text-muted); font-size: 8px; }
+    .result-tag { padding: 3px 5px; border: 1px solid var(--border-strong); border-radius: 5px; color: var(--text-muted); font-size: 7px; }
+    .icon-proof { display: flex; align-items: center; gap: 7px; margin: 10px 11px 12px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border)); border-radius: 8px; color: var(--green-300); background: color-mix(in srgb, var(--success) 6%, transparent); font-size: 7px; }
+
+    .settings-preview { overflow: hidden; border: 1px solid var(--border-strong); border-radius: 15px; background: var(--ink-900); }
+    .settings-preview-bar { display: flex; height: 36px; align-items: center; justify-content: space-between; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--surface-raised); font-size: 8px; }
+    .settings-preview-body { display: grid; grid-template-columns: 82px minmax(0, 1fr); min-height: 310px; }
+    .settings-preview nav { display: grid; align-content: start; gap: 4px; padding: 9px 6px; border-right: 1px solid var(--border); background: var(--ink-925); }
+    .settings-preview nav span { padding: 6px; border-radius: 6px; color: var(--text-subtle); font-size: 7px; }
+    .settings-preview nav span.active { color: var(--text); background: var(--scope-soft); box-shadow: inset 2px 0 0 var(--scope); }
+    .settings-preview main { padding: 13px; }
+    .settings-preview h4 { margin: 0 0 4px; font-size: 12px; }
+    .settings-preview p { margin: 0 0 11px; color: var(--text-muted); font-size: 7px; }
+    .preview-setting-card { margin-bottom: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
+    .preview-setting-card strong { display: block; margin-bottom: 5px; font-size: 8px; }
+    .preview-setting-card i { display: block; width: 80%; height: 5px; margin-top: 5px; border-radius: 3px; background: var(--border-strong); }
+
+    .legend { flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); color: var(--text-muted); background: var(--surface); font-size: 7px; }
+    .legend strong { color: var(--text); }
+    .legend-item { gap: 5px; }
+    .legend-outline { width: 12px; height: 10px; border: 2px solid var(--editing-marker); border-radius: 3px; }
+    .legend-select { width: 12px; height: 10px; border: 1px solid var(--success); border-radius: 3px; background: color-mix(in srgb, var(--success) 18%, transparent); }
+
+    .toast { position: fixed; right: 28px; bottom: 26px; z-index: 20; max-width: 360px; padding: 10px 12px; border: 1px solid var(--scope-line); border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--surface-raised) 95%, transparent); box-shadow: 0 16px 40px rgb(0 0 0 / .46); font-size: 9px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity var(--duration-fast), transform var(--duration-fast); }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1120px) {
+      .scope-top, .workbench { grid-template-columns: 1fr; }
+      .preview-card { position: static; }
+      .active-theme-panel { min-height: 0; }
+    }
+    @media (max-width: 760px) {
+      .board { width: calc(100vw - 16px); }
+      .window-grid { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      main { padding: 16px; }
+      .page-heading, .page-actions { flex-direction: column; }
+      .scope-tabs, .control-grid { grid-template-columns: 1fr; }
+      .theme-picker { grid-template-columns: 40px minmax(0, 1fr); }
+      .theme-picker-status { grid-column: 1 / -1; max-width: none; justify-content: flex-start; padding-left: 50px; }
+      .save-mode { min-width: 0; width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; }
+    }
+  </style>
+</head>
+<body data-scope="launcher" data-save="manual">
+  <div class="board">
+    <header class="spec-heading">
+      <div>
+        <h1>外观设计 · 使用、编辑与保存状态分离</h1>
+        <p>第四版评审稿：皮肤作用域、运行中皮肤、编辑对象与设置生效策略分别表达。</p>
+      </div>
+      <span class="version">UI V4 · 2026-08-09</span>
+    </header>
+
+    <section class="settings-window">
+      <header class="titlebar">
+        <div class="brand"><span class="brand-mark">◇</span><strong>Suo 设置</strong></div>
+        <div class="title-status"><span class="draft-pill">● 页面有未保存设置</span><span class="instant-pill">● 修改即时写入</span><span>×</span></div>
+      </header>
+
+      <div class="window-grid">
+        <aside class="sidebar">
+          <button>通用</button>
+          <button>搜索与索引</button>
+          <button>命令与服务</button>
+          <button class="active">外观</button>
+        </aside>
+
+        <main>
+          <header class="page-heading">
+            <div><h2>外观</h2><p>先明确要设计的界面，再分别选择“使用中的皮肤”和“正在编辑的皮肤”。</p></div>
+            <div class="page-actions">
+              <label class="save-mode">
+                <span class="mode-heading"><span aria-hidden="true">⌁</span><span><strong>统一保存设置</strong><small id="mode-description">开启：所有页面修改先进入草稿</small></span></span>
+                <span class="switch"><input id="save-mode" type="checkbox" checked aria-label="统一保存设置" /><i aria-hidden="true"></i></span>
+              </label>
+              <button id="global-save" class="button primary" type="button">保存设置</button>
+            </div>
+          </header>
+
+          <section class="scope-zone" aria-label="皮肤范围与当前使用皮肤">
+            <div class="scope-top">
+              <div>
+                <span class="eyebrow">步骤 1 · 选择设计范围</span>
+                <div class="scope-tabs" role="tablist" aria-label="正在设计哪个界面的皮肤">
+                  <button class="scope-tab active" data-scope-button="launcher" type="button" role="tab" aria-selected="true">
+                    <span class="scope-icon">⌕</span><span><strong>搜索界面皮肤</strong><small>搜索框、结果列表、选中态与图标</small></span><em class="selected-scope">正在设计</em>
+                  </button>
+                  <button class="scope-tab" data-scope-button="settings" type="button" role="tab" aria-selected="false">
+                    <span class="scope-icon">⚙</span><span><strong>设置页面皮肤</strong><small>标题栏、侧栏、内容区、卡片与文字</small></span><em class="selected-scope">切换</em>
+                  </button>
+                </div>
+              </div>
+              <label class="active-theme-panel">
+                <span class="active-theme-copy"><span><strong><i class="active-dot"></i><span id="active-scope-label">搜索界面正在使用</span></strong><small>只有这个下拉框可以切换运行中的皮肤</small></span><span class="theme-badge in-use">运行状态</span></span>
+                <select id="active-theme" class="theme-select" aria-label="选择当前使用皮肤"></select>
+              </label>
+            </div>
+            <div class="scope-rule"><b>规则：</b>上方下拉框决定“使用哪个皮肤”；下方皮肤卡片只决定“编辑哪个皮肤”，不会误切换运行状态。</div>
+          </section>
+
+          <section class="workbench">
+            <article class="editor-card">
+              <header class="scope-ribbon">
+                <div class="scope-main"><span class="scope-main-icon" id="scope-main-icon">⌕</span><span><strong id="scope-main-title">正在设计：搜索界面皮肤</strong><small id="scope-main-copy">下方所有颜色、字号和布局仅属于搜索窗口</small></span></div>
+                <span class="scope-lock">与另一界面完全隔离</span>
+              </header>
+
+              <section class="library">
+                <header class="library-heading">
+                  <div><span class="eyebrow">步骤 2 · 选择编辑对象</span><h3 id="library-title">搜索界面皮肤库</h3><p>从下拉框选择要编辑的皮肤；此处不会切换正在使用的皮肤。</p></div>
+                  <div class="library-actions"><button class="button ghost" type="button">导入</button><button class="button ghost" type="button">导出</button><button class="button" type="button">＋ 新建皮肤</button></div>
+                </header>
+                <div class="theme-picker">
+                  <i id="editing-theme-swatch" class="theme-picker-swatch" aria-hidden="true"></i>
+                  <label class="theme-picker-field" for="editing-theme">
+                    <span class="theme-picker-label"><strong>选择要编辑的皮肤</strong><small>仅切换编辑对象</small></span>
+                    <select id="editing-theme" class="editing-theme-select" aria-label="选择要编辑的皮肤"></select>
+                  </label>
+                  <div id="editing-theme-status" class="theme-picker-status" aria-live="polite"></div>
+                </div>
+              </section>
+
+              <section>
+                <header class="editor-heading">
+                  <div class="editor-title"><span class="edit-pencil">✎</span><span><span class="eyebrow">步骤 3 · 编辑皮肤</span><h3>正在编辑：<b id="editing-theme-name" class="editing-name">霓虹夜</b></h3><p id="editing-scope-copy">搜索界面皮肤 · 编辑草稿不会自动切换使用皮肤</p></span><span class="dirty">3 项未保存</span></div>
+                  <div class="editor-actions"><button class="button ghost" type="button">放弃修改</button><button id="save-theme" class="button scope-primary" type="button">保存皮肤</button></div>
+                </header>
+
+                <div class="editor-controls launcher-only">
+                  <details class="control-section" open>
+                    <summary><span><strong>搜索窗口与输入框</strong><small>外层边框、搜索框、输入文字和品牌图标</small></span><b>⌃</b></summary>
+                    <div class="control-grid">
+                      <div class="control"><span><strong>强调色</strong><small>焦点环与选中指示条</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--violet-500)"></i><code class="hex">#8A78FF</code></span></div>
+                      <div class="control"><span><strong>窗口背景</strong><small>搜索窗口外层颜色</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--ink-950)"></i><code class="hex">#050811</code></span></div>
+                      <div class="control"><span><strong>搜索框背景</strong><small>输入区域背景</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--ink-875)"></i><code class="hex">#0E1628</code></span></div>
+                      <div class="control"><span><strong>窗口圆角</strong><small>搜索窗口四角</small></span><span class="field-inline"><input class="range" type="range" value="18" min="0" max="28" /><b class="value">18 px</b></span></div>
+                      <div class="control"><span><strong>输入文字大小</strong><small>12–24 px</small></span><span class="field-inline"><input class="range" type="range" value="20" min="12" max="24" /><b class="value">20 px</b></span></div>
+                      <div class="control"><span><strong>显示 Logo</strong><small>可隐藏输入框右侧图标</small></span><label class="switch"><input type="checkbox" checked /><i></i></label></div>
+                    </div>
+                  </details>
+                  <details class="control-section">
+                    <summary><span><strong>结果项与图标</strong><small>普通结果、选中结果、文字与图标尺寸</small></span><b>⌄</b></summary>
+                  </details>
+                  <div class="save-hint"><span class="manual-copy">保存皮肤后写入本页设置草稿；还需点击右上角“保存设置”才会应用。</span><span class="instant-copy">保存皮肤后立即写入；如果它正在使用，搜索窗口会立即应用新效果。</span><strong>按钮：保存皮肤</strong></div>
+                </div>
+
+                <div class="editor-controls settings-only">
+                  <details class="control-section" open>
+                    <summary><span><strong>设置窗口结构</strong><small>标题栏、侧栏、内容区、卡片与导航状态</small></span><b>⌃</b></summary>
+                    <div class="control-grid">
+                      <div class="control"><span><strong>强调色</strong><small>焦点、开关与主要按钮</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--teal-500)"></i><code class="hex">#42D2AE</code></span></div>
+                      <div class="control"><span><strong>窗口背景</strong><small>设置窗口外层颜色</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--ink-900)"></i><code class="hex">#0B1120</code></span></div>
+                      <div class="control"><span><strong>标题栏背景</strong><small>Suo 设置标题区域</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--surface-raised)"></i><code class="hex">#0E1628</code></span></div>
+                      <div class="control"><span><strong>侧栏背景</strong><small>设置分类导航区域</small></span><span class="field-inline"><i class="color-chip" style="--chip:var(--ink-925)"></i><code class="hex">#080D18</code></span></div>
+                      <div class="control"><span><strong>基础字号</strong><small>12–20 px</small></span><span class="field-inline"><input class="range" type="range" value="14" min="12" max="20" /><b class="value">14 px</b></span></div>
+                      <div class="control"><span><strong>窗口圆角</strong><small>设置窗口四角</small></span><span class="field-inline"><input class="range" type="range" value="18" min="0" max="28" /><b class="value">18 px</b></span></div>
+                    </div>
+                  </details>
+                  <details class="control-section">
+                    <summary><span><strong>文字、卡片与材质</strong><small>主次文字、卡片背景、透明度与本地背景图</small></span><b>⌄</b></summary>
+                  </details>
+                  <div class="save-hint"><span class="manual-copy">保存皮肤后写入本页设置草稿；还需点击右上角“保存设置”才会应用。</span><span class="instant-copy">保存皮肤后立即写入；如果它正在使用，设置窗口会立即应用新效果。</span><strong>按钮：保存皮肤</strong></div>
+                </div>
+              </section>
+            </article>
+
+            <aside class="preview-card">
+              <header class="preview-heading"><div class="preview-title"><span class="edit-pencil">◉</span><span><strong id="preview-title">预览：霓虹夜</strong><small id="preview-subtitle">编辑草稿 · 当前运行中为“午夜”</small></span></div><span class="preview-state">正在编辑的效果</span></header>
+              <div class="preview-canvas launcher-only">
+                <div class="launcher-preview">
+                  <div class="launcher-input"><span aria-hidden="true">⌕</span><span>微信</span><b>◇</b></div>
+                  <div class="result-row selected">
+                    <span class="result-icon" aria-label="微信应用图标"><svg viewBox="0 0 48 48" role="img"><rect width="48" height="48" rx="12" fill="var(--wechat)"/><path d="M8 21.2c0-6.2 5.8-11.2 13-11.2s13 5 13 11.2-5.8 11.2-13 11.2c-1.7 0-3.4-.3-4.8-.8l-5.2 3 1.5-4.7C9.7 27.8 8 24.7 8 21.2Z" fill="var(--white)"/><circle cx="17" cy="20" r="1.4" fill="var(--wechat)"/><circle cx="25" cy="20" r="1.4" fill="var(--wechat)"/><path d="M23 28.5c0-4.8 4.5-8.7 10-8.7s10 3.9 10 8.7c0 2.7-1.4 5-3.7 6.6l1.1 3.7-4-2.3c-1.1.4-2.2.6-3.4.6-5.5 0-10-3.8-10-8.6Z" fill="var(--white)" stroke="var(--wechat)" stroke-width="1.3"/><circle cx="30" cy="28" r="1.2" fill="var(--wechat)"/><circle cx="36" cy="28" r="1.2" fill="var(--wechat)"/></svg></span>
+                    <span class="result-copy"><strong>微信</strong><small>C:\ProgramData\Microsoft\Windows\Start Menu\Programs\微信\微信.lnk</small></span><span class="result-tag">应用</span>
+                  </div>
+                  <div class="result-row"><span class="result-icon folder"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4l2 2H19a2 2 0 0 1 2 2v9.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-11Z"/></svg></span><span class="result-copy"><strong>微信资料</strong><small>D:\Documents\产品资料\微信</small></span><span class="result-tag">文件夹</span></div>
+                  <div class="result-row"><span class="result-icon file"><svg viewBox="0 0 24 24"><path d="M6 3.5h7l5 5v12H6v-17Z" fill="currentColor" opacity=".25"/><path d="M13 3.5v5h5M6 3.5h7l5 5v12H6v-17Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 13h6M9 16h4.5" stroke="currentColor" stroke-width="1.3"/></svg></span><span class="result-copy"><strong>微信产品需求.md</strong><small>D:\Documents\产品资料\微信产品需求.md</small></span><span class="result-tag">文件</span></div>
+                  <div class="icon-proof"><span>✓</span><span>验收目标：应用显示系统原生图标；文件夹和普通文件使用稳定的统一图标。</span></div>
+                </div>
+              </div>
+              <div class="preview-canvas settings-only">
+                <div class="settings-preview">
+                  <div class="settings-preview-bar"><strong>◇　Suo 设置</strong><span>×</span></div>
+                  <div class="settings-preview-body"><nav><span>通用</span><span>搜索与索引</span><span>命令与服务</span><span class="active">外观</span></nav><main><h4>外观</h4><p>设置页面只使用独立的 settings 皮肤。</p><section class="preview-setting-card"><strong>设置生效方式</strong><i></i><i></i></section><section class="preview-setting-card"><strong>设置页面皮肤</strong><i></i><i></i><i></i></section></main></div>
+                </div>
+              </div>
+              <footer class="legend"><strong>状态图例</strong><span class="legend-item"><i class="mini-dot"></i>使用中（只读标记）</span><span class="legend-item"><i class="legend-outline"></i>正在编辑（卡片选中）</span><span class="legend-item"><i class="legend-select"></i>切换使用只在顶部下拉框</span></footer>
+            </aside>
+
+          </section>
+        </main>
+      </div>
+    </section>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    history.scrollRestoration = "manual";
+    window.scrollTo(0, 0);
+    const catalog = {
+      launcher: [
+        { id: "midnight", name: "午夜", kind: "内置 · 搜索", swatch: "linear-gradient(135deg,#07101f,#5142bf)" },
+        { id: "paper", name: "纸张", kind: "内置 · 搜索", swatch: "linear-gradient(135deg,#f5f0e6,#8a91ee)" },
+        { id: "forest", name: "森林", kind: "内置 · 搜索", swatch: "linear-gradient(135deg,#071810,#48c99b)" },
+        { id: "neon", name: "霓虹夜", kind: "自定义 · 搜索", swatch: "linear-gradient(135deg,#070816,#8a78ff)" },
+        { id: "minimal", name: "极简黑", kind: "自定义 · 搜索", swatch: "linear-gradient(135deg,#050505,#555c68)" }
+      ],
+      settings: [
+        { id: "midnight-settings", name: "午夜设置", kind: "内置 · 设置", swatch: "linear-gradient(135deg,#0b1120,#5142bf)" },
+        { id: "paper-settings", name: "纸张设置", kind: "内置 · 设置", swatch: "linear-gradient(135deg,#f3eee4,#747bdc)" },
+        { id: "forest-settings", name: "森林设置", kind: "内置 · 设置", swatch: "linear-gradient(135deg,#091910,#47c394)" },
+        { id: "calm-settings", name: "青黛工作台", kind: "自定义 · 设置", swatch: "linear-gradient(135deg,#0a1720,#42d2ae)" },
+        { id: "warm-settings", name: "暖灰设置", kind: "自定义 · 设置", swatch: "linear-gradient(135deg,#1d1918,#c48e69)" }
+      ]
+    };
+    const initialParams = new URLSearchParams(location.search);
+    const initialView = initialParams.get("view") || "";
+    const state = {
+      scope: initialView.startsWith("settings") || initialParams.get("scope") === "settings" ? "settings" : "launcher",
+      manual: !initialView.endsWith("instant") && initialParams.get("save") !== "instant",
+      active: { launcher: "midnight", settings: "paper-settings" },
+      editing: { launcher: "neon", settings: "calm-settings" }
+    };
+    const $ = (selector) => document.querySelector(selector);
+    const all = (selector) => [...document.querySelectorAll(selector)];
+    const themeById = (scope, id) => catalog[scope].find((theme) => theme.id === id);
+
+    function showToast(message) {
+      const toast = $("#toast");
+      toast.textContent = message;
+      toast.classList.add("show");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    function renderMode() {
+      document.body.dataset.save = state.manual ? "manual" : "instant";
+      $("#save-mode").checked = state.manual;
+      $("#mode-description").textContent = state.manual ? "开启：所有页面修改先进入草稿" : "关闭：普通设置修改后立即写入";
+    }
+
+    function renderScope() {
+      document.body.dataset.scope = state.scope;
+      const launcher = state.scope === "launcher";
+      all("[data-scope-button]").forEach((button) => {
+        const active = button.dataset.scopeButton === state.scope;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+        button.querySelector(".selected-scope").textContent = active ? "正在设计" : "切换";
+      });
+      $("#active-scope-label").textContent = launcher ? "搜索界面正在使用" : "设置页面正在使用";
+      $("#scope-main-icon").textContent = launcher ? "⌕" : "⚙";
+      $("#scope-main-title").textContent = launcher ? "正在设计：搜索界面皮肤" : "正在设计：设置页面皮肤";
+      $("#scope-main-copy").textContent = launcher ? "下方所有颜色、字号和布局仅属于搜索窗口" : "下方所有颜色、字号和布局仅属于设置窗口";
+      $("#library-title").textContent = launcher ? "搜索界面皮肤库" : "设置页面皮肤库";
+      renderThemes();
+    }
+
+    function renderThemes() {
+      const themes = catalog[state.scope];
+      const activeId = state.active[state.scope];
+      const editingId = state.editing[state.scope];
+      const select = $("#active-theme");
+      select.innerHTML = themes.map((theme) => `<option value="${theme.id}" ${theme.id === activeId ? "selected" : ""}>${theme.name}</option>`).join("");
+      const editing = themeById(state.scope, editingId);
+      const active = themeById(state.scope, activeId);
+      const editingSelect = $("#editing-theme");
+      editingSelect.innerHTML = themes.map((theme) => `<option value="${theme.id}" ${theme.id === editingId ? "selected" : ""}>${theme.name} · ${theme.kind}${theme.id === activeId ? " · 使用中" : ""}</option>`).join("");
+      $("#editing-theme-swatch").style.background = editing.swatch;
+      $("#editing-theme-status").innerHTML = `<span class="theme-badge editing">✎ 正在编辑</span>${editingId === activeId ? '<span class="theme-badge in-use"><i class="mini-dot"></i>使用中</span>' : ''}<span class="theme-kind">${editing.kind}</span>`;
+      $("#editing-theme-name").textContent = editing.name;
+      $("#editing-scope-copy").textContent = `${state.scope === "launcher" ? "搜索界面" : "设置页面"}皮肤 · 编辑草稿不会自动切换使用皮肤`;
+      $("#preview-title").textContent = `预览：${editing.name}`;
+      $("#preview-subtitle").textContent = `编辑草稿 · 当前运行中为“${active.name}”`;
+    }
+
+    all("[data-scope-button]").forEach((button) => button.addEventListener("click", () => {
+      state.scope = button.dataset.scopeButton;
+      renderScope();
+    }));
+    $("#active-theme").addEventListener("change", (event) => {
+      state.active[state.scope] = event.target.value;
+      renderThemes();
+      showToast(state.manual ? "已更改使用皮肤；点击“保存设置”后生效。" : "已切换使用皮肤，并立即应用到对应窗口。");
+    });
+    $("#editing-theme").addEventListener("change", (event) => {
+      state.editing[state.scope] = event.target.value;
+      renderThemes();
+      const editing = themeById(state.scope, state.editing[state.scope]);
+      showToast(`正在编辑“${editing.name}”；当前使用的皮肤没有改变。`);
+    });
+    $("#save-mode").addEventListener("change", (event) => {
+      state.manual = event.target.checked;
+      renderMode();
+      showToast(state.manual ? "已开启统一保存设置。后续修改需点击“保存设置”。" : "已关闭统一保存设置。后续普通设置将即时写入。");
+    });
+    $("#save-theme").addEventListener("click", () => {
+      const editing = themeById(state.scope, state.editing[state.scope]);
+      const isActive = state.editing[state.scope] === state.active[state.scope];
+      showToast(state.manual ? `“${editing.name}”已保存到设置草稿；还需点击“保存设置”。` : isActive ? `“${editing.name}”已保存，并立即应用到当前窗口。` : `“${editing.name}”已保存；运行中的皮肤没有改变。`);
+    });
+    $("#global-save").addEventListener("click", () => showToast("所有页面草稿已保存并生效。"));
+
+    renderMode();
+    renderScope();
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      setTimeout(() => window.scrollTo(0, 0), 120);
+    });
+  </script>
+</body>
+</html>
