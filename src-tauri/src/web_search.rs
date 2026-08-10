@@ -22,7 +22,7 @@ pub fn sample_url(template: &str) -> Result<String, String> {
     if after_scheme[..authority_end].contains(['{', '}']) {
         return Err("网络搜索占位符不能出现在域名或认证信息中".into());
     }
-    expand_template(template, |_| Ok("test".into()))
+    expand_template(template, |_| Ok("test".into())).map(|(url, _)| url)
 }
 
 pub fn expand_url(template: &str, arguments: &str) -> Result<String, String> {
@@ -43,9 +43,14 @@ pub fn expand_url(template: &str, arguments: &str) -> Result<String, String> {
             Ok(urlencoding::encode(value).into_owned())
         }
     })
+    .map(|(url, _)| url)
 }
 
-fn expand_template<F>(template: &str, mut resolve: F) -> Result<String, String>
+pub fn requires_arguments(template: &str) -> Result<bool, String> {
+    expand_template(template, |_| Ok(String::new())).map(|(_, found)| found)
+}
+
+fn expand_template<F>(template: &str, mut resolve: F) -> Result<(String, bool), String>
 where
     F: FnMut(Placeholder) -> Result<String, String>,
 {
@@ -91,15 +96,12 @@ where
         return Err("网络搜索 URL 模板存在未配对的 }".into());
     }
     output.push_str(remaining);
-    if !found {
-        return Err("网络搜索 URL 必须包含 {query} 或 {query0}、{query1}…占位符".into());
-    }
-    Ok(output)
+    Ok((output, found))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_url, sample_url};
+    use super::{expand_url, requires_arguments, sample_url};
 
     #[test]
     fn expands_full_query_and_positional_arguments() {
@@ -122,11 +124,19 @@ mod tests {
     }
 
     #[test]
+    fn accepts_a_direct_url_without_query_placeholders() {
+        let direct = "https://bytedance.feishu.cn/drive/home/";
+        assert_eq!(sample_url(direct).unwrap(), direct);
+        assert_eq!(expand_url(direct, "").unwrap(), direct);
+        assert!(!requires_arguments(direct).unwrap());
+        assert!(requires_arguments("https://example.com/?q={query}").unwrap());
+    }
+
+    #[test]
     fn rejects_missing_arguments_and_invalid_placeholders() {
         assert!(expand_url("https://example.com/?q={query0}&v={query1}", "only-one").is_err());
         assert!(sample_url("https://example.com/?q={0}").is_err());
         assert!(sample_url("https://example.com/?q={name}").is_err());
-        assert!(sample_url("https://example.com/?q=no-placeholder").is_err());
         assert!(sample_url("https://{query}.example.com/search").is_err());
         assert!(sample_url("https:{query}/path").is_err());
         assert!(sample_url(r"https:\\{query}\path").is_err());

@@ -7,6 +7,7 @@ mod dock;
 #[cfg(target_os = "windows")]
 mod everything;
 mod file_search;
+mod hotkey;
 mod i18n;
 mod launcher;
 mod models;
@@ -22,7 +23,7 @@ use std::sync::Arc;
 
 use launcher::{hide_launcher, position_launcher, LauncherState};
 use tauri::{Emitter, Manager, WindowEvent};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -63,11 +64,8 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             LauncherState::start_file_index(state.clone());
 
-            let (shortcut, shortcut_label) = default_shortcut();
-            let hotkey_status = match app.global_shortcut().register(shortcut) {
-                Ok(()) => format!("{shortcut_label} 已就绪"),
-                Err(error) => format!("{shortcut_label} 注册失败：{error}"),
-            };
+            let hotkey_status =
+                hotkey::register_initial(app.handle(), &initial_config.launcher.global_hotkey);
             state.set_hotkey_status(hotkey_status);
 
             if let Some(window) = app.get_webview_window("main") {
@@ -138,22 +136,4 @@ pub fn run() {
             launcher::request_show_launcher(_app);
         }
     });
-}
-
-fn default_shortcut() -> (Shortcut, &'static str) {
-    #[cfg(target_os = "macos")]
-    {
-        (
-            Shortcut::new(Some(Modifiers::SUPER), Code::Space),
-            "Command+Space",
-        )
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        (
-            Shortcut::new(Some(Modifiers::ALT), Code::Space),
-            "Alt+Space",
-        )
-    }
 }

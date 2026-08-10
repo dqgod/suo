@@ -10,9 +10,9 @@ use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{dock, launcher::LauncherState, web_search};
+use crate::{dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 10;
+const CONFIG_VERSION: u32 = 11;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -127,6 +127,8 @@ impl<'de> Deserialize<'de> for AppConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LauncherConfig {
+    #[serde(default = "hotkey::default_shortcut")]
+    pub global_hotkey: String,
     pub close_on_blur: bool,
     pub keep_last_input: bool,
     #[serde(default)]
@@ -616,6 +618,7 @@ impl Default for AppConfig {
             version: CONFIG_VERSION,
             save_settings_manually: true,
             launcher: LauncherConfig {
+                global_hotkey: hotkey::default_shortcut(),
                 close_on_blur: true,
                 keep_last_input: false,
                 compact_when_empty: false,
@@ -907,6 +910,7 @@ fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
         return Err(format!("脚本命令和网络搜索分别最多允许 {MAX_COMMANDS} 项"));
     }
 
+    config.launcher.global_hotkey = hotkey::normalize_shortcut(&config.launcher.global_hotkey)?;
     validate_launcher(&config.launcher)?;
     normalize_translation(&mut config.translation)?;
     for command in &mut config.script_commands {
@@ -937,10 +941,11 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // the configurable manual/instant settings save mode, and v8 adds
         // independent empty/non-empty query debounce settings, v9 adds the
         // launcher's cross-platform initial size and position fine tuning, and
-        // v10 adds the macOS Dock visibility preference.
+        // v10 adds the macOS Dock visibility preference, and v11 makes the
+        // global launcher shortcut configurable.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 => config.version = CONFIG_VERSION,
-        10 => {}
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 => config.version = CONFIG_VERSION,
+        11 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -2120,13 +2125,38 @@ pub fn save_app_config(
     launcher: State<'_, Arc<LauncherState>>,
     config: AppConfig,
 ) -> Result<AppConfigView, String> {
-    let (previous, config) = state.replace(config)?;
+    // Register the requested shortcut before persisting it. A conflict must
+    // leave both the on-disk configuration and the working shortcut intact.
+    let normalized = normalize_and_validate(config)?;
+    let current = state.snapshot();
+    let shortcut_change = hotkey::RegisteredShortcutChange::apply(
+        &app,
+        &current.launcher.global_hotkey,
+        &normalized.launcher.global_hotkey,
+    )?;
+    let shortcut_changed = shortcut_change.is_some();
+    let (previous, config) = match state.replace(normalized) {
+        Ok(result) => result,
+        Err(save_error) => {
+            if let Some(change) = shortcut_change {
+                if let Err(rollback_error) = change.rollback(&app) {
+                    return Err(format!("{save_error}；{rollback_error}"));
+                }
+            }
+            return Err(save_error);
+        }
+    };
     let providers_changed = provider_settings_changed(&previous, &config);
     dock::apply_visibility(&app, config.launcher.show_dock_icon)?;
     launcher.update_preferences(
         config.launcher.close_on_blur,
         config.launcher.keep_last_input,
     );
+    if shortcut_changed {
+        let label = hotkey::shortcut_label(&config.launcher.global_hotkey)
+            .unwrap_or_else(|_| config.launcher.global_hotkey.clone());
+        launcher.set_hotkey_status(format!("{label} 已就绪"));
+    }
     if providers_changed {
         launcher.invalidate_provider_results();
     }
@@ -2288,6 +2318,7 @@ mod tests {
             }),
         );
         let launcher = config["launcher"].as_object_mut().expect("launcher object");
+        launcher.remove("globalHotkey");
         launcher.remove("emptyQueryDebounceMs");
         launcher.remove("nonEmptyQueryDebounceMs");
         launcher.remove("showDockIcon");
@@ -2503,6 +2534,10 @@ mod tests {
         let config =
             normalize_and_validate(AppConfig::default()).expect("default config should be valid");
         assert!(config.save_settings_manually);
+        assert_eq!(
+            config.launcher.global_hotkey,
+            hotkey::normalize_shortcut(&hotkey::default_shortcut()).unwrap()
+        );
         assert!(config.launcher.show_dock_icon);
         assert_eq!(
             config.launcher.empty_query_debounce_ms,
@@ -2536,6 +2571,22 @@ mod tests {
         let mut non_empty_too_slow = AppConfig::default();
         non_empty_too_slow.launcher.non_empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS + 1;
         assert!(normalize_and_validate(non_empty_too_slow).is_err());
+    }
+
+    #[test]
+    fn validates_and_normalizes_global_hotkey() {
+        let mut valid = AppConfig::default();
+        valid.launcher.global_hotkey = "Ctrl + Shift + K".into();
+        let normalized = normalize_and_validate(valid).expect("valid configurable shortcut");
+        assert_eq!(normalized.launcher.global_hotkey, "shift+control+KeyK");
+
+        let mut missing_modifier = AppConfig::default();
+        missing_modifier.launcher.global_hotkey = "KeyK".into();
+        assert!(normalize_and_validate(missing_modifier).is_err());
+
+        let mut unsupported_key = AppConfig::default();
+        unsupported_key.launcher.global_hotkey = "Ctrl+Unidentified".into();
+        assert!(normalize_and_validate(unsupported_key).is_err());
     }
 
     #[test]
@@ -2593,15 +2644,15 @@ mod tests {
     }
 
     #[test]
-    fn validates_supported_web_search_placeholders() {
+    fn validates_supported_web_search_templates() {
         let mut positional = AppConfig::default();
         positional.web_searches[0].url_template =
             "https://example.com/?q={query0}&v={query1}".into();
         assert!(normalize_and_validate(positional).is_ok());
 
-        let mut missing = AppConfig::default();
-        missing.web_searches[0].url_template = "https://example.com".into();
-        assert!(normalize_and_validate(missing).is_err());
+        let mut direct = AppConfig::default();
+        direct.web_searches[0].url_template = "https://example.com/direct".into();
+        assert!(normalize_and_validate(direct).is_ok());
 
         let mut legacy_position = AppConfig::default();
         legacy_position.web_searches[0].url_template = "https://example.com/?q={0}".into();
@@ -2706,6 +2757,7 @@ mod tests {
             .expect("launcher object");
         launcher.remove("emptyQueryDebounceMs");
         launcher.remove("nonEmptyQueryDebounceMs");
+        launcher.remove("globalHotkey");
         launcher.remove("showDockIcon");
         launcher.remove("windowWidthPx");
         launcher.remove("windowHeightPx");
@@ -2738,6 +2790,7 @@ mod tests {
         launcher.remove("windowHeightPx");
         launcher.remove("horizontalOffsetPx");
         launcher.remove("verticalOffsetPx");
+        launcher.remove("globalHotkey");
         launcher.remove("showDockIcon");
 
         let migrated = normalize_and_validate(
@@ -2762,6 +2815,10 @@ mod tests {
         previous["launcher"]
             .as_object_mut()
             .expect("launcher object")
+            .remove("globalHotkey");
+        previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
             .remove("showDockIcon");
 
         let migrated = normalize_and_validate(
@@ -2770,6 +2827,26 @@ mod tests {
         .expect("migrate v9 Dock visibility default");
         assert_eq!(migrated.version, CONFIG_VERSION);
         assert!(migrated.launcher.show_dock_icon);
+    }
+
+    #[test]
+    fn migrates_v10_with_platform_shortcut_default() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v10");
+        previous["version"] = serde_json::json!(10);
+        previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("globalHotkey");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v10"),
+        )
+        .expect("migrate v10 shortcut default");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.launcher.global_hotkey,
+            hotkey::normalize_shortcut(&hotkey::default_shortcut()).unwrap()
+        );
     }
 
     #[test]

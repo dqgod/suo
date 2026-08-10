@@ -1,8 +1,8 @@
 # Windows agent handoff
 
-状态：**已完成（2026-08-09）**。当前 `dev` 已完成 Windows x64 编译、自动化测试、全局快捷键唤起和用户手工视觉/交互验收；搜索窗口与设置窗口的任务栏角色也已验证通过。
+状态：**v10 已完成（2026-08-09）；v11 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达和配置迁移仍需在 Windows 复验。
 
-## 本轮目标
+## 已完成的 v10 目标
 
 在 Windows 上确认当前 `dev` 可编译、可运行，并验证以下新增行为没有破坏既有 Windows 路径：
 
@@ -153,3 +153,15 @@ rustc host：
 自动化证据：69 项 Windows Rust 测试、前端构建和 MSVC no-bundle 构建通过；真实执行 `Alt+Space → setting → Enter` 后，窗口列表由 `Suo / 梭` 切换为唯一的 `Suo 设置`。用户随后完成任务栏肉眼验收，确认以上四项全部通过。
 
 排障说明：开发或验收期间若使用 `Stop-Process -Force`、任务管理器“结束任务”、崩溃退出，或在旧进程退出前替换构建，Windows Explorer 可能暂时保留失去宿主的通知区域图标。鼠标悬停后旧图标立即消失、且 `Get-Process -Name suo` 只有一个进程时，这是 Explorer 的“幽灵图标”缓存，不是 Suo 多实例；托盘菜单“退出”会走正常清理路径。只有悬停后仍存在多个图标或确有多个进程时，才按单实例/托盘重复创建缺陷继续排查。
+
+## 8. 2026-08-10 v11 Windows 待验证
+
+- [ ] 从真实 v10 配置启动，确认迁移到 v11 后 `globalHotkey` 默认为 `Alt+Space`，所有 v10 字段保持；保存后配置和 `.bak` 版本/内容符合预期。
+- [ ] 通用设置点击快捷键按钮并录制例如 `Ctrl+Shift+K`；统一保存模式下点击保存才生效，自动保存模式下合法组合自动生效。
+- [ ] 新组合保存后旧组合不再唤起；切回 `Alt+Space` 后行为恢复。无修饰键、未知键和被其他程序占用的组合必须报错且继续保留原快捷键。
+- [ ] 快捷键变化不得改变搜索窗口/设置窗口现有的 Windows taskbar 角色，也不得影响彩色托盘图标与单实例。
+- [ ] 新建关键词 `mydoc`、URL `https://bytedance.feishu.cn/drive/home/`，只输入 `mydoc` 时应生成“打开”结果；按 Enter 才交给默认浏览器。带 `{query}` 与 `{query0}` 的现有搜索和缺参错误必须回归。
+- [ ] Windows 开始菜单应用发现、微信拼音/首字母、原生图标、Everything 和 Job Object 路径保持原样；macOS 的 plist/本地化别名代码不得进入 Windows 构建。
+- [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构和真实交互结果。
+
+完成后把本文件顶部更新为“v11 已完成”，并同步 `handoff/README.md`；不要覆盖第 6、7 节的 v10 历史证据。

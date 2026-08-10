@@ -1,10 +1,20 @@
 use std::{collections::HashSet, path::PathBuf};
 
+#[cfg(target_os = "macos")]
+use std::{fs, path::Path};
+
 #[cfg(target_os = "windows")]
 use std::env;
 
 use pinyin::ToPinyin;
 use walkdir::{DirEntry, WalkDir};
+
+#[derive(Clone, Debug)]
+pub struct CatalogAlias {
+    pub normalized: String,
+    pub pinyin: String,
+    pub pinyin_initials: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct CatalogEntry {
@@ -20,6 +30,9 @@ pub struct CatalogEntry {
     /// Initials are a secondary convenience match (for example, `wx` for
     /// `微信`). They deliberately score below full pinyin and native text.
     pub pinyin_initials: String,
+    /// Bundle metadata and localized display names are searchable without
+    /// changing the stable path-derived title shown in launcher results.
+    pub aliases: Vec<CatalogAlias>,
 }
 
 impl CatalogEntry {
@@ -46,6 +59,31 @@ impl CatalogEntry {
             normalized_path,
             pinyin_name,
             pinyin_initials,
+            aliases: Vec::new(),
+        }
+    }
+
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn add_application_aliases<I>(&mut self, aliases: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut seen = HashSet::from([self.normalized_name.clone()]);
+        for alias in aliases {
+            let alias = alias.trim();
+            if alias.is_empty() {
+                continue;
+            }
+            let normalized = alias.to_lowercase();
+            if !seen.insert(normalized.clone()) {
+                continue;
+            }
+            let (pinyin, pinyin_initials) = pinyin_search_keys(alias);
+            self.aliases.push(CatalogAlias {
+                normalized,
+                pinyin,
+                pinyin_initials,
+            });
         }
     }
 }
@@ -125,13 +163,117 @@ fn discover_macos_applications() -> Vec<CatalogEntry> {
         roots.push(home.join("Applications"));
     }
 
-    collect_entries(roots, 4, 10_000, true, true, |entry| {
+    let mut entries = collect_entries(roots, 4, 10_000, true, true, |entry| {
         entry.file_type().is_dir()
             && entry
                 .path()
                 .extension()
                 .and_then(|value| value.to_str())
                 .is_some_and(|value| value.eq_ignore_ascii_case("app"))
+    });
+    for entry in &mut entries {
+        entry.add_application_aliases(macos_application_aliases(&entry.path));
+    }
+    entries
+}
+
+#[cfg(target_os = "macos")]
+fn macos_application_aliases(application: &Path) -> Vec<String> {
+    let contents = application.join("Contents");
+    let mut aliases = Vec::new();
+    if let Ok(value) = plist::Value::from_file(contents.join("Info.plist")) {
+        if let Some(dictionary) = value.as_dictionary() {
+            for key in ["CFBundleDisplayName", "CFBundleName", "CFBundleExecutable"] {
+                if let Some(value) = dictionary.get(key).and_then(plist::Value::as_string) {
+                    aliases.push(value.to_string());
+                }
+            }
+            if let Some(url_types) = dictionary
+                .get("CFBundleURLTypes")
+                .and_then(plist::Value::as_array)
+            {
+                for url_type in url_types.iter().filter_map(plist::Value::as_dictionary) {
+                    let Some(schemes) = url_type
+                        .get("CFBundleURLSchemes")
+                        .and_then(plist::Value::as_array)
+                    else {
+                        continue;
+                    };
+                    for scheme in schemes.iter().filter_map(plist::Value::as_string) {
+                        if !matches!(
+                            scheme.to_ascii_lowercase().as_str(),
+                            "file" | "http" | "https" | "mailto"
+                        ) {
+                            aliases.push(scheme.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let resources = contents.join("Resources");
+    for locale in ["zh-Hans", "zh_CN", "zh-Hant", "zh_TW", "zh_HK"] {
+        let path = resources.join(format!("{locale}.lproj/InfoPlist.strings"));
+        if let Ok(value) = plist::Value::from_file(&path) {
+            if let Some(dictionary) = value.as_dictionary() {
+                for key in ["CFBundleDisplayName", "CFBundleName"] {
+                    if let Some(value) = dictionary.get(key).and_then(plist::Value::as_string) {
+                        aliases.push(value.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let Some(strings) = decode_strings_file(&bytes) else {
+            continue;
+        };
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let Some(value) = localized_string_value(&strings, key) {
+                aliases.push(value);
+            }
+        }
+    }
+    aliases
+}
+
+#[cfg(target_os = "macos")]
+fn decode_strings_file(bytes: &[u8]) -> Option<String> {
+    if let Some(data) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        let units = data
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16(&units).ok();
+    }
+    if let Some(data) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        let units = data
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16(&units).ok();
+    }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    String::from_utf8(bytes.to_vec()).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn localized_string_value(contents: &str, key: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if line.starts_with("//") || line.starts_with("/*") || line.starts_with('*') {
+            return None;
+        }
+        let (candidate, value) = line.split_once('=')?;
+        if candidate.trim().trim_matches('"') != key {
+            return None;
+        }
+        let value = value.trim().trim_end_matches(';').trim();
+        let value = value.strip_prefix('"')?.strip_suffix('"')?;
+        Some(value.replace("\\\"", "\"").replace("\\\\", "\\"))
     })
 }
 
@@ -280,5 +422,87 @@ mod tests {
 
         assert!(entry.pinyin_name.is_empty());
         assert!(entry.pinyin_initials.is_empty());
+    }
+
+    #[test]
+    fn application_aliases_keep_native_and_pinyin_search_keys() {
+        let mut entry = CatalogEntry::from_application_path_with_type(
+            PathBuf::from("/Applications/WeChat.app"),
+            true,
+        );
+        entry.add_application_aliases(["微信".into(), "weixin".into(), "WeChat".into()]);
+
+        assert!(entry.aliases.iter().any(|alias| alias.normalized == "微信"));
+        assert!(entry
+            .aliases
+            .iter()
+            .any(|alias| alias.normalized == "weixin"));
+        assert!(entry
+            .aliases
+            .iter()
+            .any(|alias| alias.pinyin == "weixin" && alias.pinyin_initials == "wx"));
+        assert!(!entry
+            .aliases
+            .iter()
+            .any(|alias| alias.normalized == "wechat"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_bundle_and_utf16_localized_application_aliases() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let application = std::env::temp_dir().join(format!(
+            "suo-localized-app-{}-{nonce}.app",
+            std::process::id()
+        ));
+        let contents = application.join("Contents");
+        let localized = contents.join("Resources/zh-Hans.lproj");
+        fs::create_dir_all(&localized).expect("create localized application bundle");
+        fs::write(
+            contents.join("Info.plist"),
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleDisplayName</key><string>WeChat</string>
+<key>CFBundleName</key><string>Weixin</string>
+<key>CFBundleExecutable</key><string>WeChat</string>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>weixin</string><string>https</string></array></dict></array>
+</dict></plist>"#,
+        )
+        .expect("write Info.plist");
+        let localized_contents = "\u{feff}\"CFBundleDisplayName\" = \"微信\";\n";
+        let utf16 = localized_contents
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        fs::write(localized.join("InfoPlist.strings"), utf16).expect("write localized strings");
+
+        let aliases = macos_application_aliases(&application);
+        assert!(aliases.iter().any(|value| value == "Weixin"));
+        assert!(aliases.iter().any(|value| value == "weixin"));
+        assert!(aliases.iter().any(|value| value == "微信"));
+        assert!(!aliases.iter().any(|value| value == "https"));
+
+        fs::remove_dir_all(application).expect("remove application bundle");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires locally installed WeChat and Lark bundles"]
+    fn installed_wechat_and_lark_expose_chinese_aliases() {
+        let wechat = macos_application_aliases(Path::new("/Applications/WeChat.app"));
+        assert!(wechat.iter().any(|value| value == "微信"));
+        assert!(wechat
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("weixin")));
+
+        let lark = macos_application_aliases(Path::new("/Applications/Lark.app"));
+        assert!(lark.iter().any(|value| value == "飞书"));
+        assert!(lark
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("feishu")));
     }
 }

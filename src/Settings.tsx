@@ -65,6 +65,54 @@ const launcherWidthBounds = { minimum: 560, maximum: 1_200 } as const;
 const launcherHeightBounds = { minimum: 320, maximum: 720 } as const;
 const launcherHorizontalOffsetBounds = { minimum: -400, maximum: 400 } as const;
 const launcherVerticalOffsetBounds = { minimum: -240, maximum: 240 } as const;
+const shortcutModifierCodes = new Set([
+  "AltLeft", "AltRight", "ControlLeft", "ControlRight", "MetaLeft", "MetaRight", "ShiftLeft", "ShiftRight",
+]);
+const shortcutNamedCodes = new Set([
+  "Backquote", "Backslash", "BracketLeft", "BracketRight", "Pause", "Comma", "Equal", "Minus", "Period", "Quote", "Semicolon", "Slash",
+  "Backspace", "CapsLock", "Enter", "Space", "Tab", "Delete", "End", "Home", "Insert", "PageDown", "PageUp", "PrintScreen", "ScrollLock",
+  "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "NumLock", "NumpadAdd", "NumpadDecimal", "NumpadDivide", "NumpadEnter", "NumpadEqual",
+  "NumpadMultiply", "NumpadSubtract", "AudioVolumeDown", "AudioVolumeUp", "AudioVolumeMute", "MediaPlay", "MediaPause", "MediaPlayPause",
+  "MediaStop", "MediaTrackNext", "MediaTrackPrevious",
+]);
+
+function isSupportedShortcutCode(code: string) {
+  return /^(?:Key[A-Z]|Digit[0-9]|Numpad[0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/.test(code)
+    || shortcutNamedCodes.has(code);
+}
+
+function shortcutFromKeyboardEvent(event: {
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}) {
+  if (shortcutModifierCodes.has(event.code)) return { kind: "waiting" as const };
+  if (!event.altKey && !event.ctrlKey && !event.metaKey) return { kind: "missing-modifier" as const };
+  if (!isSupportedShortcutCode(event.code)) return { kind: "unsupported" as const };
+  const parts: string[] = [];
+  if (event.shiftKey) parts.push("shift");
+  if (event.ctrlKey) parts.push("control");
+  if (event.altKey) parts.push("alt");
+  if (event.metaKey) parts.push("super");
+  parts.push(event.code);
+  return { kind: "shortcut" as const, value: parts.join("+") };
+}
+
+function displayShortcut(value: string, isMac: boolean) {
+  const parts = value.split("+").map((part) => part.trim()).filter(Boolean);
+  return parts.map((part) => {
+    const token = part.toLowerCase();
+    if (token === "control" || token === "ctrl") return "Ctrl";
+    if (token === "alt" || token === "option") return isMac ? "Option" : "Alt";
+    if (token === "shift") return "Shift";
+    if (["super", "command", "cmd", "meta"].includes(token)) return isMac ? "Command" : "Win";
+    if (/^key[a-z]$/i.test(part)) return part.slice(3).toUpperCase();
+    if (/^digit[0-9]$/i.test(part)) return part.slice(5);
+    return part;
+  }).join(" + ");
+}
 
 function queryDebounceFromInput(value: string) {
   const parsed = Number(value);
@@ -214,6 +262,8 @@ function Settings() {
   const [saving, setSaving] = useState(false);
   const [autoSaving, setAutoSaving] = useState(false);
   const [autoSaveNeedsRetry, setAutoSaveNeedsRetry] = useState(false);
+  const [recordingHotkey, setRecordingHotkey] = useState(false);
+  const hotkeyButtonRef = useRef<HTMLButtonElement | null>(null);
   const draftRevisionRef = useRef(0);
   const draftRef = useRef<AppConfig | null>(null);
   const persistedSignatureRef = useRef("");
@@ -351,9 +401,53 @@ function Settings() {
   }, [draft, editor, queueAutoSave, saving, view?.configReadOnly]);
 
   useEffect(() => {
+    if (!recordingHotkey) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.key === "Escape" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        setRecordingHotkey(false);
+        return;
+      }
+      const captured = shortcutFromKeyboardEvent(event);
+      if (captured.kind === "waiting") return;
+      if (captured.kind === "missing-modifier") {
+        setError(zhCN.hotkeyRequiresModifier);
+        return;
+      }
+      if (captured.kind === "unsupported") {
+        setError(zhCN.hotkeyUnsupportedKey);
+        return;
+      }
+      setError("");
+      setRecordingHotkey(false);
+      setDraft((current) => current ? {
+        ...current,
+        launcher: { ...current.launcher, globalHotkey: captured.value },
+      } : current);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!hotkeyButtonRef.current?.contains(event.target as Node)) {
+        setRecordingHotkey(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [recordingHotkey, setDraft]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (saving) return;
+      if (recordingHotkey) {
+        event.preventDefault();
+        setRecordingHotkey(false);
+        return;
+      }
       if (editor) {
         event.preventDefault();
         cancelEditor();
@@ -363,7 +457,7 @@ function Settings() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, editor, saving]);
+  }, [close, editor, recordingHotkey, saving]);
 
   const save = async () => {
     if (!draft) return;
@@ -674,7 +768,6 @@ function Settings() {
   };
 
   const isMac = /Mac/i.test(navigator.platform);
-  const hotkey = isMac ? "Command + Space" : "Alt + Space";
 
   return (
     <main className="settings-stage">
@@ -750,7 +843,19 @@ function Settings() {
                 <div className="settings-card">
                   <div className="setting-row">
                     <div><strong>{zhCN.globalHotkey}</strong><small>{zhCN.globalHotkeyDescription}</small></div>
-                    <kbd className="hotkey-value">{hotkey}</kbd>
+                    <button
+                      ref={hotkeyButtonRef}
+                      className={`hotkey-recorder ${recordingHotkey ? "recording" : ""}`}
+                      type="button"
+                      disabled={saving || Boolean(view?.configReadOnly)}
+                      aria-label={zhCN.globalHotkey}
+                      onClick={() => {
+                        setError("");
+                        setRecordingHotkey(true);
+                      }}
+                    >
+                      {recordingHotkey ? zhCN.hotkeyRecording : displayShortcut(draft.launcher.globalHotkey, isMac)}
+                    </button>
                   </div>
                   <label className="setting-row">
                     <div><strong>{zhCN.closeOnBlur}</strong><small>{zhCN.closeOnBlurDescription}</small></div>

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type LauncherConfig = {
+  globalHotkey: string;
   closeOnBlur: boolean;
   keepLastInput: boolean;
   compactWhenEmpty: boolean;

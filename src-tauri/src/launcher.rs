@@ -362,29 +362,7 @@ fn search_launcher_blocking(
     } else if let Some((search, arguments)) = web_search_command(&config, &query) {
         provider = format!("自定义网络搜索 · {}", search.name);
         provider_detail = "按 Enter 使用系统默认浏览器打开".into();
-        if arguments.is_empty() {
-            vec![hint_result(
-                &format!("{} <关键词>", search.keyword),
-                "请输入要搜索的内容",
-            )]
-        } else {
-            match web_search::expand_url(&search.url_template, arguments) {
-                Ok(url) => vec![SearchResult {
-                    id: format!("web:{}:{arguments}", search.id),
-                    title: format!("{} 搜索：{arguments}", search.name),
-                    subtitle: url.clone(),
-                    kind: ResultKind::Web,
-                    badge: "网络".into(),
-                    score: 2_000,
-                    action: ResultAction::OpenUrl { url },
-                }],
-                Err(error) => vec![error_result(
-                    format!("web:{}:args-error", search.id),
-                    error,
-                    "请补充参数或检查引号",
-                )],
-            }
-        }
+        web_search_results(search, arguments)
     } else if let Some(arguments) = command_arguments(&query, "f") {
         if arguments.is_empty() {
             provider = "全盘文件搜索".into();
@@ -807,6 +785,7 @@ where
                 &entry.normalized_path,
                 &normalized_query,
                 allow_pinyin.then_some((&entry.pinyin_name, &entry.pinyin_initials)),
+                &entry.aliases,
             ) else {
                 continue;
             };
@@ -857,6 +836,7 @@ fn match_score(name: &str, path: &str, query: &str) -> Option<i32> {
         &path.to_lowercase(),
         &query.to_lowercase(),
         None,
+        &[],
     )
 }
 
@@ -865,6 +845,7 @@ fn match_score_normalized(
     path: &str,
     query: &str,
     pinyin: Option<(&str, &str)>,
+    aliases: &[catalog::CatalogAlias],
 ) -> Option<i32> {
     if name == query {
         return Some(1_000);
@@ -875,11 +856,29 @@ fn match_score_normalized(
     if let Some(position) = name.find(&query) {
         return Some(760 - position as i32);
     }
+    for alias in aliases {
+        if alias.normalized == query {
+            return Some(880);
+        }
+        if alias.normalized.starts_with(query) {
+            return Some(820 - query.len() as i32);
+        }
+        if let Some(position) = alias.normalized.find(query) {
+            return Some(700 - position.min(200) as i32);
+        }
+    }
     if let Some(position) = path.find(&query) {
         return Some(620 - position.min(200) as i32);
     }
     if is_subsequence(&name, &query) {
         return Some(420 - (name.len().saturating_sub(query.len())).min(200) as i32);
+    }
+    for alias in aliases {
+        if is_subsequence(&alias.normalized, query) {
+            return Some(
+                400 - (alias.normalized.len().saturating_sub(query.len())).min(200) as i32,
+            );
+        }
     }
     // Pinyin is intentionally only a fallback after native text/path matching.
     // Its best score remains below an exact file result after catalog boosts,
@@ -903,6 +902,23 @@ fn match_score_normalized(
                 return Some(540);
             }
             if initials.starts_with(query) {
+                return Some(500 - query.len() as i32);
+            }
+        }
+        for alias in aliases {
+            if alias.pinyin == query {
+                return Some(680);
+            }
+            if alias.pinyin.starts_with(query) {
+                return Some(640 - query.len() as i32);
+            }
+            if let Some(position) = alias.pinyin.find(query) {
+                return Some(580 - position.min(200) as i32);
+            }
+            if alias.pinyin_initials == query {
+                return Some(540);
+            }
+            if alias.pinyin_initials.starts_with(query) {
                 return Some(500 - query.len() as i32);
             }
         }
@@ -1017,6 +1033,36 @@ fn web_search_command<'config, 'query>(
     })
 }
 
+fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchResult> {
+    let requires_arguments = web_search::requires_arguments(&search.url_template).unwrap_or(true);
+    if arguments.is_empty() && requires_arguments {
+        return vec![hint_result(
+            &format!("{} <关键词>", search.keyword),
+            "请输入要搜索的内容",
+        )];
+    }
+    match web_search::expand_url(&search.url_template, arguments) {
+        Ok(url) => vec![SearchResult {
+            id: format!("web:{}:{arguments}", search.id),
+            title: if arguments.is_empty() {
+                format!("打开 {}", search.name)
+            } else {
+                format!("{} 搜索：{arguments}", search.name)
+            },
+            subtitle: url.clone(),
+            kind: ResultKind::Web,
+            badge: "网络".into(),
+            score: 2_000,
+            action: ResultAction::OpenUrl { url },
+        }],
+        Err(error) => vec![error_result(
+            format!("web:{}:args-error", search.id),
+            error,
+            "请补充参数或检查引号",
+        )],
+    }
+}
+
 fn script_output_result(
     command: &ScriptCommandConfig,
     arguments: &str,
@@ -1071,11 +1117,15 @@ fn hint_result(title: &str, subtitle: &str) -> SearchResult {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::{catalog::CatalogEntry, config::AppConfig, models::ResultKind};
+    use crate::{
+        catalog::CatalogEntry,
+        config::{AppConfig, WebSearchConfig},
+        models::{ResultAction, ResultKind},
+    };
 
     use super::{
         calculate, catalog_results, command_arguments, is_settings_query, launcher_position,
-        match_score, script_command, translation_command, web_search_command,
+        match_score, script_command, translation_command, web_search_command, web_search_results,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -1216,6 +1266,38 @@ mod tests {
     }
 
     #[test]
+    fn localized_bundle_aliases_find_macos_application_names() {
+        let mut wechat = CatalogEntry::from_application_path_with_type(
+            PathBuf::from("/Applications/WeChat.app"),
+            true,
+        );
+        wechat.add_application_aliases(["微信".into(), "weixin".into()]);
+        let mut lark = CatalogEntry::from_application_path_with_type(
+            PathBuf::from("/Applications/Lark.app"),
+            true,
+        );
+        lark.add_application_aliases(["飞书".into(), "Feishu".into()]);
+        let entries = vec![wechat, lark];
+
+        for (query, expected) in [("微信", "WeChat"), ("weixin", "WeChat"), ("飞书", "Lark")] {
+            let results = catalog_results(
+                &entries,
+                query,
+                ResultKind::App,
+                "应用",
+                8,
+                800,
+                true,
+                || false,
+            );
+            assert_eq!(
+                results.first().map(|result| result.title.as_str()),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
     fn pinyin_catalog_matching_keeps_the_top_k_limit() {
         let entries = (0..100)
             .map(|index| {
@@ -1302,6 +1384,29 @@ mod tests {
         assert!(translation_command(&config.translation, "fy hello").is_none());
         assert!(script_command(&config, "ts 123456").is_none());
         assert!(web_search_command(&config, "google codex").is_none());
+    }
+
+    #[test]
+    fn direct_web_link_is_actionable_without_arguments() {
+        let search = WebSearchConfig {
+            id: "mydoc".into(),
+            name: "我的文档".into(),
+            keyword: "mydoc".into(),
+            description: String::new(),
+            aliases: Vec::new(),
+            enabled: true,
+            url_template: "https://bytedance.feishu.cn/drive/home/".into(),
+        };
+
+        let results = web_search_results(&search, "");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "打开 我的文档");
+        match &results[0].action {
+            ResultAction::OpenUrl { url } => {
+                assert_eq!(url, "https://bytedance.feishu.cn/drive/home/")
+            }
+            action => panic!("expected direct URL action, got {action:?}"),
+        }
     }
 
     #[test]

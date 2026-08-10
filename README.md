@@ -20,16 +20,16 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 
 当前 `dev` 已实现 Windows 首轮可运行闭环，并于 2026-08-08 完成 macOS Apple Silicon 首轮实机验证：
 
-- `Alt+Space` 唤起/隐藏无边框窗口，`Esc` 关闭；macOS 源码默认使用 `Command+Space`；
+- 默认以 Windows `Alt+Space`、macOS `Command+Space` 唤起/隐藏无边框窗口，`Esc` 关闭；通用设置可点击录制并更换组合键，冲突时保留原快捷键；
 - Windows 与 macOS 均启用单实例保护；正常运行时再次启动会唤醒并聚焦已有主窗口；
 - 常驻系统托盘；左键唤醒主窗口，右键菜单可显示 Suo、打开设置或退出进程；macOS 使用随菜单栏明暗自动反色的中空模板图标，并可在通用设置中隐藏 Dock 图标；Windows 保留彩色托盘图标，快捷键搜索窗口不占任务栏，设置窗口仍显示任务栏图标；
-- 搜索开始菜单应用和桌面、文档、下载目录文件；中文应用名称支持拼音全拼和首字母，例如 `weixin` / `wx` 可命中“微信”；
+- 搜索开始菜单应用和桌面、文档、下载目录文件；中文应用名称支持拼音全拼和首字母；macOS 同时读取 `.app` 的 Bundle 名称、URL scheme 和中文本地化名称，因此 `微信` / `weixin` 可命中 WeChat，`飞书` / `feishu` 可命中 Lark；
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
 - macOS 的 `f <关键词>` 通过 Spotlight 文件名索引搜索，失败时同样回退限定目录索引；
 - 通用设置可分别配置空输入和非空输入的尾沿防抖（均为 0–60000 ms，默认 0 / 50 ms），并取消或丢弃过期查询；即时脚本继续逐项配置自己的 20–60000 ms 执行延迟；
 - 通用设置可在 560–1200 px 宽、320–720 px 高范围内调整启动器，并相对原始居中偏上位置微调水平/垂直偏移；多显示器上会自动夹紧到目标工作区；
 - `11+1` 本地计算；脚本命令可在设置中增删改，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
-- 网络搜索可在设置中增删改；`{query}` 表示无需引号的整段参数，`{query0}`、`{query1}`…表示位置参数；模板必须以规范的 `http://` 或 `https://` 开头，按 Enter 后才打开浏览器；
+- 网络搜索可在设置中增删改；不含占位符的 HTTP/HTTPS URL 是固定直达链接，只输入关键词即可生成打开结果；`{query}` 表示无需引号的整段参数，`{query0}`、`{query1}`…表示位置参数，所有链接都只在按 Enter 后交给浏览器；
 - `fy hello` 使用 Microsoft Translator，支持 `fy:ja hello`，API Key 存入系统凭据库而非 JSON；
 - 搜索界面与设置界面拥有完全独立的午夜、纸张、森林主题库、自定义皮肤和强调色；分别使用严格校验的 `suo-launcher-theme-v1` / `suo-settings-theme-v1` 导入导出文件，支持实时预览、可读性提示、经受限解码的本地背景图和平台覆盖；
 - 搜索皮肤可分别调整窗口和搜索框边框、输入文字、普通/选中结果颜色与字号、结果行高和图标尺寸，并可隐藏放大镜、Suo Logo 与来源标签；
@@ -47,8 +47,9 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 脚本命令后的内容按引号感知规则拆成 argv，Suo 不限定参数数量或含义。`ts 1786082576069 +8` 会传入 `["1786082576069", "+8"]`，由 `timestamp.py` 将第二项解释为时区偏移；
 - 网络搜索 `{query}` 表示关键词后的完整文本，因此 `google test codex` 无需引号即可得到一个 `test codex` 值；
 - `{query0}`、`{query1}`…表示位置参数。同一输入配合 `?q={query0}&v={query1}` 会分别填入 `test`、`codex`；只有单个位置参数本身包含空格时才需要引号。
+- URL 不含占位符时作为固定直达链接，例如将 `mydoc` 配置为 `https://bytedance.feishu.cn/drive/home/` 后，只输入 `mydoc` 并回车即可打开。
 
-仍未完成的发布级工作包括：可录制快捷键、开机自启、应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布。
+仍未完成的发布级工作包括：开机自启、应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布。
 
 ## 开发环境
 
@@ -88,6 +89,8 @@ cargo test
 
 同日再次升级到配置 v10，并在通用设置加入 macOS 专属“在 Dock 中显示图标”开关。v9 实机配置迁移后原有字段逐项一致且默认继续显示 Dock 图标；关闭开关时进程由 LaunchServices `Foreground` 即时切换为 `UIElement`，设置窗口和后台进程保持运行，重新开启后恢复 `Foreground`，隐藏状态重启后仍生效。验证完成后原始配置与 `.bak` 已按 SHA-256 原样恢复。本轮前端构建、69 项 Rust 测试、无 bundle 构建和 `.app` 构建通过，产物为 arm64。
 
+2026-08-10 配置升级到 v11：通用设置可录制并持久化全局快捷键；macOS 应用索引读取 Bundle 名称、URL scheme 与中文本地化资源；不含占位符的 HTTP/HTTPS 命令可作为固定链接直达。实机已确认 `Ctrl+Shift+K` 注册和持久化成功，`微信` / `weixin` 命中 WeChat、`飞书` 命中 Lark，`mydoc` 可生成飞书文档固定链接的“打开”结果。本轮原生 arm64 前端构建、81 项标准 Rust 测试、1 项本机 Bundle 测试、all-targets check、无 bundle 与 `.app` 构建全部通过，验收后用户配置和 `.bak` 已按 SHA-256 原样恢复。自动化无法注入系统级全局快捷键，因此真实按键唤起仍保留人工回归。
+
 实机已通过应用发现/原生图标/打开、Spotlight 文件名搜索与快速输入取消、计算器、Google 搜索、Python/Bash/Executable argv、脚本超时进程组终止、圆角透明窗口、紧凑空查询窗口、Finder 再次打开唤醒和单实例进程检查。Dock 图标已使用 macOS 专用透明边距资源，未改动 Windows 图标资产。
 
 本机 `Command+Space` 可直接注册并显示“已就绪”，因此未复现系统 Spotlight 占用时的冲突提示；该分支仍需在保留系统默认快捷键的机器上补测。Microsoft Translator 的缺少凭据提示已通过，按本次验证选择未向 Keychain 写入真实密钥，也未发送真实翻译请求。菜单栏托盘右键菜单、真实快捷键按键唤起和多显示器定位仍需人工操作补充确认。
@@ -118,7 +121,7 @@ pnpm tauri dev
 - `f <关键词>` 的 Spotlight 搜索、快速输入取消、隐私权限提示和限定目录索引回退；
 - macOS Keychain 翻译凭据，以及 Python 3、Bash、可执行脚本的参数、超时与进程组终止。
 
-可直接运行的应用包位于 `src-tauri/target/release/bundle/macos/Suo.app`。当前阶段不要求签名、公证或 DMG 发布。给 macOS Codex 的完整检查边界和故障记录格式见 [AGENTS.md](./AGENTS.md#macos-apple-silicon-handoff)。
+可直接运行的应用包位于 `src-tauri/target/release/bundle/macos/Suo.app`。当前阶段不要求签名、公证或 DMG 发布。给 macOS Codex 的完整检查边界和故障记录格式见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
 
 ## 分支约定
 
