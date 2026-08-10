@@ -312,6 +312,12 @@ export type AppConfig = {
 
 export type AppConfigView = {
   config: AppConfig;
+  configFilePath: string;
+  configDirectory: string;
+  defaultConfigFilePath: string;
+  defaultConfigDirectory: string;
+  usingDefaultConfigLocation: boolean;
+  configLocationNeedsReset: boolean;
   translationApiKeyConfigured: boolean;
   credentialStoreError: string | null;
   configLoadWarning: string | null;

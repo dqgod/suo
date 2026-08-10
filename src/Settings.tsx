@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   aliasesFromText,
@@ -263,6 +264,7 @@ function Settings() {
   const [autoSaving, setAutoSaving] = useState(false);
   const [autoSaveNeedsRetry, setAutoSaveNeedsRetry] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
+  const [changingConfigLocation, setChangingConfigLocation] = useState(false);
   const hotkeyButtonRef = useRef<HTMLButtonElement | null>(null);
   const draftRevisionRef = useRef(0);
   const draftRef = useRef<AppConfig | null>(null);
@@ -528,6 +530,46 @@ function Settings() {
       await invoke("reveal_script_in_folder", { configuredPath });
     } catch (revealError) {
       setError(String(revealError));
+    }
+  };
+
+  const openConfigDirectory = async () => {
+    setError("");
+    try {
+      await invoke("open_config_directory");
+    } catch (openError) {
+      setError(String(openError));
+    }
+  };
+
+  const relocateConfig = async (directory: string) => {
+    setChangingConfigLocation(true);
+    setError("");
+    try {
+      const next = await invoke<AppConfigView>("change_config_directory", { directory });
+      persistedSignatureRef.current = JSON.stringify(next.config);
+      setView(next);
+      showStatus(t.configLocationChanged);
+    } catch (locationError) {
+      setError(String(locationError));
+    } finally {
+      setChangingConfigLocation(false);
+    }
+  };
+
+  const chooseConfigDirectory = async () => {
+    if (!view) return;
+    setError("");
+    try {
+      const selected = await openDialog({
+        title: t.chooseConfigDirectory,
+        directory: true,
+        multiple: false,
+        defaultPath: view.configDirectory,
+      });
+      if (typeof selected === "string") await relocateConfig(selected);
+    } catch (dialogError) {
+      setError(String(dialogError));
     }
   };
 
@@ -957,6 +999,41 @@ function Settings() {
                       <span>{zhCN.milliseconds}</span>
                     </span>
                   </label>
+                  {view && (
+                    <div className="setting-row config-location-row">
+                      <div>
+                        <strong>{t.configFileLocation}</strong>
+                        <small>{t.configFileLocationDescription}</small>
+                        {!view.usingDefaultConfigLocation && (
+                          <small className="config-default-path">{t.defaultConfigLocation}：{view.defaultConfigFilePath}</small>
+                        )}
+                      </div>
+                      <div className="config-location-control">
+                        <code title={view.configFilePath}>{view.configFilePath}</code>
+                        <span className="config-location-actions">
+                          <button className="secondary-button" type="button" onClick={() => void openConfigDirectory()}>{t.openConfigDirectory}</button>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={saving || autoSaving || changingConfigLocation || Boolean(editor) || view.configReadOnly}
+                            onClick={() => void chooseConfigDirectory()}
+                          >
+                            {changingConfigLocation ? t.changingConfigLocation : t.changeConfigLocation}
+                          </button>
+                          {(!view.usingDefaultConfigLocation || view.configLocationNeedsReset) && (
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              disabled={saving || autoSaving || changingConfigLocation || Boolean(editor) || view.configReadOnly}
+                              onClick={() => void relocateConfig(view.defaultConfigDirectory)}
+                            >
+                              {t.restoreDefaultConfigLocation}
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   <div className="setting-row">
                     <div><strong>{zhCN.trayIcon}</strong><small>{zhCN.trayIconDescription}</small></div>
                     <span className="setting-status">{zhCN.enabled}</span>

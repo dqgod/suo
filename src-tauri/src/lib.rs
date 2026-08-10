@@ -36,6 +36,7 @@ pub fn run() {
     }));
 
     let app = builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -116,6 +117,8 @@ pub fn run() {
             hide_launcher,
             launcher::set_launcher_compact,
             config::get_app_config,
+            config::open_config_directory,
+            config::change_config_directory,
             config::save_app_config,
             config::set_translation_api_key,
             config::clear_translation_api_key,

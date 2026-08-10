@@ -37,10 +37,12 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 命令、网络搜索和翻译服务采用摘要卡片，点击后展开编辑；每项支持可选描述和独立启用开关，开启为绿色、关闭为灰色；设置页可选择最终统一“保存设置”或在合法修改后自动保存；
 - 通用设置可开启“空输入时仅显示搜索框”；空查询收缩原生窗口，开始输入后恢复完整窗口；
 - `setting`、`settings` 或 `设置` 显示设置入口，按 Enter 打开设置窗口；
-- 设置保存到用户配置目录的 `config.json`，保存前校验命令关键字的全局唯一性；
+- 设置页显示当前 `config.json` 的完整路径，可打开所在文件夹、选择空目录迁移或恢复平台默认位置；切换前先复制并校验，原位置文件保留为恢复副本；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
 2026-08-09 当前 v10 增量已在 Windows 10 x64 完成前端、69 项 Rust 测试和 MSVC no-bundle 构建，最终 EXE 为 x64；真实 `Alt+Space`、配置迁移、几何设置、多屏/DPI、彩色托盘图标、窗口级任务栏策略、应用图标、选中态和保存模式均通过。自动化截图对透明无边框窗口返回的 `0x80004002` 已确认仅为 Windows 10 捕获接口限制，不影响 Suo；详见 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
+
+2026-08-10 配置文件位置功能已在 macOS Apple Silicon 的真实 `.app` 中通过验证：默认路径展示、Finder 打开、原生目录选择、迁移后重启、恢复默认后重启均正常，验收后用户原配置已按校验值恢复；Windows 侧仍按 [`handoff/WINDOWS.md`](handoff/WINDOWS.md) 待验证。
 
 ### 命令参数约定
 
@@ -48,6 +50,15 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 网络搜索 `{query}` 表示关键词后的完整文本，因此 `google test codex` 无需引号即可得到一个 `test codex` 值；
 - `{query0}`、`{query1}`…表示位置参数。同一输入配合 `?q={query0}&v={query1}` 会分别填入 `test`、`codex`；只有单个位置参数本身包含空格时才需要引号。
 - URL 不含占位符时作为固定直达链接，例如将 `mydoc` 配置为 `https://bytedance.feishu.cn/drive/home/` 后，只输入 `mydoc` 并回车即可打开。
+
+### 配置文件位置
+
+默认配置文件路径：
+
+- macOS：`~/Library/Application Support/io.github.dqgod.suo/config.json`
+- Windows：`%APPDATA%\io.github.dqgod.suo\config.json`
+
+“设置 → 通用 → 配置文件位置”会显示当前实际路径，并可直接打开文件夹或选择新的空目录。Suo 先在目标目录原子写入并校验 `config.json`，再更新默认目录中固定保留的 `config-location.json` 位置指针；目标已有 `config.json` 或 `.bak` 时拒绝覆盖。旧位置文件不会自动删除，可用于手动恢复。Microsoft Translator 密钥仍只保存在 macOS Keychain / Windows Credential Manager，不随普通配置迁移。
 
 仍未完成的发布级工作包括：开机自启、应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布。
 

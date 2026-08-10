@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
 };
@@ -13,6 +13,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::{dock, hotkey, launcher::LauncherState, web_search};
 
 const CONFIG_VERSION: u32 = 11;
+const CONFIG_FILE_NAME: &str = "config.json";
+const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
+const CONFIG_LOCATION_VERSION: u32 = 1;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
 const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
 const MAX_COMMANDS: usize = 50;
@@ -596,6 +599,12 @@ impl SettingsCustomThemeConfig {
 #[serde(rename_all = "camelCase")]
 pub struct AppConfigView {
     pub config: AppConfig,
+    pub config_file_path: String,
+    pub config_directory: String,
+    pub default_config_file_path: String,
+    pub default_config_directory: String,
+    pub using_default_config_location: bool,
+    pub config_location_needs_reset: bool,
     pub translation_api_key_configured: bool,
     pub credential_store_error: Option<String>,
     pub config_load_warning: Option<String>,
@@ -603,8 +612,17 @@ pub struct AppConfigView {
     pub config_read_only: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConfigLocationPointer {
+    version: u32,
+    config_directory: Option<PathBuf>,
+}
+
 pub struct ConfigState {
-    path: PathBuf,
+    path: RwLock<PathBuf>,
+    default_path: PathBuf,
+    location_path: PathBuf,
     config: RwLock<AppConfig>,
     load_warning: RwLock<Option<String>>,
     needs_legacy_preferences_migration: RwLock<bool>,
@@ -686,11 +704,13 @@ impl ConfigState {
             .path()
             .app_config_dir()
             .unwrap_or_else(|_| PathBuf::from("."));
-        let path = config_dir.join("config.json");
+        let default_path = config_dir.join(CONFIG_FILE_NAME);
+        let location_path = config_dir.join(CONFIG_LOCATION_FILE_NAME);
+        let (path, location_warning) = resolve_config_path(&default_path, &location_path);
         let needs_legacy_preferences_migration =
             !path.exists() && !path.with_extension("json.bak").exists();
         let incompatible_newer_version = newer_config_version(&path);
-        let (config, load_warning) = if let Some(version) = incompatible_newer_version {
+        let (config, config_warning) = if let Some(version) = incompatible_newer_version {
             (
                 AppConfig::default(),
                 Some(format!(
@@ -700,8 +720,11 @@ impl ConfigState {
         } else {
             load_config(&path)
         };
+        let load_warning = join_warnings(location_warning, config_warning);
         Self {
-            path,
+            path: RwLock::new(path),
+            default_path,
+            location_path,
             config: RwLock::new(config),
             load_warning: RwLock::new(load_warning),
             needs_legacy_preferences_migration: RwLock::new(needs_legacy_preferences_migration),
@@ -722,9 +745,10 @@ impl ConfigState {
             .save_lock
             .lock()
             .map_err(|_| "配置保存锁暂时不可用".to_string())?;
+        let path = self.config_path()?;
         if let Some(version) = self
             .incompatible_newer_version
-            .or_else(|| newer_config_version(&self.path))
+            .or_else(|| newer_config_version(&path))
         {
             return Err(format!(
                 "配置来自更新版本 v{version}，当前版本禁止覆盖，请升级 Suo"
@@ -736,7 +760,7 @@ impl ConfigState {
             .read()
             .map_err(|_| "配置状态暂时不可用".to_string())?
             .clone();
-        persist_config(&self.path, &config)?;
+        persist_config(&path, &config)?;
         let mut current = self
             .config
             .write()
@@ -751,14 +775,124 @@ impl ConfigState {
         Ok((previous, config))
     }
 
+    fn config_path(&self) -> Result<PathBuf, String> {
+        self.path
+            .read()
+            .map(|path| path.clone())
+            .map_err(|_| "配置路径状态暂时不可用".to_string())
+    }
+
+    fn relocate(&self, directory: &Path) -> Result<(), String> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .map_err(|_| "配置保存锁暂时不可用".to_string())?;
+        if self.incompatible_newer_version.is_some() {
+            return Err("当前配置来自更新版本，不能调整配置位置".into());
+        }
+        if !directory.is_absolute() {
+            return Err("配置目录必须是绝对路径".into());
+        }
+        if !directory.is_dir() {
+            return Err(format!(
+                "配置目录不存在或不是文件夹：{}",
+                directory.display()
+            ));
+        }
+
+        let target = directory.join(CONFIG_FILE_NAME);
+        let using_default = paths_equal(&target, &self.default_path);
+        let mut current_path = self
+            .path
+            .write()
+            .map_err(|_| "配置路径状态暂时不可用".to_string())?;
+        if paths_equal(&current_path, &target) {
+            if using_default && config_location_needs_reset(&self.location_path) {
+                persist_config_location(&self.location_path, None)?;
+                if let Ok(mut warning) = self.load_warning.write() {
+                    *warning = None;
+                }
+            }
+            return Ok(());
+        }
+        if let Some(version) = newer_config_version(&current_path) {
+            return Err(format!(
+                "当前配置已由更新版本 v{version} 写入，不能调整配置位置"
+            ));
+        }
+
+        let target_backup = target.with_extension("json.bak");
+        if !using_default && (target.exists() || target_backup.exists()) {
+            return Err(format!(
+                "目标文件夹已包含 {} 或其备份；为避免覆盖，请选择空文件夹",
+                CONFIG_FILE_NAME
+            ));
+        }
+
+        let config = self.snapshot();
+        persist_config(&target, &config)?;
+        if let Err(error) = read_config_file(&target) {
+            if !using_default {
+                let _ = fs::remove_file(&target);
+            }
+            return Err(format!("目标配置写入后校验失败，仍使用原位置：{error}"));
+        }
+        let pointer_directory = (!using_default).then_some(directory);
+        if let Err(error) = persist_config_location(&self.location_path, pointer_directory) {
+            if !using_default {
+                let _ = fs::remove_file(&target);
+                let _ = fs::remove_file(target.with_extension("json.tmp"));
+            }
+            return Err(format!("配置已复制到目标目录，但无法切换位置：{error}"));
+        }
+        let (resolved, pointer_warning) =
+            resolve_config_path(&self.default_path, &self.location_path);
+        if pointer_warning.is_some() || !paths_equal(&resolved, &target) {
+            let previous_directory = (!paths_equal(&current_path, &self.default_path))
+                .then(|| current_path.parent())
+                .flatten();
+            let rollback = persist_config_location(&self.location_path, previous_directory);
+            if !using_default {
+                let _ = fs::remove_file(&target);
+            }
+            let rollback_detail = rollback
+                .err()
+                .map(|error| format!("；恢复原位置指针也失败：{error}"))
+                .unwrap_or_default();
+            return Err(format!(
+                "配置位置指针校验失败，仍使用原位置{rollback_detail}"
+            ));
+        }
+
+        *current_path = target;
+        if let Ok(mut warning) = self.load_warning.write() {
+            *warning = None;
+        }
+        if let Ok(mut migration) = self.needs_legacy_preferences_migration.write() {
+            *migration = false;
+        }
+        Ok(())
+    }
+
     fn view(&self) -> AppConfigView {
         let (translation_api_key_configured, credential_store_error) =
             match read_translation_api_key() {
                 Ok(value) => (value.is_some(), None),
                 Err(error) => (false, Some(error)),
             };
+        let config_path = self
+            .config_path()
+            .unwrap_or_else(|_| self.default_path.clone());
+        let config_directory = config_path.parent().unwrap_or(Path::new("."));
+        let default_config_directory = self.default_path.parent().unwrap_or(Path::new("."));
         AppConfigView {
             config: self.snapshot(),
+            config_file_path: config_path.to_string_lossy().into_owned(),
+            config_directory: config_directory.to_string_lossy().into_owned(),
+            default_config_file_path: self.default_path.to_string_lossy().into_owned(),
+            default_config_directory: default_config_directory.to_string_lossy().into_owned(),
+            using_default_config_location: paths_equal(&config_path, &self.default_path),
+            config_location_needs_reset: config_location_needs_reset(&self.location_path),
             translation_api_key_configured,
             credential_store_error,
             config_load_warning: self
@@ -774,6 +908,117 @@ impl ConfigState {
             config_read_only: self.incompatible_newer_version.is_some(),
         }
     }
+}
+
+fn resolve_config_path(default_path: &Path, location_path: &Path) -> (PathBuf, Option<String>) {
+    if !location_path.exists() {
+        return (default_path.to_path_buf(), None);
+    }
+    let pointer = match read_config_location_pointer(location_path) {
+        Ok(pointer) => pointer,
+        Err(error) => {
+            return (
+                default_path.to_path_buf(),
+                Some(format!("{error}；已使用默认配置位置")),
+            );
+        }
+    };
+    if pointer.version != CONFIG_LOCATION_VERSION {
+        return (
+            default_path.to_path_buf(),
+            Some(format!(
+                "不支持的配置位置指针版本 v{}；已使用默认配置位置",
+                pointer.version
+            )),
+        );
+    }
+    let Some(directory) = pointer.config_directory else {
+        return (default_path.to_path_buf(), None);
+    };
+    if !directory.is_absolute() {
+        return (
+            default_path.to_path_buf(),
+            Some("自定义配置目录不是绝对路径；已使用默认配置位置".into()),
+        );
+    }
+    let candidate = directory.join(CONFIG_FILE_NAME);
+    if paths_equal(&candidate, default_path) {
+        return (default_path.to_path_buf(), None);
+    }
+    if candidate.exists() || candidate.with_extension("json.bak").exists() {
+        return (candidate, None);
+    }
+    (
+        default_path.to_path_buf(),
+        Some(format!(
+            "自定义配置 {} 不可用；已临时使用默认配置位置",
+            candidate.display()
+        )),
+    )
+}
+
+fn read_config_location_pointer(location_path: &Path) -> Result<ConfigLocationPointer, String> {
+    let content = fs::read_to_string(location_path)
+        .map_err(|error| format!("无法读取配置位置指针：{error}"))?;
+    serde_json::from_str::<ConfigLocationPointer>(&content)
+        .map_err(|error| format!("配置位置指针格式无效：{error}"))
+}
+
+fn config_location_needs_reset(location_path: &Path) -> bool {
+    if !location_path.exists() {
+        return false;
+    }
+    match read_config_location_pointer(location_path) {
+        Ok(pointer) => {
+            pointer.version != CONFIG_LOCATION_VERSION || pointer.config_directory.is_some()
+        }
+        Err(_) => true,
+    }
+}
+
+fn persist_config_location(
+    location_path: &Path,
+    config_directory: Option<&Path>,
+) -> Result<(), String> {
+    if let Some(parent) = location_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建默认配置目录：{error}"))?;
+    }
+    let pointer = ConfigLocationPointer {
+        version: CONFIG_LOCATION_VERSION,
+        config_directory: config_directory.map(Path::to_path_buf),
+    };
+    let data = serde_json::to_string_pretty(&pointer)
+        .map_err(|error| format!("无法序列化配置位置：{error}"))?;
+    let temporary = location_path.with_extension("json.tmp");
+    let mut file = fs::File::create(&temporary)
+        .map_err(|error| format!("无法创建配置位置临时文件：{error}"))?;
+    file.write_all(data.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("无法写入配置位置临时文件：{error}"))?;
+    let result = replace_config_file(&temporary, location_path);
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn join_warnings(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first}；{second}")),
+        (Some(warning), None) | (None, Some(warning)) => Some(warning),
+        (None, None) => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    left == right
 }
 
 fn config_file_version(path: &Path) -> Option<u64> {
@@ -842,7 +1087,6 @@ fn persist_config(path: &Path, config: &AppConfig) -> Result<(), String> {
     let temporary = path.with_extension("json.tmp");
     let mut file =
         fs::File::create(&temporary).map_err(|error| format!("无法创建临时配置：{error}"))?;
-    use std::io::Write;
     file.write_all(data.as_bytes())
         .and_then(|_| file.sync_all())
         .map_err(|error| format!("无法写入临时配置：{error}"))?;
@@ -2119,6 +2363,30 @@ pub fn get_app_config(state: State<'_, Arc<ConfigState>>) -> AppConfigView {
 }
 
 #[tauri::command]
+pub fn open_config_directory(state: State<'_, Arc<ConfigState>>) -> Result<(), String> {
+    let path = state.config_path()?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "配置文件没有可打开的父目录".to_string())?;
+    fs::create_dir_all(directory).map_err(|error| format!("无法创建配置目录：{error}"))?;
+    open::that_detached(directory)
+        .map_err(|error| format!("无法打开配置目录 {}：{error}", directory.display()))
+}
+
+#[tauri::command]
+pub fn change_config_directory(
+    state: State<'_, Arc<ConfigState>>,
+    directory: String,
+) -> Result<AppConfigView, String> {
+    let directory = directory.trim();
+    if directory.is_empty() {
+        return Err("配置目录不能为空".into());
+    }
+    state.relocate(Path::new(directory))?;
+    Ok(state.view())
+}
+
+#[tauri::command]
 pub fn save_app_config(
     app: AppHandle,
     state: State<'_, Arc<ConfigState>>,
@@ -2230,6 +2498,22 @@ mod tests {
     fn remove_temporary_config(path: &Path) {
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    fn config_state_at(path: &Path) -> ConfigState {
+        ConfigState {
+            path: RwLock::new(path.to_path_buf()),
+            default_path: path.to_path_buf(),
+            location_path: path
+                .parent()
+                .expect("temporary config parent")
+                .join(CONFIG_LOCATION_FILE_NAME),
+            config: RwLock::new(AppConfig::default()),
+            load_warning: RwLock::new(None),
+            needs_legacy_preferences_migration: RwLock::new(false),
+            save_lock: Mutex::new(()),
+            incompatible_newer_version: None,
         }
     }
 
@@ -3353,14 +3637,7 @@ mod tests {
     #[test]
     fn refuses_newer_disk_config_written_after_startup() {
         let path = temporary_config_path("newer-after-startup");
-        let state = ConfigState {
-            path: path.clone(),
-            config: RwLock::new(AppConfig::default()),
-            load_warning: RwLock::new(None),
-            needs_legacy_preferences_migration: RwLock::new(false),
-            save_lock: Mutex::new(()),
-            incompatible_newer_version: None,
-        };
+        let state = config_state_at(&path);
         let newer_version = u64::from(CONFIG_VERSION) + 1;
         fs::write(
             &path,
@@ -3376,5 +3653,96 @@ mod tests {
         let content = fs::read_to_string(&path).expect("read protected config");
         assert!(content.contains("futureField"));
         remove_temporary_config(&path);
+    }
+
+    #[test]
+    fn config_location_pointer_resolves_only_available_absolute_configs() {
+        let default_path = temporary_config_path("location-pointer");
+        let default_directory = default_path.parent().expect("default directory");
+        let location_path = default_directory.join(CONFIG_LOCATION_FILE_NAME);
+        let custom_directory = default_directory.join("custom");
+        fs::create_dir_all(&custom_directory).expect("create custom directory");
+        let custom_path = custom_directory.join(CONFIG_FILE_NAME);
+        persist_config(&custom_path, &AppConfig::default()).expect("write custom config");
+
+        let (resolved_default, warning) = resolve_config_path(&default_path, &location_path);
+        assert_eq!(resolved_default, default_path);
+        assert!(warning.is_none());
+
+        persist_config_location(&location_path, Some(&custom_directory))
+            .expect("write custom location pointer");
+        let (resolved_custom, warning) = resolve_config_path(&default_path, &location_path);
+        assert_eq!(resolved_custom, custom_path);
+        assert!(warning.is_none());
+
+        fs::remove_file(&custom_path).expect("remove custom config");
+        let (fallback, warning) = resolve_config_path(&default_path, &location_path);
+        assert_eq!(fallback, default_path);
+        assert!(warning.is_some_and(|value| value.contains("已临时使用默认配置位置")));
+        assert!(config_location_needs_reset(&location_path));
+
+        let state = config_state_at(&default_path);
+        state
+            .relocate(default_directory)
+            .expect("reset unavailable custom location to default");
+        assert!(!config_location_needs_reset(&location_path));
+        let (repaired, warning) = resolve_config_path(&default_path, &location_path);
+        assert_eq!(repaired, default_path);
+        assert!(warning.is_none());
+        remove_temporary_config(&default_path);
+    }
+
+    #[test]
+    fn relocating_config_is_transactional_and_keeps_recovery_copies() {
+        let default_path = temporary_config_path("relocate");
+        let default_directory = default_path.parent().expect("default directory");
+        persist_config(&default_path, &AppConfig::default()).expect("write default config");
+        let state = config_state_at(&default_path);
+        let custom_directory = default_directory.join("custom");
+        fs::create_dir_all(&custom_directory).expect("create custom directory");
+
+        state
+            .relocate(&custom_directory)
+            .expect("relocate to empty custom directory");
+        let custom_path = custom_directory.join(CONFIG_FILE_NAME);
+        assert_eq!(state.config_path().unwrap(), custom_path);
+        assert!(custom_path.is_file());
+        assert!(
+            default_path.is_file(),
+            "old config remains as a recovery copy"
+        );
+        let (resolved, warning) = resolve_config_path(&default_path, &state.location_path);
+        assert_eq!(resolved, custom_path);
+        assert!(warning.is_none());
+
+        let occupied_directory = default_directory.join("occupied");
+        fs::create_dir_all(&occupied_directory).expect("create occupied directory");
+        fs::write(
+            occupied_directory.join(CONFIG_FILE_NAME),
+            "do not overwrite",
+        )
+        .expect("write occupied target");
+        let error = state
+            .relocate(&occupied_directory)
+            .expect_err("occupied custom directory must be rejected");
+        assert!(error.contains("为避免覆盖"));
+        assert_eq!(
+            fs::read_to_string(occupied_directory.join(CONFIG_FILE_NAME)).unwrap(),
+            "do not overwrite"
+        );
+        assert_eq!(state.config_path().unwrap(), custom_path);
+
+        state
+            .relocate(default_directory)
+            .expect("restore default location");
+        assert_eq!(state.config_path().unwrap(), default_path);
+        let (resolved, warning) = resolve_config_path(&default_path, &state.location_path);
+        assert_eq!(resolved, default_path);
+        assert!(warning.is_none());
+        assert!(
+            custom_path.is_file(),
+            "custom config remains as a recovery copy"
+        );
+        remove_temporary_config(&default_path);
     }
 }

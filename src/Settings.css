@@ -233,6 +233,46 @@
   font-size: calc(var(--settings-font-size) - 4px);
 }
 
+.config-location-row {
+  align-items: flex-start;
+}
+
+.config-location-row > div:first-child {
+  flex: 1 1 38%;
+}
+
+.config-default-path {
+  overflow-wrap: anywhere;
+}
+
+.config-location-row > .config-location-control {
+  width: min(620px, 58%);
+  flex: 0 1 620px;
+  align-items: stretch;
+  gap: 9px;
+}
+
+.config-location-control code {
+  display: block;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--settings-primary-text);
+  background: var(--field);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: calc(var(--settings-font-size) - 5px);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.config-location-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .hotkey-recorder {
   min-width: 142px;
   height: 34px;

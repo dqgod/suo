@@ -161,6 +161,8 @@ rustc host：
 - [ ] 新组合保存后旧组合不再唤起；切回 `Alt+Space` 后行为恢复。无修饰键、未知键和被其他程序占用的组合必须报错且继续保留原快捷键。
 - [ ] 快捷键变化不得改变搜索窗口/设置窗口现有的 Windows taskbar 角色，也不得影响彩色托盘图标与单实例。
 - [ ] 新建关键词 `mydoc`、URL `https://bytedance.feishu.cn/drive/home/`，只输入 `mydoc` 时应生成“打开”结果；按 Enter 才交给默认浏览器。带 `{query}` 与 `{query0}` 的现有搜索和缺参错误必须回归。
+- [ ] 通用设置应显示 `%APPDATA%\io.github.dqgod.suo\config.json` 的实际展开路径；“打开文件夹”使用 Explorer，“更改位置”使用原生目录选择器。迁移到含空格/中文的空目录后应写入配置与默认目录 `config-location.json`，保存和重启继续读取新位置；恢复默认后行为反向成立，旧文件保留。
+- [ ] 目标已有 `config.json`/`.bak`、目录不可写或目标含更新版本时必须拒绝迁移并继续使用原路径；配置迁移不得移动 Credential Manager 中的翻译密钥。
 - [ ] Windows 开始菜单应用发现、微信拼音/首字母、原生图标、Everything 和 Job Object 路径保持原样；macOS 的 plist/本地化别名代码不得进入 Windows 构建。
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构和真实交互结果。
 

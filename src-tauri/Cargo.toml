@@ -31,6 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 # Pure Rust table lookup; only the tone-free API is needed for launcher search.
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
+tauri-plugin-dialog = "2"
 
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tauri-plugin-single-instance = "2"

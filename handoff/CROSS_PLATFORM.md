@@ -43,23 +43,29 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 
 快捷键变更还必须按运行时事务处理：先验证并注册新组合，再停用旧组合和持久化；注册冲突或保存失败时保留/恢复旧组合。不要让设置页显示已保存但进程仍监听另一个快捷键。
 
-## 5. macOS 应用名不等于 `.app` 文件名
+## 5. 可移动配置仍需要固定引导位置
+
+macOS 默认配置是 `~/Library/Application Support/io.github.dqgod.suo/config.json`，Windows 默认配置是 `%APPDATA%\io.github.dqgod.suo\config.json`。用户把配置迁走后，程序不能靠被迁走的 `config.json` 记录自身位置；默认目录中的 `config-location.json` 是固定、版本化的启动指针。
+
+迁移必须持有与普通保存相同的锁，先原子写入并验证目标 `config.json`，再原子替换位置指针，最后切换内存路径。自定义目标已存在 `config.json` 或 `.bak` 时拒绝覆盖；失败继续使用旧路径；成功后旧文件作为恢复副本保留。翻译密钥仍在 Keychain / Credential Manager，不得复制进目标 JSON。Windows 必须实测含空格和非 ASCII 的目录、Explorer 打开以及重启读取。
+
+## 6. macOS 应用名不等于 `.app` 文件名
 
 `WeChat.app` 的中文“微信”可能只存在于 `zh-Hans.lproj/InfoPlist.strings`，`Lark.app` 的 Feishu/飞书可能来自 `CFBundleName`、URL scheme 或中文本地化资源。macOS 应用搜索需要把可信 Bundle 元数据作为别名，并兼容 UTF-8、UTF-16 与 plist 格式；不要为单个应用硬编码映射。Windows 继续使用开始菜单入口，不应编译或读取 macOS plist 路径。
 
-## 6. 默认位置与工作区不是同一个公式
+## 7. 默认位置与工作区不是同一个公式
 
 为防止窗口越界，不能直接改成“按 work area 重新居中”，否则有菜单栏/Dock/任务栏时默认位置会漂移。当前实现先按旧的完整显示器公式计算默认位置，再把用户偏移后的结果夹到工作区。
 
 Windows agent 修改多显示器或 DPI 逻辑时必须保留这个顺序，并验证任务栏位于顶部、侧边或不同屏幕时的结果。
 
-## 7. 实机状态与编译状态分开记录
+## 8. 实机状态与编译状态分开记录
 
 - Rust/TypeScript 测试只能证明代码路径；Dock、菜单栏、任务栏、全局快捷键、焦点、窗口透明区域和进程树需要真实平台验证。
 - 视觉问题要保存截图；OS 级显隐可同时记录 LaunchServices/进程类型等系统证据。
 - 无法自动化的项目明确标记“待人工观察”，不要用静态资源或单元测试代替最终观感结论。
 
-## 8. 用户配置与密钥
+## 9. 用户配置与密钥
 
 - 真实配置测试前复制主文件与 `.bak` 并记录校验值；测试结束后恢复，或明确说明保留了哪次迁移。
 - Microsoft Translator 密钥只进入操作系统凭据库；任何平台都不得把密钥写进 JSON、日志、截图、fixture 或 handoff。
