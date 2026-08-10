@@ -21,7 +21,8 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 当前 `dev` 已实现 Windows 首轮可运行闭环，并于 2026-08-08 完成 macOS Apple Silicon 首轮实机验证：
 
 - 默认以 Windows `Alt+Space`、macOS `Command+Space` 唤起/隐藏无边框窗口，`Esc` 关闭；通用设置可点击录制并更换组合键，冲突时保留原快捷键；
-- Windows 与 macOS 均启用单实例保护；正常运行时再次启动会唤醒并聚焦已有主窗口；
+- Windows 与 macOS 均启用单实例保护；正常运行时再次启动会唤醒已有主窗口；
+- macOS 搜索框使用不会激活 Suo 的原生面板：唤起后继续保留原应用的菜单栏和输入焦点显示，同时搜索框可接收键盘输入；显式打开设置页时仍会正常激活 Suo。Windows 保持原有搜索窗口聚焦行为；
 - 常驻系统托盘；左键唤醒主窗口，右键菜单可显示 Suo、打开设置或退出进程；macOS 使用随菜单栏明暗自动反色的中空模板图标，并可选择只在设置窗口打开期间显示 Dock 图标；Windows 保留彩色托盘图标，快捷键搜索窗口不占任务栏，设置窗口仍显示任务栏图标；
 - 搜索开始菜单应用和桌面、文档、下载目录文件；中文应用名称支持拼音全拼和首字母；macOS 同时读取 `.app` 的 Bundle 名称、URL scheme 和中文本地化名称，因此 `微信` / `weixin` 可命中 WeChat，`飞书` / `feishu` 可命中 Lark；
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
@@ -40,7 +41,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 设置页显示当前 `config.json` 的完整路径，可打开所在文件夹、选择空目录迁移或恢复平台默认位置；切换前先复制并校验，原位置文件保留为恢复副本；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能、原生 arm64 构建和大部分真实场景，仍有两项全局快捷键时序需要人工按键回归；Windows 10 x64 已完成 v10 基线，v11–v14 增量等待下一轮 Windows 实机验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
+平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能、原生 arm64 构建和大部分真实场景；非激活搜索面板已用真实 AppKit 窗口验证，完整的系统级快捷键场景仍需人工按键复核。Windows 10 x64 已完成 v10 基线，v11–v14 增量等待下一轮 Windows 实机验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
 
 ### 命令参数约定
 

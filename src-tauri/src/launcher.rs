@@ -739,7 +739,6 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
         window.hide().map_err(|error| error.to_string())?;
         let _ = window.emit("launcher-hidden", ());
     }
-    focus::forget_previous_application();
     Ok(())
 }
 
@@ -771,6 +770,7 @@ pub fn prepare_launcher_window(app: &AppHandle, config: &AppConfig) -> Result<()
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
+    focus::prepare_launcher_window(&window)?;
     // Apply persisted geometry while the native window is still hidden. This
     // prevents the first shortcut invocation from briefly showing Tauri's
     // default centered 720×520 window before the frontend loads its config.
@@ -802,7 +802,6 @@ pub fn toggle_launcher(app: &AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
         let _ = window.emit("launcher-hidden", ());
-        focus::restore_previous_application();
         return;
     }
 
@@ -833,13 +832,10 @@ pub fn show_launcher(app: &AppHandle) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
 
-    if !window.is_visible().unwrap_or(false) {
-        focus::capture_previous_application();
-    }
     window.unminimize().map_err(|error| error.to_string())?;
     let _ = position_launcher(app);
     window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())?;
+    focus::focus_shown_launcher(&window)?;
     let _ = window.emit("launcher-shown", ());
     Ok(())
 }

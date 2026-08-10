@@ -47,7 +47,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 
 快捷键变更还必须按运行时事务处理：先验证并注册新组合，再停用旧组合和持久化；注册冲突或保存失败时保留/恢复旧组合。不要让设置页显示已保存但进程仍监听另一个快捷键。
 
-macOS 若设置窗口仍可见，隐藏已聚焦的搜索框会让 AppKit 自动把设置窗口变成 key window。快捷键唤起前应记录外部 frontmost application，仅在重复快捷键关闭搜索框时恢复它；普通打开文件、URL 或脚本返回动作完成后不得用该恢复逻辑抢走新目标的焦点。Windows 不需要引入 AppKit 依赖或复制这条焦点路径。
+macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 继续走原聚焦路径，不得编译或复制 AppKit 类型。
 
 ## 5. 可移动配置仍需要固定引导位置
 

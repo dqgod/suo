@@ -10,7 +10,7 @@
 2. 完成第 2 节干净基线，确认 Node、Rust host、MSVC linker 和最终 PE 都是目标 x64 架构。
 3. 依次执行第 8–11 节，覆盖真实 v10 → v11 → v12 → v13 → v14 迁移；中间某版失败时停止向后宣称完成，但保留精确命令、退出码和 stderr。
 4. 优先做四个真实闭环：快捷键录制/冲突回滚；含空格或中文目录的配置迁移；三家 `fy` Provider 的 Credential Manager 隔离；`open_file <目录>` 第一次 Enter 只产生命令、第二次才由 PowerShell 打开。
-5. 最后回归 Everything、开始菜单应用图标、拼音、彩色托盘、搜索/设置窗口任务栏角色和 Job Object 进程树；macOS 的 AppKit 焦点恢复、Dock、Spotlight 与模板图标代码不得进入 Windows 路径。
+5. 最后回归 Everything、开始菜单应用图标、拼音、彩色托盘、搜索/设置窗口任务栏角色和 Job Object 进程树；macOS 的非激活 `NSPanel`、Dock、Spotlight 与模板图标代码不得进入 Windows 路径。
 6. 完成后更新本文件、[`handoff/README.md`](README.md) 和根 README 的一行平台状态；不要把截图、凭据、构建产物或用户配置提交到仓库。
 
 ## 已完成的 v10 目标
@@ -211,6 +211,6 @@ rustc host：
 - [ ] 同一个返回结果只能执行一次；修改查询、取消搜索、禁用/删除脚本或把动作切回复制后，旧结果必须失效且不可执行。
 - [ ] PowerShell 固定使用 `-NoLogo -NoProfile -NonInteractive -Command`；空返回、NUL、超过 16 KiB、超时与取消必须拒绝，并继续通过 Job Object 终止完整进程树。
 - [ ] 结果 action 只包含不透明 `actionId`，不得把脚本 stdout 放进 WebView 可提交的动作参数；伪造或过期 ID 不得启动 PowerShell。
-- [ ] Windows 的默认 argv 脚本路径、Everything、彩色托盘/任务栏图标和设置窗口 taskbar 角色保持；新增 macOS AppKit 焦点适配不得进入 Windows 构建。
+- [ ] Windows 的默认 argv 脚本路径、Everything、彩色托盘/任务栏图标和设置窗口 taskbar 角色保持；新增 macOS 非激活 `NSPanel` 适配不得进入 Windows 构建，Windows 搜索框仍按原逻辑获得焦点。
 - [ ] 完全退出后冷启动，第一次按快捷键应直接按持久化宽高、紧凑状态和偏移显示，不得先在默认中心闪现再移动。
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录最终 PE 架构、真实 PowerShell 场景和用户配置恢复结果。
