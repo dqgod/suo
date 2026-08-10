@@ -40,10 +40,14 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v10：macOS Dock 可见性。
 - v11：可配置全局快捷键；v10 及更早配置使用当前平台默认值迁移。
 - v12：脚本命令和网络搜索新增可选 `iconDataUrl` / `inputHint`；v11 及更早迁移为空值。图标只允许受限解码的本地 PNG/JPEG/WebP data URL，不得改成跨机器失效的本地路径或远程 URL。
+- v13：唯一的 `fy` 翻译配置新增 `provider`；v12 及更早迁移为 `microsoft`，且必须继续使用原 `microsoft-translator-api-key` 凭据项名以保留旧密钥。
+- v14：每条脚本新增 `resultAction`；v13 及更早必须迁移为 `copy`。`executeShell` 只能在结果二次激活后执行，macOS 走 Bash、Windows 走 PowerShell；原始命令不得作为 WebView action 参数传输。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 
 快捷键变更还必须按运行时事务处理：先验证并注册新组合，再停用旧组合和持久化；注册冲突或保存失败时保留/恢复旧组合。不要让设置页显示已保存但进程仍监听另一个快捷键。
+
+macOS 若设置窗口仍可见，隐藏已聚焦的搜索框会让 AppKit 自动把设置窗口变成 key window。快捷键唤起前应记录外部 frontmost application，仅在重复快捷键关闭搜索框时恢复它；普通打开文件、URL 或脚本返回动作完成后不得用该恢复逻辑抢走新目标的焦点。Windows 不需要引入 AppKit 依赖或复制这条焦点路径。
 
 ## 5. 可移动配置仍需要固定引导位置
 
@@ -61,14 +65,17 @@ macOS 默认配置是 `~/Library/Application Support/io.github.dqgod.suo/config.
 
 Windows agent 修改多显示器或 DPI 逻辑时必须保留这个顺序，并验证任务栏位于顶部、侧边或不同屏幕时的结果。
 
+首次窗口也不能等 React 载入配置后再改尺寸。启动阶段应在窗口仍隐藏时由 Rust 同时设置持久化宽度、完整/紧凑高度和位置，再注册快捷键并允许显示；否则两个平台都可能先闪现 `tauri.conf.json` 的默认居中窗口，再移动到用户位置。
+
 ## 8. 实机状态与编译状态分开记录
 
 - Rust/TypeScript 测试只能证明代码路径；Dock、菜单栏、任务栏、全局快捷键、焦点、窗口透明区域和进程树需要真实平台验证。
+- `uname -m` 只说明当前 macOS 内核架构，不保证 Node、Rust host 或最终产物同架构。混合 Rosetta 环境必须分别检查 `node -p process.arch`、`rustc -vV` 和 `file <最终二进制>`；Rust host 为 x86_64 时显式使用 `--target aarch64-apple-darwin`，不要把成功构建等同于成功生成 arm64 产物。
 - 视觉问题要保存截图；OS 级显隐可同时记录 LaunchServices/进程类型等系统证据。
 - 无法自动化的项目明确标记“待人工观察”，不要用静态资源或单元测试代替最终观感结论。
 
 ## 9. 用户配置与密钥
 
 - 真实配置测试前复制主文件与 `.bak` 并记录校验值；测试结束后恢复，或明确说明保留了哪次迁移。
-- Microsoft Translator 密钥只进入操作系统凭据库；任何平台都不得把密钥写进 JSON、日志、截图、fixture 或 handoff。
+- Microsoft / Google API Key 与有道应用 ID / 应用密钥只进入操作系统凭据库；三家使用独立凭据项，切换 Provider 不删除其他凭据。任何平台都不得把凭据写进 JSON、日志、截图、fixture 或 handoff；Google 网络错误也不得回显包含 `key` 查询参数的完整请求 URL。
 - 不要为了绕开 macOS 权限提示扩大受保护目录扫描，也不要为了 Windows 调试降低路径/图标来源校验。

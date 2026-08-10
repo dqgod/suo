@@ -53,7 +53,8 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../examples/timestamp.py": "examples/timestamp.py"
+      "../examples/timestamp.py": "examples/timestamp.py",
+      "../examples/open_path.py": "examples/open_path.py"
     },
     "icon": [
       "icons/32x32.png",

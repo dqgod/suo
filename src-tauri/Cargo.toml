@@ -28,6 +28,8 @@ urlencoding = "2"
 walkdir = "2"
 keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 # Pure Rust table lookup; only the tone-free API is needed for launcher search.
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
@@ -40,6 +42,7 @@ file_icon_provider = "=1.0.1"
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSRunningApplication", "NSWorkspace"] }
 plist = "1"
 
 [target.'cfg(windows)'.dependencies]

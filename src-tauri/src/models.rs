@@ -73,6 +73,9 @@ pub enum ResultAction {
         command_id: String,
         args: Vec<String>,
     },
+    RunScriptOutput {
+        action_id: String,
+    },
     OpenSettings,
     None,
 }
@@ -129,6 +132,13 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "runScript");
         assert_eq!(value["commandId"], "demo");
+
+        let value = serde_json::to_value(ResultAction::RunScriptOutput {
+            action_id: "opaque-action".into(),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "runScriptOutput");
+        assert_eq!(value["actionId"], "opaque-action");
     }
 
     #[test]

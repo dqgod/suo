@@ -7,6 +7,7 @@ mod dock;
 #[cfg(target_os = "windows")]
 mod everything;
 mod file_search;
+mod focus;
 mod hotkey;
 mod i18n;
 mod launcher;
@@ -21,7 +22,7 @@ mod web_search;
 
 use std::sync::Arc;
 
-use launcher::{hide_launcher, position_launcher, LauncherState};
+use launcher::{hide_launcher, LauncherState};
 use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
@@ -53,6 +54,10 @@ pub fn run() {
             dock::apply_initial_visibility(app);
             tray::create(app)?;
             app.manage(config_state);
+
+            if let Err(error) = launcher::prepare_launcher_window(app.handle(), &initial_config) {
+                eprintln!("无法在首次显示前应用启动器尺寸与位置：{error}");
+            }
 
             let state = Arc::new(LauncherState::new());
             state.update_preferences(
@@ -105,7 +110,6 @@ pub fn run() {
             }
 
             launcher::show_pending_launcher(app.handle());
-            let _ = position_launcher(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -124,8 +128,8 @@ pub fn run() {
             config::open_config_directory,
             config::change_config_directory,
             config::save_app_config,
-            config::set_translation_api_key,
-            config::clear_translation_api_key,
+            config::set_translation_credentials,
+            config::clear_translation_credentials,
             scripts::reveal_script_in_folder
         ])
         .build(tauri::generate_context!())

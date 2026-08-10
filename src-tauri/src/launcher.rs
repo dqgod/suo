@@ -12,10 +12,13 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Physical
 use crate::{
     arguments,
     catalog::{self, CatalogEntry},
-    config::{AppConfig, ConfigState, ScriptCommandConfig, TranslationConfig, WebSearchConfig},
+    config::{
+        AppConfig, ConfigState, ScriptCommandConfig, ScriptResultAction, TranslationConfig,
+        WebSearchConfig,
+    },
     dock,
     file_search::{self, FileSearchOutcome},
-    i18n,
+    focus, i18n,
     models::{CancelStatus, IndexStatus, ResultAction, ResultKind, SearchResponse, SearchResult},
     scripts, translator, web_search,
 };
@@ -24,6 +27,12 @@ static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
 const DEFAULT_LAUNCHER_WIDTH: f64 = 720.0;
 const DEFAULT_LAUNCHER_HEIGHT: f64 = 520.0;
 const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
+
+#[derive(Debug)]
+struct PendingScriptOutputAction {
+    command_id: String,
+    shell_command: String,
+}
 
 pub struct LauncherState {
     applications: RwLock<Vec<CatalogEntry>>,
@@ -35,6 +44,7 @@ pub struct LauncherState {
     action_generation: AtomicU64,
     action_epoch: AtomicU64,
     action_gate: Mutex<()>,
+    pending_script_output_actions: Mutex<HashMap<String, PendingScriptOutputAction>>,
     keep_visible_on_blur: AtomicBool,
     close_on_blur: AtomicBool,
     keep_last_input: AtomicBool,
@@ -62,6 +72,7 @@ impl LauncherState {
             action_generation: AtomicU64::new(0),
             action_epoch: AtomicU64::new(0),
             action_gate: Mutex::new(()),
+            pending_script_output_actions: Mutex::new(HashMap::new()),
             keep_visible_on_blur: AtomicBool::new(false),
             close_on_blur: AtomicBool::new(true),
             keep_last_input: AtomicBool::new(false),
@@ -112,8 +123,7 @@ impl LauncherState {
         };
         if generation > self.search_generation.load(Ordering::SeqCst) {
             self.search_generation.store(generation, Ordering::SeqCst);
-            self.cancel_actions();
-            self.action_epoch.fetch_add(1, Ordering::SeqCst);
+            self.invalidate_actions_locked();
         }
         self.action_epoch.load(Ordering::SeqCst)
     }
@@ -127,6 +137,55 @@ impl LauncherState {
             return Err("查询已取消，未启动脚本".into());
         }
         Ok(self.action_generation.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    fn register_script_output_action(
+        &self,
+        expected_epoch: u64,
+        command_id: String,
+        shell_command: String,
+    ) -> Result<String, String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "操作授权锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("结果已失效，请重新运行脚本".into());
+        }
+        let action_id = uuid::Uuid::new_v4().to_string();
+        self.pending_script_output_actions
+            .lock()
+            .map_err(|_| "脚本返回值授权暂时不可用".to_string())?
+            .insert(
+                action_id.clone(),
+                PendingScriptOutputAction {
+                    command_id,
+                    shell_command,
+                },
+            );
+        Ok(action_id)
+    }
+
+    fn begin_script_output_action(
+        &self,
+        expected_epoch: u64,
+        action_id: &str,
+    ) -> Result<(u64, PendingScriptOutputAction), String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "操作授权锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("结果已失效，请重新运行脚本".into());
+        }
+        let pending = self
+            .pending_script_output_actions
+            .lock()
+            .map_err(|_| "脚本返回值授权暂时不可用".to_string())?
+            .remove(action_id)
+            .ok_or_else(|| "脚本返回值已经执行或失效，请重新运行脚本".to_string())?;
+        let generation = self.action_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok((generation, pending))
     }
 
     fn ensure_action_epoch(&self, expected_epoch: u64) -> Result<(), String> {
@@ -144,6 +203,14 @@ impl LauncherState {
         self.action_generation.fetch_add(1, Ordering::SeqCst);
     }
 
+    fn invalidate_actions_locked(&self) {
+        self.cancel_actions();
+        if let Ok(mut actions) = self.pending_script_output_actions.lock() {
+            actions.clear();
+        }
+        self.action_epoch.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn action_is_cancelled(&self, generation: u64) -> bool {
         self.action_generation.load(Ordering::SeqCst) != generation
     }
@@ -152,8 +219,7 @@ impl LauncherState {
         if let Ok(_gate) = self.action_gate.lock() {
             if generation > self.search_generation.load(Ordering::SeqCst) {
                 self.search_generation.store(generation, Ordering::SeqCst);
-                self.cancel_actions();
-                self.action_epoch.fetch_add(1, Ordering::SeqCst);
+                self.invalidate_actions_locked();
             }
         }
         self.action_epoch.load(Ordering::SeqCst)
@@ -168,8 +234,7 @@ impl LauncherState {
             let generation = self.search_generation.load(Ordering::SeqCst);
             self.search_generation
                 .store(generation.saturating_add(1), Ordering::SeqCst);
-            self.cancel_actions();
-            self.action_epoch.fetch_add(1, Ordering::SeqCst);
+            self.invalidate_actions_locked();
         }
     }
 
@@ -208,9 +273,9 @@ pub async fn search_launcher(
 ) -> Result<SearchResponse, String> {
     let state = state.inner().clone();
     let config = config.snapshot();
-    state.begin_search(generation);
+    let action_epoch = state.begin_search(generation);
     tauri::async_runtime::spawn_blocking(move || {
-        search_launcher_blocking(app, state, config, query, generation)
+        search_launcher_blocking(app, state, config, query, generation, action_epoch)
     })
     .await
     .map_err(|error| format!("搜索任务异常结束：{error}"))
@@ -222,6 +287,7 @@ fn search_launcher_blocking(
     config: AppConfig,
     query: String,
     generation: u64,
+    action_epoch: u64,
 ) -> SearchResponse {
     let query = query.trim().to_string();
     if state.search_is_cancelled(generation) {
@@ -281,8 +347,9 @@ fn search_launcher_blocking(
     } else if let Some((translation, arguments, explicit_target)) =
         translation_command(&config.translation, &query)
     {
-        provider = "微软翻译".into();
-        provider_detail = "输入停顿 50 ms 后翻译；结果可直接复制".into();
+        let provider_name = translation.provider.display_name();
+        provider = provider_name.into();
+        provider_detail = format!("{provider_name} · 输入停顿后翻译；结果可直接复制");
         if arguments.is_empty() {
             vec![hint_result(
                 &format!("{}[:目标语言] <文本>", translation.keyword),
@@ -299,7 +366,7 @@ fn search_launcher_blocking(
                 Ok(output) => vec![SearchResult {
                     id: format!("translate:{target}:{arguments}"),
                     title: output.clone(),
-                    subtitle: format!("微软翻译 · → {target} · {arguments}"),
+                    subtitle: format!("{provider_name} · → {target} · {arguments}"),
                     kind: ResultKind::Translation,
                     icon_data_url: String::new(),
                     badge: "翻译".into(),
@@ -312,7 +379,7 @@ fn search_launcher_blocking(
                     subtitle: if error.contains("尚未配置") {
                         "按 Enter 打开设置并配置翻译服务".into()
                     } else {
-                        "检查网络、区域或微软翻译配置".into()
+                        "检查网络、目标语言或当前翻译提供方配置".into()
                     },
                     kind: ResultKind::Error,
                     icon_data_url: String::new(),
@@ -344,7 +411,18 @@ fn search_launcher_blocking(
                 match scripts::run_configured(&app, command, &args, || {
                     state.search_is_cancelled(generation)
                 }) {
-                    Ok(output) => vec![script_output_result(command, arguments, output)],
+                    Ok(output) => {
+                        match script_output_result(&state, action_epoch, command, arguments, output)
+                        {
+                            Ok(result) => vec![result],
+                            Err(error) => vec![error_result_with_icon(
+                                format!("script:{}:output-error", command.id),
+                                error,
+                                "检查脚本返回值或重新运行脚本",
+                                &command.icon_data_url,
+                            )],
+                        }
+                    }
                     Err(error) => vec![error_result_with_icon(
                         format!("script:{}:error", command.id),
                         error,
@@ -510,7 +588,10 @@ pub async fn activate_result(
 ) -> Result<Option<SearchResult>, String> {
     let may_move_focus = matches!(
         &action,
-        ResultAction::OpenPath { .. } | ResultAction::OpenUrl { .. } | ResultAction::OpenSettings
+        ResultAction::OpenPath { .. }
+            | ResultAction::OpenUrl { .. }
+            | ResultAction::RunScriptOutput { .. }
+            | ResultAction::OpenSettings
     );
     state.keep_visible_on_next_blur(keep_open && may_move_focus);
 
@@ -548,14 +629,46 @@ pub async fn activate_result(
             let generation = script_state.begin_action(action_epoch)?;
             let script_app = app.clone();
             let output = tauri::async_runtime::spawn_blocking(move || {
-                scripts::run_configured(&script_app, &command, &args, || {
+                let output = scripts::run_configured(&script_app, &command, &args, || {
                     script_state.action_is_cancelled(generation)
-                })
-                .map(|output| script_output_result(&command, &args.join(" "), output))
+                })?;
+                script_output_result(
+                    &script_state,
+                    action_epoch,
+                    &command,
+                    &args.join(" "),
+                    output,
+                )
             })
             .await
             .map_err(|error| format!("脚本任务异常结束：{error}"))??;
             Ok(Some(output))
+        }
+        ResultAction::RunScriptOutput { action_id } => {
+            let (generation, pending) =
+                state.begin_script_output_action(action_epoch, &action_id)?;
+            let Some(command) = config
+                .snapshot()
+                .script_commands
+                .into_iter()
+                .find(|command| {
+                    command.id == pending.command_id
+                        && command.enabled
+                        && command.result_action == ScriptResultAction::ExecuteShell
+                })
+            else {
+                return Err("脚本命令已被删除、禁用或不再允许执行返回值".into());
+            };
+            let shell_state = state.inner().clone();
+            let shell_app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                scripts::run_result_shell(&shell_app, &command, &pending.shell_command, || {
+                    shell_state.action_is_cancelled(generation)
+                })
+            })
+            .await
+            .map_err(|error| format!("Shell 任务异常结束：{error}"))??;
+            Ok(None)
         }
         ResultAction::OpenSettings => {
             state.ensure_action_epoch(action_epoch)?;
@@ -626,6 +739,7 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
         window.hide().map_err(|error| error.to_string())?;
         let _ = window.emit("launcher-hidden", ());
     }
+    focus::forget_previous_application();
     Ok(())
 }
 
@@ -644,18 +758,40 @@ pub fn set_launcher_compact(
         .map_err(|error| error.to_string())?
         .to_logical::<f64>(scale_factor);
     let snapshot = config.snapshot();
-    let target_height = if compact {
-        LAUNCHER_COMPACT_HEIGHT
-    } else {
-        snapshot.launcher_height()
-    };
-    let target_width = snapshot.launcher_width();
+    let target = configured_launcher_size(&snapshot, compact);
+    let target_width = target.width;
+    let target_height = target.height;
     if (current.height - target_height).abs() < 0.5 && (current.width - target_width).abs() < 0.5 {
         return Ok(());
     }
+    window.set_size(target).map_err(|error| error.to_string())
+}
+
+pub fn prepare_launcher_window(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    // Apply persisted geometry while the native window is still hidden. This
+    // prevents the first shortcut invocation from briefly showing Tauri's
+    // default centered 720×520 window before the frontend loads its config.
     window
-        .set_size(LogicalSize::new(target_width, target_height))
-        .map_err(|error| error.to_string())
+        .set_size(configured_launcher_size(
+            config,
+            config.launcher.compact_when_empty,
+        ))
+        .map_err(|error| error.to_string())?;
+    position_launcher(app)
+}
+
+fn configured_launcher_size(config: &AppConfig, compact: bool) -> LogicalSize<f64> {
+    LogicalSize::new(
+        config.launcher_width(),
+        if compact {
+            LAUNCHER_COMPACT_HEIGHT
+        } else {
+            config.launcher_height()
+        },
+    )
 }
 
 pub fn toggle_launcher(app: &AppHandle) {
@@ -666,6 +802,7 @@ pub fn toggle_launcher(app: &AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
         let _ = window.emit("launcher-hidden", ());
+        focus::restore_previous_application();
         return;
     }
 
@@ -696,6 +833,9 @@ pub fn show_launcher(app: &AppHandle) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
 
+    if !window.is_visible().unwrap_or(false) {
+        focus::capture_previous_application();
+    }
     window.unminimize().map_err(|error| error.to_string())?;
     let _ = position_launcher(app);
     window.show().map_err(|error| error.to_string())?;
@@ -1095,24 +1235,57 @@ fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchRe
 }
 
 fn script_output_result(
+    state: &LauncherState,
+    action_epoch: u64,
     command: &ScriptCommandConfig,
     arguments: &str,
     output: String,
-) -> SearchResult {
-    SearchResult {
+) -> Result<SearchResult, String> {
+    let (action, badge, action_hint) = match command.result_action {
+        ScriptResultAction::Copy => (
+            ResultAction::CopyText {
+                text: output.clone(),
+            },
+            "复制",
+            "按 Enter 复制返回文本",
+        ),
+        ScriptResultAction::ExecuteShell => {
+            let shell_command = scripts::validate_result_shell_command(&output)?;
+            let action_id = state.register_script_output_action(
+                action_epoch,
+                command.id.clone(),
+                shell_command,
+            )?;
+            (
+                ResultAction::RunScriptOutput { action_id },
+                "执行",
+                if cfg!(target_os = "windows") {
+                    "按 Enter 通过 PowerShell 执行"
+                } else {
+                    "按 Enter 通过 Bash 执行"
+                },
+            )
+        }
+    };
+    let source = if arguments.is_empty() {
+        command.script_path.clone()
+    } else {
+        format!("{} {arguments}", command.script_path)
+    };
+    Ok(SearchResult {
         id: format!("script:{}:{arguments}:output", command.id),
         title: if output.is_empty() {
             "脚本执行完成（无输出）".into()
         } else {
             output.clone()
         },
-        subtitle: format!("{} {}", command.script_path, arguments),
+        subtitle: format!("{source} · {action_hint}"),
         kind: ResultKind::Script,
         icon_data_url: command.icon_data_url.clone(),
-        badge: "脚本".into(),
+        badge: badge.into(),
         score: 2_000,
-        action: ResultAction::CopyText { text: output },
-    }
+        action,
+    })
 }
 
 fn script_action_subtitle(command: &ScriptCommandConfig, arguments: &str) -> String {
@@ -1174,14 +1347,14 @@ mod tests {
 
     use crate::{
         catalog::CatalogEntry,
-        config::{AppConfig, WebSearchConfig},
+        config::{AppConfig, ScriptResultAction, WebSearchConfig},
         models::{ResultAction, ResultKind},
     };
 
     use super::{
-        calculate, catalog_results, command_arguments, is_settings_query, launcher_position,
-        match_score, script_action_subtitle, script_command, translation_command,
-        web_search_command, web_search_results,
+        calculate, catalog_results, command_arguments, configured_launcher_size, is_settings_query,
+        launcher_position, match_score, script_action_subtitle, script_command,
+        script_output_result, translation_command, web_search_command, web_search_results,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -1216,6 +1389,18 @@ mod tests {
             PhysicalPosition::new(1_000, 1_000),
         );
         assert_eq!((lower_right.x, lower_right.y), (-1_200, 360));
+    }
+
+    #[test]
+    fn startup_geometry_uses_persisted_size_before_the_first_show() {
+        let mut config = AppConfig::default();
+        config.launcher.window_width_px = Some(900);
+        config.launcher.window_height_px = 640;
+
+        let full = configured_launcher_size(&config, false);
+        assert_eq!((full.width, full.height), (900.0, 640.0));
+        let compact = configured_launcher_size(&config, true);
+        assert_eq!((compact.width, compact.height), (900.0, 74.0));
     }
 
     #[test]
@@ -1491,6 +1676,49 @@ mod tests {
             script_action_subtitle(&command, "123"),
             format!("{} 123", command.script_path)
         );
+    }
+
+    #[test]
+    fn script_output_action_defaults_to_copy_and_shell_tokens_are_one_time() {
+        let state = super::LauncherState::new();
+        let epoch = state.begin_search(1);
+        let mut command = AppConfig::default().script_commands.remove(0);
+
+        let copied = script_output_result(&state, epoch, &command, "", "value".into()).unwrap();
+        assert_eq!(copied.badge, "复制");
+        assert!(matches!(
+            copied.action,
+            ResultAction::CopyText { ref text } if text == "value"
+        ));
+
+        command.result_action = ScriptResultAction::ExecuteShell;
+        let executable =
+            script_output_result(&state, epoch, &command, "~/", "open ~/".into()).unwrap();
+        assert_eq!(executable.badge, "执行");
+        let ResultAction::RunScriptOutput { action_id } = executable.action else {
+            panic!("expected an opaque script output action");
+        };
+        let (_, pending) = state
+            .begin_script_output_action(epoch, &action_id)
+            .expect("first activation should consume the token");
+        assert_eq!(pending.command_id, command.id);
+        assert_eq!(pending.shell_command, "open ~/");
+        assert!(state.begin_script_output_action(epoch, &action_id).is_err());
+    }
+
+    #[test]
+    fn a_new_search_invalidates_pending_script_output_actions() {
+        let state = super::LauncherState::new();
+        let epoch = state.begin_search(1);
+        let action_id = state
+            .register_script_output_action(epoch, "demo".into(), "open ~/".into())
+            .unwrap();
+
+        let next_epoch = state.begin_search(2);
+        assert_ne!(epoch, next_epoch);
+        assert!(state
+            .begin_script_output_action(next_epoch, &action_id)
+            .is_err());
     }
 
     #[test]

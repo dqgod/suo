@@ -18,6 +18,7 @@ type ResultAction =
   | { type: "openUrl"; url: string }
   | { type: "copyText"; text: string }
   | { type: "runScript"; commandId: string; args: string[] }
+  | { type: "runScriptOutput"; actionId: string }
   | { type: "openSettings" }
   | { type: "none" };
 
@@ -586,7 +587,10 @@ function Launcher() {
           return;
         }
         if (result.action.type === "none") return;
-        if (result.action.type === "runScript" && !activationReadyRef.current) {
+        if (
+          (result.action.type === "runScript" || result.action.type === "runScriptOutput") &&
+          !activationReadyRef.current
+        ) {
           setMessage("正在恢复命令状态，请稍候");
           return;
         }

@@ -9,7 +9,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - Windows x64，macOS Apple Silicon / Intel；
 - Windows 优先使用 Everything，失败时回退到 Suo 限定目录索引；
 - macOS 使用 Spotlight；
-- 计算器、Microsoft Translator、自定义 HTTP/HTTPS 搜索；
+- 计算器、可切换的 Microsoft / Google / 有道翻译、自定义 HTTP/HTTPS 搜索；
 - Python、PowerShell、Bash 和可执行文件命令；
 - 纯文本与 `suo-json-v1` 脚本输出；
 - 搜索界面与设置界面各自独立的三套内置皮肤，以及可导入、导出、实时预览的自定义皮肤。
@@ -27,10 +27,10 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
 - macOS 的 `f <关键词>` 通过 Spotlight 文件名索引搜索，失败时同样回退限定目录索引；
 - 通用设置可分别配置空输入和非空输入的尾沿防抖（均为 0–60000 ms，默认 0 / 50 ms），并取消或丢弃过期查询；即时脚本继续逐项配置自己的 20–60000 ms 执行延迟；
-- 通用设置可在 560–1200 px 宽、320–720 px 高范围内调整启动器，并相对原始居中偏上位置微调水平/垂直偏移；多显示器上会自动夹紧到目标工作区；
-- `11+1` 本地计算；脚本命令可在设置中增删改并选择可选本地图标、空参数提示，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
+- 通用设置可在 560–1200 px 宽、320–720 px 高范围内调整启动器，并相对原始居中偏上位置微调水平/垂直偏移；多显示器上会自动夹紧到目标工作区，首次快捷键显示前即由原生层应用已保存的尺寸、紧凑高度和位置，避免默认居中窗口一闪再移动；
+- `11+1` 本地计算；脚本命令可在设置中增删改并选择可选本地图标、空参数提示，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；返回文本默认在再次按 Enter 时复制，也可显式选择高风险的“执行返回的 Shell 命令”；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
 - 网络搜索可在设置中增删改，并选择可选本地图标、空参数提示；不含占位符的 HTTP/HTTPS URL 是固定直达链接，只输入关键词即可生成打开结果；`{query}` 表示无需引号的整段参数，`{query0}`、`{query1}`…表示位置参数，所有链接都只在按 Enter 后交给浏览器；
-- `fy hello` 使用 Microsoft Translator，支持 `fy:ja hello`，API Key 存入系统凭据库而非 JSON；
+- `fy hello` 使用当前选择的 Microsoft Translator、Google 翻译或有道翻译，支持 `fy:ja hello`；各提供方凭据彼此独立，只存入系统凭据库而非 JSON；
 - 搜索界面与设置界面拥有完全独立的午夜、纸张、森林主题库、自定义皮肤和强调色；分别使用严格校验的 `suo-launcher-theme-v1` / `suo-settings-theme-v1` 导入导出文件，支持实时预览、可读性提示、经受限解码的本地背景图和平台覆盖；
 - 搜索皮肤可分别调整窗口和搜索框边框、输入文字、普通/选中结果颜色与字号、结果行高和图标尺寸，并可隐藏放大镜、Suo Logo 与来源标签；
 - 应用搜索结果异步加载系统原生图标，并限制并发、缓存、像素大小与可访问路径；文件夹使用统一文件夹图标，其余文件使用统一文件图标；Windows 已通过微信开始菜单快捷方式的真实图标提取验证；
@@ -40,9 +40,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 设置页显示当前 `config.json` 的完整路径，可打开所在文件夹、选择空目录迁移或恢复平台默认位置；切换前先复制并校验，原位置文件保留为恢复副本；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-2026-08-09 当前 v10 增量已在 Windows 10 x64 完成前端、69 项 Rust 测试和 MSVC no-bundle 构建，最终 EXE 为 x64；真实 `Alt+Space`、配置迁移、几何设置、多屏/DPI、彩色托盘图标、窗口级任务栏策略、应用图标、选中态和保存模式均通过。自动化截图对透明无边框窗口返回的 `0x80004002` 已确认仅为 Windows 10 捕获接口限制，不影响 Suo；详见 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
-
-2026-08-10 配置文件位置功能已在 macOS Apple Silicon 的真实 `.app` 中通过验证：默认路径展示、Finder 打开、原生目录选择、迁移后重启、恢复默认后重启均正常，验收后用户原配置已按校验值恢复；Windows 侧仍按 [`handoff/WINDOWS.md`](handoff/WINDOWS.md) 待验证。
+平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能、原生 arm64 构建和大部分真实场景，仍有两项全局快捷键时序需要人工按键回归；Windows 10 x64 已完成 v10 基线，v11–v14 增量等待下一轮 Windows 实机验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
 
 ### 命令参数约定
 
@@ -51,6 +49,38 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - `{query0}`、`{query1}`…表示位置参数。同一输入配合 `?q={query0}&v={query1}` 会分别填入 `test`、`codex`；只有单个位置参数本身包含空格时才需要引号。
 - URL 不含占位符时作为固定直达链接，例如将 `mydoc` 配置为 `https://bytedance.feishu.cn/drive/home/` 后，只输入 `mydoc` 并回车即可打开。
 
+### 脚本返回值动作
+
+每条脚本命令的“返回值动作”默认是“复制返回文本”，所以现有 `ts` 等配置无需修改。选择“执行返回的 Shell 命令（高风险）”后，脚本本身仍先按安全 argv 模式运行；它的 stdout 只会显示成一个待执行结果，不会自动执行。用户必须再次点击该结果或按 `Enter`，Suo 才会在 macOS 使用 `/bin/bash -lc`、在 Windows 使用 `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` 执行返回文本。
+
+示例 [`examples/open_path.py`](examples/open_path.py) 接收一个文件或目录参数并生成平台命令。可在“设置 → 命令与服务 → 脚本命令”新增：关键词 `open_file`、运行时 `Python`、路径 `examples/open_path.py`、执行方式“按 Enter 执行”、返回值动作“执行返回的 Shell 命令”。输入 `open_file ~` 后，第一次 `Enter` 运行 Python 并显示命令，第二次 `Enter` 才打开目录。
+
+该模式等同于执行可信本地代码，只应为本人可审查的本地脚本开启。Suo 使用一次性、不透明的结果授权，查询变化、配置变化或首次执行后立即失效，并继续应用非 root/非管理员限制、脚本超时、输出上限和进程树取消；但它不会尝试判断返回命令是否安全。
+
+### 翻译 Provider 接入指南
+
+三个 Provider 共用同一个 `fy` 功能，不会创建额外命令。进入“设置 → 命令与服务 → 服务 → 翻译”，在“翻译能力提供方”中选择服务，填写该服务的凭据，再完成编辑并保存设置。`fy hello` 使用当前 Provider，`fy:ja hello` 临时指定目标语言。切换 Provider 不会删除其他 Provider 已保存的凭据，切回后可以继续使用。
+
+#### Microsoft Translator
+
+1. 按 [Microsoft 官方指引](https://learn.microsoft.com/en-us/azure/ai-services/translator/text-translation/how-to/use-rest-api) 在 Azure Portal 创建单服务 Translator 或 Azure AI multi-service 资源。
+2. 打开资源的 “Keys and Endpoint”，复制一个 Key，填入 Suo 的“Azure API Key”。
+3. multi-service 或区域资源还要填写资源 Region，例如 `eastasia`；单服务全局 Translator 资源可以留空。Suo 当前调用经过验证的 Translator Text API v3.0。
+
+#### Google 翻译
+
+1. 按 [Google Cloud Translation 设置指南](https://cloud.google.com/translate/docs/setup) 创建或选择 Google Cloud 项目，启用 Cloud Translation API，并为项目配置结算账号。
+2. 创建 API Key；建议在 Google Cloud Console 中把该 Key 的 API 限制收紧到 Cloud Translation API。
+3. 在 Suo 选择“Google 翻译”，把 Key 填入“Google Cloud API Key”。Suo 使用 [Cloud Translation Basic v2 `translate`](https://cloud.google.com/translate/docs/reference/rest/v2/translate)，不需要填写项目 ID 或 Region。
+
+#### 有道翻译
+
+1. 登录有道智云 AI 开放平台，按 [文本翻译 API 官方文档](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html) 创建 API 类型应用，并为应用绑定文本翻译服务。
+2. 在应用管理中取得“应用 ID”和“应用密钥”。
+3. 在 Suo 选择“有道翻译”，分别填入这两个字段后点击“保存凭据”。请求使用 HTTPS、源语言自动识别和 v3 SHA-256 签名；默认简体中文代码会自动转换成有道所需的 `zh-CHS`。
+
+Microsoft / Google 的 API Key，以及有道的应用 ID / 应用密钥，都只写入 macOS Keychain 或 Windows Credential Manager。它们不会进入 `config.json`、`.bak`、主题导出、日志或截图；更改配置文件位置也不会移动或导出凭据。删除凭据只删除当前选中的 Provider，不影响另外两家。
+
 ### 配置文件位置
 
 默认配置文件路径：
@@ -58,7 +88,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - macOS：`~/Library/Application Support/io.github.dqgod.suo/config.json`
 - Windows：`%APPDATA%\io.github.dqgod.suo\config.json`
 
-“设置 → 通用 → 配置文件位置”会显示当前实际路径，并可直接打开文件夹或选择新的空目录。Suo 先在目标目录原子写入并校验 `config.json`，再更新默认目录中固定保留的 `config-location.json` 位置指针；目标已有 `config.json` 或 `.bak` 时拒绝覆盖。旧位置文件不会自动删除，可用于手动恢复。Microsoft Translator 密钥仍只保存在 macOS Keychain / Windows Credential Manager，不随普通配置迁移。
+“设置 → 通用 → 配置文件位置”会显示当前实际路径，并可直接打开文件夹或选择新的空目录。Suo 先在目标目录原子写入并校验 `config.json`，再更新默认目录中固定保留的 `config-location.json` 位置指针；目标已有 `config.json` 或 `.bak` 时拒绝覆盖。旧位置文件不会自动删除，可用于手动恢复。三家翻译 Provider 的凭据仍只保存在 macOS Keychain / Windows Credential Manager，不随普通配置迁移。
 
 仍未完成的发布级工作包括：开机自启、应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布。
 
@@ -88,53 +118,11 @@ Set-Location .\src-tauri
 cargo test
 ```
 
-### macOS Apple Silicon 验证
+## 平台验证与交接
 
-2026-08-08 已在 Apple Silicon（`arm64`）、macOS 15.6.1（24G90）完成首轮硬件验证。前端构建、全部 Rust 测试、无 bundle 构建、`.app` 构建和开发模式启动均通过，产物为 arm64。
-
-2026-08-09 在同一台机器上对 `dev` 的 `eccc848` 增量再次完成验证：v7 配置迁移到 v8 后保留原有命令、网络搜索、主题和通用偏好，新增空查询/非空查询延迟按 0/50 ms 落默认值，保存后生成 v8 且 `.bak` 与迁移前配置一致；统一保存与自动保存模式、普通查询的 trailing-edge 延迟、即时脚本自己的 50 ms 延迟、启动器/设置两套独立主题库及保存/应用状态均通过。应用目录的原生名称、全拼和拼音首字母检索均通过，文件检索不会使用拼音；`/Applications` 与 `~/Applications` 的原生图标、缓存复用和打开行为、目录/普通文件固定图标、符号链接 `.app` 拒绝也已实测。Retina 尺寸调整、背景图与透明度、搜索图标/Logo 显隐、Spotlight 快速输入取消、计算器、Google 搜索以及未配置 Keychain 时的翻译提示均正常。跨作用域和旧版主题包由前端解析器正确拒绝；自动保存使用修订号队列，保存响应仅在草稿仍与该请求一致时回写，避免覆盖保存期间的新输入。
-
-本轮 `pnpm build`、64 项 Rust 测试、无 bundle 构建和 `.app` 构建再次通过，二进制与 `Suo.app` 内可执行文件均为 arm64。验证机同时安装了 Intel 与 Apple Silicon 工具链，因此执行时显式选择 arm64 Node 和 Rust；在类似环境中复验前应额外确认 `node -p process.arch` 为 `arm64`、`rustc -vV` 的 host 为 `aarch64-apple-darwin`，避免 Rollup 载入错误架构的原生依赖或产出 x86_64 二进制。
-
-同日后续增量已将配置升级到 v9：v8 实机配置保存为 v9 后，原有字段逐项保持一致，新增宽度为“跟随搜索皮肤”、高度 520 px、水平/垂直偏移 0/0；迁移前 v8 文件继续保留为 `.bak`。通用设置的四组滑杆与数值输入、越界值夹紧、800×600 与 1200×320 实际窗口、紧凑空输入、工作区位置算法和纯背景选中行均已验证。macOS 托盘使用独立 44×44 透明模板资产并启用系统 template 模式，Windows 图标链路未改动；辅助功能接口无法截取 SystemUIServer 菜单栏，最终明暗菜单栏观感仍需肉眼确认。本轮前端构建、68 项 Rust 测试、无 bundle 构建和 `.app` 构建通过。
-
-同日再次升级到配置 v10，并在通用设置加入 macOS 专属“在 Dock 中显示图标”开关。v9 实机配置迁移后原有字段逐项一致且默认继续显示 Dock 图标；关闭开关时进程由 LaunchServices `Foreground` 即时切换为 `UIElement`，设置窗口和后台进程保持运行，重新开启后恢复 `Foreground`，隐藏状态重启后仍生效。验证完成后原始配置与 `.bak` 已按 SHA-256 原样恢复。本轮前端构建、69 项 Rust 测试、无 bundle 构建和 `.app` 构建通过，产物为 arm64。
-
-2026-08-10 配置升级到 v11：通用设置可录制并持久化全局快捷键；macOS 应用索引读取 Bundle 名称、URL scheme 与中文本地化资源；不含占位符的 HTTP/HTTPS 命令可作为固定链接直达。实机已确认 `Ctrl+Shift+K` 注册和持久化成功，`微信` / `weixin` 命中 WeChat、`飞书` 命中 Lark，`mydoc` 可生成飞书文档固定链接的“打开”结果。本轮原生 arm64 前端构建、81 项标准 Rust 测试、1 项本机 Bundle 测试、all-targets check、无 bundle 与 `.app` 构建全部通过，验收后用户配置和 `.bak` 已按 SHA-256 原样恢复。自动化无法注入系统级全局快捷键，因此真实按键唤起仍保留人工回归。
-
-同日配置升级到 v12：脚本命令和网络搜索支持可选本地图标与空参数提示；macOS Dock 图标只在设置窗口打开期间按偏好显示。Tauri 私有透明窗口能力已显式启用，紧凑、完整启动器和设置窗口不再在 CSS 圆角外露出白色原生直角；该能力不兼容 Mac App Store，但符合当前发布范围。原生 arm64 前端构建、90 项 Rust 测试（89 通过、1 忽略）、all-targets、无 bundle 与 `.app` 构建均通过，验收后用户配置和 `.bak` 已按 SHA-256 原样恢复。
-
-实机已通过应用发现/原生图标/打开、Spotlight 文件名搜索与快速输入取消、计算器、Google 搜索、Python/Bash/Executable argv、脚本超时进程组终止、圆角透明窗口、紧凑空查询窗口、Finder 再次打开唤醒和单实例进程检查。Dock 图标已使用 macOS 专用透明边距资源，未改动 Windows 图标资产。
-
-本机 `Command+Space` 可直接注册并显示“已就绪”，因此未复现系统 Spotlight 占用时的冲突提示；该分支仍需在保留系统默认快捷键的机器上补测。Microsoft Translator 的缺少凭据提示已通过，按本次验证选择未向 Keychain 写入真实密钥，也未发送真实翻译请求。菜单栏托盘右键菜单、真实快捷键按键唤起和多显示器定位仍需人工操作补充确认。
-
-复验命令：
-
-```bash
-git switch dev
-git pull --ff-only origin dev
-uname -m                    # 应为 arm64
-sw_vers
-pnpm install --frozen-lockfile
-pnpm build
-cargo test --manifest-path src-tauri/Cargo.toml --locked
-pnpm tauri build --no-bundle
-pnpm tauri build --bundles app
-file src-tauri/target/release/suo
-pnpm tauri dev
-```
-
-重点实测：
-
-- `Command+Space` 默认会与 macOS Spotlight 冲突：先确认冲突提示，再临时关闭或改绑系统 Spotlight 快捷键，重启 Suo 后验证唤起；
-- 菜单栏托盘菜单、Dock 图标、单实例、失焦/Esc、圆角透明窗口以及 Retina/多显示器定位；
-- “空输入时仅显示搜索框”开启后，原生窗口应真实收缩，不能留下透明点击区域；
-- 搜索皮肤与设置皮肤分别切换、编辑和导入，确认两侧主题库与运行时样式互不污染；跨作用域及旧版主题文件必须被拒绝；带透明度或背景图的主题需结合真实桌面复核可读性；
-- `/Applications`、`/System/Applications`、`~/Applications` 中的 `.app` 搜索、原生图标与打开行为，并确认目录/普通文件显示各自固定图标；
-- `f <关键词>` 的 Spotlight 搜索、快速输入取消、隐私权限提示和限定目录索引回退；
-- macOS Keychain 翻译凭据，以及 Python 3、Bash、可执行脚本的参数、超时与进程组终止。
-
-可直接运行的应用包位于 `src-tauri/target/release/bundle/macos/Suo.app`。当前阶段不要求签名、公证或 DMG 发布。给 macOS Codex 的完整检查边界和故障记录格式见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- macOS Apple Silicon：核心功能已验证至配置 v14，最终原生 arm64 测试和 `.app` 构建通过；真实场景证据、混合架构工具链注意事项及尚需人工按键的项目见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- Windows x64：v10 基线已完成，v11–v14 的配置迁移、快捷键、固定 URL、配置位置、命令图标/提示、翻译 Provider 和脚本返回 Shell 动作仍需实机验证；直接执行清单见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
+- 已知跨平台工具链、配置迁移与平台隔离问题见 [`handoff/CROSS_PLATFORM.md`](./handoff/CROSS_PLATFORM.md)。README 仅维护当前状态，不保存逐轮测试流水。
 
 ## 分支约定
 
@@ -143,7 +131,7 @@ pnpm tauri dev
 
 ## 数据与隐私
 
-本地应用和文件查询不会上传。翻译请求只发送给用户配置的服务商；API Key 写入系统凭据存储。Suo 默认不保存完整查询文本，也不自动上传遥测。
+本地应用和文件查询不会上传。翻译请求只发送给用户当前选择的服务商；Microsoft / Google API Key 和有道应用凭据写入系统凭据存储。Suo 默认不保存完整查询文本，也不自动上传遥测。
 
 ## License
 

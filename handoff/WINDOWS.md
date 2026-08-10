@@ -1,6 +1,17 @@
 # Windows agent handoff
 
-状态：**v10 已完成（2026-08-09）；v11、v12 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达、配置迁移、命令图标与提示文案仍需在 Windows 复验。
+状态：**v10 已完成（2026-08-09）；v11、v12、v13、v14 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达、配置迁移、命令图标/提示文案、翻译 Provider 切换与脚本返回动作仍需在 Windows 复验。
+
+## 本次 Windows 接手入口
+
+下一位 agent 先读根目录 `AGENTS.md`、[`README.md`](../README.md)、本文件和 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，然后在 Visual Studio Developer PowerShell 中拉取 `dev`。不要重新实现 macOS 已完成的功能，按以下顺序验证并只修复 Windows 暴露的问题：
+
+1. 备份真实 `%APPDATA%\io.github.dqgod.suo\config.json`、`.bak` 与位置指针并记录 SHA-256；不要在管理员 PowerShell 中运行 Suo。
+2. 完成第 2 节干净基线，确认 Node、Rust host、MSVC linker 和最终 PE 都是目标 x64 架构。
+3. 依次执行第 8–11 节，覆盖真实 v10 → v11 → v12 → v13 → v14 迁移；中间某版失败时停止向后宣称完成，但保留精确命令、退出码和 stderr。
+4. 优先做四个真实闭环：快捷键录制/冲突回滚；含空格或中文目录的配置迁移；三家 `fy` Provider 的 Credential Manager 隔离；`open_file <目录>` 第一次 Enter 只产生命令、第二次才由 PowerShell 打开。
+5. 最后回归 Everything、开始菜单应用图标、拼音、彩色托盘、搜索/设置窗口任务栏角色和 Job Object 进程树；macOS 的 AppKit 焦点恢复、Dock、Spotlight 与模板图标代码不得进入 Windows 路径。
+6. 完成后更新本文件、[`handoff/README.md`](README.md) 和根 README 的一行平台状态；不要把截图、凭据、构建产物或用户配置提交到仓库。
 
 ## 已完成的 v10 目标
 
@@ -180,3 +191,26 @@ rustc host：
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构、真实 UI 截图与用户配置恢复结果。
 
 完成 v11 与 v12 后分别更新本文件顶部和 `handoff/README.md`；若只完成其中一版，必须保留另一版“待验证”，不要把 macOS 实机结论当作 Windows 通过。
+
+## 10. 2026-08-10 v13 Windows 待验证
+
+- [ ] 从真实 v12 配置启动，确认 v12 → v13 后 `translation.provider` 默认为 `microsoft`，原关键词、别名、目标语言、Region 和全部非翻译字段保持；旧 Microsoft Credential Manager 凭据仍能被识别。
+- [ ] 服务页只有一条“翻译”配置和一个共用 `fy` 命令；Provider 下拉框可选择 Microsoft Translator、Google 翻译和有道翻译，不得自动创建 `google` / `youdao` 翻译命令。
+- [ ] 三家凭据状态独立：Microsoft / Google 保存一个 API Key；有道必须同时保存应用 ID 和应用密钥。切换 Provider 不删除其他凭据，删除只影响当前 Provider，`config.json` / `.bak` / 日志不得出现任一凭据。
+- [ ] 不录入真实凭据时，分别选择三家并输入 `fy hello`，都应显示对应 Provider 名称和可打开设置的“尚未配置凭据”错误；Provider 摘要徽标同步显示缺少/已配置状态。
+- [ ] 若使用专门测试凭据做联网验收，覆盖 `fy hello`、中文输入自动转英文、`fy:ja hello`，并确认结果标题/副标题属于当前 Provider；任何命令输出、截图和 handoff 都不得记录凭据。
+- [ ] 有道简体中文目标会由 `zh-Hans` / `zh-CN` 转换为 `zh-CHS`，繁体转换为 `zh-CHT`；鉴权、额度、限流和不支持语言错误应给出可操作提示。
+- [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构、设置页/启动器真实交互和用户配置恢复结果。
+
+完成后更新本文件顶部与 `handoff/README.md`。Windows 修复不得改变 macOS Keychain 项名、Apple Silicon 构建或现有 Spotlight/Dock 路径。
+
+## 11. 2026-08-10 v14 Windows 待验证
+
+- [ ] 从真实 v13 配置启动，确认 v13 → v14 后每条脚本 `resultAction=copy`，`ts` 输出仍在第二次 Enter 时复制，其他配置逐项保持。
+- [ ] 新建关键词 `open_file`、Python 路径 `examples/open_path.py`，选择“执行返回的 Shell 命令”；输入 `open_file <目录>` 后第一次 Enter 只显示 `Invoke-Item -LiteralPath ...`，第二次 Enter 才通过 PowerShell 打开目标。
+- [ ] 同一个返回结果只能执行一次；修改查询、取消搜索、禁用/删除脚本或把动作切回复制后，旧结果必须失效且不可执行。
+- [ ] PowerShell 固定使用 `-NoLogo -NoProfile -NonInteractive -Command`；空返回、NUL、超过 16 KiB、超时与取消必须拒绝，并继续通过 Job Object 终止完整进程树。
+- [ ] 结果 action 只包含不透明 `actionId`，不得把脚本 stdout 放进 WebView 可提交的动作参数；伪造或过期 ID 不得启动 PowerShell。
+- [ ] Windows 的默认 argv 脚本路径、Everything、彩色托盘/任务栏图标和设置窗口 taskbar 角色保持；新增 macOS AppKit 焦点适配不得进入 Windows 构建。
+- [ ] 完全退出后冷启动，第一次按快捷键应直接按持久化宽高、紧凑状态和偏移显示，不得先在默认中心闪现再移动。
+- [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录最终 PE 架构、真实 PowerShell 场景和用户配置恢复结果。

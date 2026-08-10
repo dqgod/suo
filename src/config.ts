@@ -14,17 +14,21 @@ export type LauncherConfig = {
   verticalOffsetPx: number;
 };
 
+export type TranslationProvider = "microsoft" | "google" | "youdao";
+
 export type TranslationConfig = {
   enabled: boolean;
   keyword: string;
   description: string;
   aliases: string[];
+  provider: TranslationProvider;
   region: string;
   defaultTargetLanguage: string;
   chineseTargetLanguage: string;
 };
 
 export type ScriptRuntime = "python" | "powerShell" | "bash" | "executable";
+export type ScriptResultAction = "copy" | "executeShell";
 
 export type ScriptCommandConfig = {
   id: string;
@@ -37,6 +41,7 @@ export type ScriptCommandConfig = {
   enabled: boolean;
   runtime: ScriptRuntime;
   scriptPath: string;
+  resultAction: ScriptResultAction;
   immediate: boolean;
   debounceMs: number;
   timeoutMs: number;
@@ -322,7 +327,7 @@ export type AppConfigView = {
   defaultConfigDirectory: string;
   usingDefaultConfigLocation: boolean;
   configLocationNeedsReset: boolean;
-  translationApiKeyConfigured: boolean;
+  translationCredentialStatus: Record<TranslationProvider, boolean>;
   credentialStoreError: string | null;
   configLoadWarning: string | null;
   needsLegacyPreferencesMigration: boolean;

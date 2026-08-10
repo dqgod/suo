@@ -12,12 +12,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 12;
+const CONFIG_VERSION: u32 = 14;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
 const CREDENTIAL_SERVICE: &str = "io.github.dqgod.suo";
-const TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
+// Keep the original Microsoft account name so upgrades continue to see the
+// API key already stored by v12 and older builds.
+const MICROSOFT_TRANSLATOR_CREDENTIAL: &str = "microsoft-translator-api-key";
+const GOOGLE_TRANSLATOR_CREDENTIAL: &str = "google-translator-api-key";
+const YOUDAO_TRANSLATOR_CREDENTIAL: &str = "youdao-translator-credentials";
 const MAX_COMMANDS: usize = 50;
 const MAX_CUSTOM_THEMES: usize = 12;
 const MAX_THEME_WALLPAPER_BYTES: usize = 1_572_864;
@@ -184,9 +188,30 @@ pub struct TranslationConfig {
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default)]
+    pub provider: TranslationProvider,
+    #[serde(default)]
     pub region: String,
     pub default_target_language: String,
     pub chinese_target_language: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TranslationProvider {
+    #[default]
+    Microsoft,
+    Google,
+    Youdao,
+}
+
+impl TranslationProvider {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Microsoft => "Microsoft Translator",
+            Self::Google => "Google 翻译",
+            Self::Youdao => "有道翻译",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,10 +231,20 @@ pub struct ScriptCommandConfig {
     pub enabled: bool,
     pub runtime: ScriptRuntime,
     pub script_path: String,
+    #[serde(default)]
+    pub result_action: ScriptResultAction,
     pub immediate: bool,
     #[serde(default = "default_script_debounce_ms")]
     pub debounce_ms: u64,
     pub timeout_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScriptResultAction {
+    #[default]
+    Copy,
+    ExecuteShell,
 }
 
 const fn default_script_debounce_ms() -> u64 {
@@ -617,11 +652,19 @@ pub struct AppConfigView {
     pub default_config_directory: String,
     pub using_default_config_location: bool,
     pub config_location_needs_reset: bool,
-    pub translation_api_key_configured: bool,
+    pub translation_credential_status: TranslationCredentialStatus,
     pub credential_store_error: Option<String>,
     pub config_load_warning: Option<String>,
     pub needs_legacy_preferences_migration: bool,
     pub config_read_only: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationCredentialStatus {
+    pub microsoft: bool,
+    pub google: bool,
+    pub youdao: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -665,6 +708,7 @@ impl Default for AppConfig {
                 keyword: "fy".into(),
                 description: "中英文自动识别翻译；支持 fy:语言代码 临时指定目标语言。".into(),
                 aliases: Vec::new(),
+                provider: TranslationProvider::Microsoft,
                 region: String::new(),
                 default_target_language: "zh-Hans".into(),
                 chinese_target_language: "en".into(),
@@ -680,6 +724,7 @@ impl Default for AppConfig {
                 enabled: true,
                 runtime: ScriptRuntime::Python,
                 script_path: "examples/timestamp.py".into(),
+                result_action: ScriptResultAction::Copy,
                 immediate: true,
                 debounce_ms: default_script_debounce_ms(),
                 timeout_ms: 3_000,
@@ -891,10 +936,10 @@ impl ConfigState {
     }
 
     fn view(&self) -> AppConfigView {
-        let (translation_api_key_configured, credential_store_error) =
-            match read_translation_api_key() {
-                Ok(value) => (value.is_some(), None),
-                Err(error) => (false, Some(error)),
+        let (translation_credential_status, credential_store_error) =
+            match read_translation_credential_status() {
+                Ok(value) => (value, None),
+                Err(error) => (TranslationCredentialStatus::default(), Some(error)),
             };
         let config_path = self
             .config_path()
@@ -909,7 +954,7 @@ impl ConfigState {
             default_config_directory: default_config_directory.to_string_lossy().into_owned(),
             using_default_config_location: paths_equal(&config_path, &self.default_path),
             config_location_needs_reset: config_location_needs_reset(&self.location_path),
-            translation_api_key_configured,
+            translation_credential_status,
             credential_store_error,
             config_load_warning: self
                 .load_warning
@@ -1202,11 +1247,16 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // independent empty/non-empty query debounce settings, v9 adds the
         // launcher's cross-platform initial size and position fine tuning, and
         // v10 adds the macOS Dock visibility preference, v11 makes the global
-        // launcher shortcut configurable, and v12 adds optional per-command
-        // icons and empty-argument hints.
+        // launcher shortcut configurable, v12 adds optional per-command icons
+        // and empty-argument hints, v13 lets the shared fy command select
+        // Microsoft, Google, or Youdao as its translation provider, and v14
+        // lets each script result either copy stdout or explicitly execute it
+        // through the platform shell after a second user activation.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 => config.version = CONFIG_VERSION,
-        12 => {}
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 => {
+            config.version = CONFIG_VERSION
+        }
+        14 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -2413,17 +2463,71 @@ fn optional_trimmed(value: &str, label: &str, max: usize) -> Result<String, Stri
     Ok(value.to_string())
 }
 
-fn credential_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(CREDENTIAL_SERVICE, TRANSLATOR_CREDENTIAL)
+pub(crate) enum TranslationCredentials {
+    ApiKey(String),
+    Youdao { app_key: String, app_secret: String },
+}
+
+fn translation_credential_account(provider: TranslationProvider) -> &'static str {
+    match provider {
+        TranslationProvider::Microsoft => MICROSOFT_TRANSLATOR_CREDENTIAL,
+        TranslationProvider::Google => GOOGLE_TRANSLATOR_CREDENTIAL,
+        TranslationProvider::Youdao => YOUDAO_TRANSLATOR_CREDENTIAL,
+    }
+}
+
+fn translation_credential_entry(provider: TranslationProvider) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(CREDENTIAL_SERVICE, translation_credential_account(provider))
         .map_err(|error| format!("无法访问系统凭据库：{error}"))
 }
 
-pub fn read_translation_api_key() -> Result<Option<String>, String> {
-    match credential_entry()?.get_password() {
-        Ok(value) if !value.trim().is_empty() => Ok(Some(value)),
+pub(crate) fn read_translation_credentials(
+    provider: TranslationProvider,
+) -> Result<Option<TranslationCredentials>, String> {
+    match translation_credential_entry(provider)?.get_password() {
+        Ok(value) if !value.trim().is_empty() => match provider {
+            TranslationProvider::Microsoft | TranslationProvider::Google => {
+                Ok(Some(TranslationCredentials::ApiKey(value)))
+            }
+            TranslationProvider::Youdao => {
+                let (app_key, app_secret) = value.split_once('\n').ok_or_else(|| {
+                    "有道翻译凭据格式无效，请在设置中重新保存应用 ID 和应用密钥".to_string()
+                })?;
+                if app_key.trim().is_empty() || app_secret.trim().is_empty() {
+                    return Err("有道翻译凭据不完整，请在设置中重新保存应用 ID 和应用密钥".into());
+                }
+                Ok(Some(TranslationCredentials::Youdao {
+                    app_key: app_key.to_string(),
+                    app_secret: app_secret.to_string(),
+                }))
+            }
+        },
         Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
-        Err(error) => Err(format!("无法读取翻译密钥：{error}")),
+        Err(error) => Err(format!("无法读取{}凭据：{error}", provider.display_name())),
     }
+}
+
+fn read_translation_credential_status() -> Result<TranslationCredentialStatus, String> {
+    Ok(TranslationCredentialStatus {
+        microsoft: read_translation_credentials(TranslationProvider::Microsoft)?.is_some(),
+        google: read_translation_credentials(TranslationProvider::Google)?.is_some(),
+        youdao: read_translation_credentials(TranslationProvider::Youdao)?.is_some(),
+    })
+}
+
+fn required_credential_value(value: Option<String>, label: &str) -> Result<String, String> {
+    let value = value.unwrap_or_default();
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label}不能为空"));
+    }
+    if value.contains(['\r', '\n']) {
+        return Err(format!("{label}不能包含换行符"));
+    }
+    if value.chars().count() > 4_096 {
+        return Err(format!("{label}过长"));
+    }
+    Ok(value.to_string())
 }
 
 #[tauri::command]
@@ -2513,39 +2617,49 @@ fn provider_settings_changed(previous: &AppConfig, next: &AppConfig) -> bool {
 }
 
 #[tauri::command]
-pub fn set_translation_api_key(
+pub fn set_translation_credentials(
     app: AppHandle,
     state: State<'_, Arc<ConfigState>>,
     launcher: State<'_, Arc<LauncherState>>,
-    api_key: String,
+    provider: TranslationProvider,
+    api_key: Option<String>,
+    app_key: Option<String>,
+    app_secret: Option<String>,
 ) -> Result<AppConfigView, String> {
-    let api_key = api_key.trim();
-    if api_key.is_empty() {
-        return Err("翻译 API 密钥不能为空".into());
-    }
-    credential_entry()?
-        .set_password(api_key)
-        .map_err(|error| format!("无法保存翻译密钥：{error}"))?;
+    let encoded = match provider {
+        TranslationProvider::Microsoft | TranslationProvider::Google => {
+            required_credential_value(api_key, "翻译 API 密钥")?
+        }
+        TranslationProvider::Youdao => {
+            let app_key = required_credential_value(app_key, "有道应用 ID")?;
+            let app_secret = required_credential_value(app_secret, "有道应用密钥")?;
+            format!("{app_key}\n{app_secret}")
+        }
+    };
+    translation_credential_entry(provider)?
+        .set_password(&encoded)
+        .map_err(|error| format!("无法保存{}凭据：{error}", provider.display_name()))?;
     launcher.invalidate_provider_results();
     app.emit("provider-config-updated", ())
-        .map_err(|error| format!("密钥已保存，但无法刷新翻译结果：{error}"))?;
+        .map_err(|error| format!("翻译凭据已保存，但无法刷新翻译结果：{error}"))?;
     Ok(state.view())
 }
 
 #[tauri::command]
-pub fn clear_translation_api_key(
+pub fn clear_translation_credentials(
     app: AppHandle,
     state: State<'_, Arc<ConfigState>>,
     launcher: State<'_, Arc<LauncherState>>,
+    provider: TranslationProvider,
 ) -> Result<AppConfigView, String> {
-    match credential_entry()?.delete_credential() {
+    match translation_credential_entry(provider)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {
             launcher.invalidate_provider_results();
             app.emit("provider-config-updated", ())
-                .map_err(|error| format!("密钥已删除，但无法刷新翻译结果：{error}"))?;
+                .map_err(|error| format!("翻译凭据已删除，但无法刷新翻译结果：{error}"))?;
             Ok(state.view())
         }
-        Err(error) => Err(format!("无法删除翻译密钥：{error}")),
+        Err(error) => Err(format!("无法删除{}凭据：{error}", provider.display_name())),
     }
 }
 
@@ -2679,6 +2793,14 @@ mod tests {
         launcher.remove("windowHeightPx");
         launcher.remove("horizontalOffsetPx");
         launcher.remove("verticalOffsetPx");
+        config["translation"]
+            .as_object_mut()
+            .expect("translation object")
+            .remove("provider");
+        config["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("resultAction");
         config
     }
 
@@ -2908,6 +3030,49 @@ mod tests {
         );
         assert_eq!(config.launcher.horizontal_offset_px, 0);
         assert_eq!(config.launcher.vertical_offset_px, 0);
+        assert_eq!(config.translation.provider, TranslationProvider::Microsoft);
+        assert_eq!(
+            config.script_commands[0].result_action,
+            ScriptResultAction::Copy
+        );
+    }
+
+    #[test]
+    fn migrates_v12_translation_to_microsoft_provider() {
+        let mut legacy = serde_json::to_value(AppConfig::default()).expect("serialize config");
+        legacy["version"] = serde_json::json!(12);
+        legacy["translation"]
+            .as_object_mut()
+            .expect("translation object")
+            .remove("provider");
+
+        let config = serde_json::from_value::<AppConfig>(legacy).expect("deserialize v12 config");
+        let migrated = normalize_and_validate(config).expect("migrate v12 config");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.translation.provider,
+            TranslationProvider::Microsoft
+        );
+    }
+
+    #[test]
+    fn migrates_v13_script_results_to_copy() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v13");
+        previous["version"] = serde_json::json!(13);
+        previous["scriptCommands"][0]
+            .as_object_mut()
+            .expect("script object")
+            .remove("resultAction");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v13"),
+        )
+        .expect("migrate v13 script result action default");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.script_commands[0].result_action,
+            ScriptResultAction::Copy
+        );
     }
 
     #[test]

@@ -586,6 +586,28 @@ button:disabled {
   gap: 10px;
 }
 
+.credential-status-row,
+.credential-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.credential-status-row {
+  min-height: 30px;
+  justify-content: space-between;
+}
+
+.form-help {
+  color: var(--subtle);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.shell-result-warning {
+  color: #c98d58;
+}
+
 .inline-toggle,
 .checkbox-field {
   display: flex;

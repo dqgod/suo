@@ -16,6 +16,7 @@ use tauri::{path::BaseDirectory, AppHandle, Manager};
 use crate::config::{ScriptCommandConfig, ScriptRuntime};
 
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_RESULT_SHELL_COMMAND_BYTES: usize = 16 * 1024;
 
 #[tauri::command]
 pub fn reveal_script_in_folder(app: AppHandle, configured_path: String) -> Result<(), String> {
@@ -123,6 +124,84 @@ where
             .map(|error| error.to_string())
             .unwrap_or_else(|| "未知错误".into())
     ))
+}
+
+pub fn run_result_shell<F>(
+    app: &AppHandle,
+    config: &ScriptCommandConfig,
+    command_text: &str,
+    is_cancelled: F,
+) -> Result<String, String>
+where
+    F: Fn() -> bool,
+{
+    ensure_unprivileged()?;
+    let command_text = validate_result_shell_command(command_text)?;
+    let script = find_script(app, &config.script_path)
+        .ok_or_else(|| format!("找不到脚本：{}", config.script_path))?;
+    let timeout = Duration::from_millis(config.timeout_ms);
+    let mut last_not_found = None;
+
+    for shell in result_shell_candidates() {
+        let mut command = result_shell_command(shell, &command_text);
+        if let Some(parent) = script.parent() {
+            command.current_dir(parent);
+        }
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_process_group(&mut command);
+        hide_console(&mut command);
+        match command.spawn() {
+            Ok(child) => return collect_output(child, &is_cancelled, timeout),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_not_found = Some(error);
+            }
+            Err(error) => return Err(format!("无法执行返回的 Shell 命令：{error}")),
+        }
+    }
+
+    Err(format!(
+        "未找到用于执行返回值的 Shell：{}",
+        last_not_found
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "未知错误".into())
+    ))
+}
+
+pub(crate) fn validate_result_shell_command(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("脚本没有返回可执行的 Shell 命令".into());
+    }
+    if value.contains('\0') {
+        return Err("脚本返回的 Shell 命令包含 NUL 字符".into());
+    }
+    if value.len() > MAX_RESULT_SHELL_COMMAND_BYTES {
+        return Err(format!(
+            "脚本返回的 Shell 命令超过 {} KB 上限",
+            MAX_RESULT_SHELL_COMMAND_BYTES / 1024
+        ));
+    }
+    Ok(value.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn result_shell_candidates() -> &'static [&'static str] {
+    &["powershell.exe", "pwsh"]
+}
+
+#[cfg(not(target_os = "windows"))]
+fn result_shell_candidates() -> &'static [&'static str] {
+    &["/bin/bash"]
+}
+
+fn result_shell_command(shell: &str, command_text: &str) -> Command {
+    let mut command = Command::new(shell);
+    #[cfg(target_os = "windows")]
+    command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+    #[cfg(not(target_os = "windows"))]
+    command.arg("-lc");
+    command.arg(command_text);
+    command
 }
 
 fn collect_output<F>(
@@ -544,7 +623,48 @@ mod tests {
     use super::configure_process_group;
     #[cfg(target_os = "windows")]
     use super::hide_console;
-    use super::{collect_output, spawn_capped_reader, MAX_OUTPUT_BYTES};
+    use super::{
+        collect_output, result_shell_command, spawn_capped_reader, validate_result_shell_command,
+        MAX_OUTPUT_BYTES, MAX_RESULT_SHELL_COMMAND_BYTES,
+    };
+
+    #[test]
+    fn result_shell_command_validation_is_bounded() {
+        assert_eq!(
+            validate_result_shell_command("  open ~/  ").unwrap(),
+            "open ~/"
+        );
+        assert!(validate_result_shell_command(" \n\t ").is_err());
+        assert!(validate_result_shell_command("printf 'x\0y'").is_err());
+        assert!(
+            validate_result_shell_command(&"x".repeat(MAX_RESULT_SHELL_COMMAND_BYTES + 1)).is_err()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_result_shell_uses_bash_login_command_mode() {
+        let command = result_shell_command("/bin/bash", "open ~/");
+        assert_eq!(command.get_program(), "/bin/bash");
+        assert_eq!(command.get_args().collect::<Vec<_>>(), ["-lc", "open ~/"]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_result_shell_uses_powershell_command_mode() {
+        let command = result_shell_command("powershell.exe", "Start-Process C:\\\\");
+        assert_eq!(command.get_program(), "powershell.exe");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r"Start-Process C:\\",
+            ]
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

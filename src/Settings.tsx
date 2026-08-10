@@ -9,8 +9,10 @@ import {
   loadAppConfig,
   resolveLauncherTheme,
   ScriptCommandConfig,
+  ScriptResultAction,
   ScriptRuntime,
   TranslationConfig,
+  TranslationProvider,
   validateCommandIconImageDataUrl,
   WebSearchConfig,
 } from "./config";
@@ -58,6 +60,17 @@ const runtimeLabels: Record<ScriptRuntime, string> = {
   powerShell: "PowerShell",
   bash: "Bash",
   executable: "Executable",
+};
+
+const scriptResultActionLabels: Record<ScriptResultAction, string> = {
+  copy: t.copyScriptResultBadge,
+  executeShell: t.executeShellResultBadge,
+};
+
+const translationProviderLabels: Record<TranslationProvider, string> = {
+  microsoft: t.microsoftProvider,
+  google: t.googleProvider,
+  youdao: t.youdaoProvider,
 };
 
 const maximumQueryDebounceMs = 60_000;
@@ -257,6 +270,8 @@ function Settings() {
   const [draft, setDraftState] = useState<AppConfig | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [youdaoAppKey, setYoudaoAppKey] = useState("");
+  const [youdaoAppSecret, setYoudaoAppSecret] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -369,6 +384,9 @@ function Settings() {
       setView(next);
       setDraft(next.config);
       setEditor(null);
+      setApiKey("");
+      setYoudaoAppKey("");
+      setYoudaoAppSecret("");
       applySettingsAppearance(next.config.settingsTheme);
       if (next.configLoadWarning) setError(next.configLoadWarning);
     } catch (loadError) {
@@ -490,25 +508,35 @@ function Settings() {
     }
   };
 
-  const saveApiKey = async () => {
+  const saveTranslationCredentials = async (provider: TranslationProvider) => {
     setError("");
     try {
-      const next = await invoke<AppConfigView>("set_translation_api_key", { apiKey });
+      const next = await invoke<AppConfigView>("set_translation_credentials", {
+        provider,
+        apiKey: provider === "youdao" ? null : apiKey,
+        appKey: provider === "youdao" ? youdaoAppKey : null,
+        appSecret: provider === "youdao" ? youdaoAppSecret : null,
+      });
       setView(next);
       setApiKey("");
-      setStatus(zhCN.saved);
+      setYoudaoAppKey("");
+      setYoudaoAppSecret("");
+      showStatus(t.credentialsSaved);
     } catch (saveError) {
       setError(String(saveError));
     }
   };
 
-  const clearApiKey = async () => {
-    if (!window.confirm(t.confirmClearApiKey)) return;
+  const clearTranslationCredentials = async (provider: TranslationProvider) => {
+    if (!window.confirm(t.confirmClearCredentials.replace("{provider}", translationProviderLabels[provider]))) return;
     setError("");
     try {
-      const next = await invoke<AppConfigView>("clear_translation_api_key");
+      const next = await invoke<AppConfigView>("clear_translation_credentials", { provider });
       setView(next);
-      setStatus(zhCN.saved);
+      setApiKey("");
+      setYoudaoAppKey("");
+      setYoudaoAppSecret("");
+      showStatus(t.credentialsCleared);
     } catch (clearError) {
       setError(String(clearError));
     }
@@ -572,14 +600,22 @@ function Settings() {
     }
   };
 
+  const resetTranslationCredentialDrafts = () => {
+    setApiKey("");
+    setYoudaoAppKey("");
+    setYoudaoAppSecret("");
+  };
+
   const commitEditor = () => {
     if (!draft || !editor) return;
     setDraft(applyEditor(draft, editor));
+    if (editor.kind === "translation") resetTranslationCredentialDrafts();
     setEditor(null);
   };
 
   function cancelEditor() {
     if (!editor) return;
+    if (editor.kind === "translation") resetTranslationCredentialDrafts();
     if (editor.original === null) {
       setDraft((current) => {
         if (!current) return current;
@@ -602,12 +638,14 @@ function Settings() {
   }
 
   const changeSection = (next: Section) => {
+    if (editor?.kind === "translation") resetTranslationCredentialDrafts();
     if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
     setEditor(null);
     setSection(next);
   };
 
   const changeCategory = (next: ConfigurationCategory) => {
+    if (editor?.kind === "translation") resetTranslationCredentialDrafts();
     if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
     setEditor(null);
     setCategory(next);
@@ -641,6 +679,7 @@ function Settings() {
 
   const openTranslation = () => {
     if (!draft) return;
+    resetTranslationCredentialDrafts();
     const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
     setDraft(nextDraft);
     if (editor?.kind === "translation") {
@@ -670,6 +709,7 @@ function Settings() {
       enabled: true,
       runtime: "python",
       scriptPath: "",
+      resultAction: "copy",
       immediate: false,
       debounceMs: 50,
       timeoutMs: 3000,
@@ -1081,7 +1121,7 @@ function Settings() {
                               name={summary.name}
                               keyword={summary.keyword}
                               description={summary.description}
-                              badges={[runtimeLabels[summary.runtime], summary.immediate ? `${summary.debounceMs} ms ${t.immediateBadge}` : t.enterBadge]}
+                              badges={[runtimeLabels[summary.runtime], scriptResultActionLabels[summary.resultAction], summary.immediate ? `${summary.debounceMs} ms ${t.immediateBadge}` : t.enterBadge]}
                               onToggle={() => openScript(command)}
                               onEnabledChange={(enabled) => setScriptEnabled(command.id, enabled)}
                               readOnly={Boolean(view?.configReadOnly)}
@@ -1106,6 +1146,13 @@ function Settings() {
                                         <button className="secondary-button reveal-script-button" type="button" disabled={!activeEditor.value.scriptPath.trim()} onClick={() => void revealScript(activeEditor.value.scriptPath)}>{t.revealScript}</button>
                                       </div>
                                     </div>
+                                    <Field label={t.scriptResultAction} wide>
+                                      <select value={activeEditor.value.resultAction} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, resultAction: event.target.value as ScriptResultAction } })}>
+                                        <option value="copy">{t.copyScriptResult}</option>
+                                        <option value="executeShell">{t.executeShellResult}</option>
+                                      </select>
+                                      {activeEditor.value.resultAction === "executeShell" && <small className="form-help shell-result-warning">{t.executeShellResultWarning}</small>}
+                                    </Field>
                                     <Field label={t.timeout}><input type="number" min={100} max={60000} value={activeEditor.value.timeoutMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, timeoutMs: Number(event.target.value) } })} /></Field>
                                     <Field label={t.executionMode}><select value={activeEditor.value.immediate ? "immediate" : "enter"} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, immediate: event.target.value === "immediate" } })}><option value="enter">{t.enterMode}</option><option value="immediate">{t.immediateMode}</option></select></Field>
                                     {activeEditor.value.immediate && <Field label={t.debounce}><input type="number" min={20} max={60000} value={activeEditor.value.debounceMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, debounceMs: Number(event.target.value) } })} /></Field>}
@@ -1165,6 +1212,8 @@ function Settings() {
                     {category === "services" && (() => {
                       const activeEditor = editor?.kind === "translation" ? editor : null;
                       const summary = activeEditor?.value ?? draft.translation;
+                      const providerLabel = translationProviderLabels[summary.provider];
+                      const credentialConfigured = view?.translationCredentialStatus[summary.provider] ?? false;
                       return (
                         <ConfigurationItem
                           panelId="translation-editor"
@@ -1173,7 +1222,7 @@ function Settings() {
                           name={t.translation}
                           keyword={summary.keyword}
                           description={summary.description}
-                          badges={[t.microsoftProvider, view?.translationApiKeyConfigured ? t.apiKeyConfiguredBadge : t.apiKeyMissingBadge]}
+                          badges={[providerLabel, credentialConfigured ? t.credentialsConfiguredBadge : t.credentialsMissingBadge]}
                           onToggle={openTranslation}
                           onEnabledChange={setTranslationEnabled}
                           readOnly={Boolean(view?.configReadOnly)}
@@ -1185,12 +1234,26 @@ function Settings() {
                               </div>
                               <div className="form-grid">
                                 <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
-                                <Field label={t.aliases}><AliasesInput key="translation-aliases" value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
+                                <Field label={t.translationProvider}><select value={activeEditor.value.provider} onChange={(event) => {
+                                  const provider = event.target.value as TranslationProvider;
+                                  resetTranslationCredentialDrafts();
+                                  setEditor({ ...activeEditor, value: { ...activeEditor.value, provider } });
+                                }}><option value="microsoft">{t.microsoftProvider}</option><option value="google">{t.googleProvider}</option><option value="youdao">{t.youdaoProvider}</option></select></Field>
                                 <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
-                                <Field label={t.region}><input value={activeEditor.value.region} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, region: event.target.value } })} placeholder="eastasia" /></Field>
+                                <Field label={t.aliases}><AliasesInput key="translation-aliases" value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
+                                {activeEditor.value.provider === "microsoft" && <Field label={t.region}><input value={activeEditor.value.region} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, region: event.target.value } })} placeholder="eastasia" /></Field>}
                                 <Field label={t.defaultTarget}><input value={activeEditor.value.defaultTargetLanguage} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, defaultTargetLanguage: event.target.value } })} /></Field>
                                 <Field label={t.chineseTarget}><input value={activeEditor.value.chineseTargetLanguage} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, chineseTargetLanguage: event.target.value } })} /></Field>
-                                <Field label={t.apiKey} wide><div className="credential-row" data-independent-config><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyPlaceholder} /><button className="secondary-button" type="button" disabled={!apiKey.trim()} onClick={() => void saveApiKey()}>{t.saveApiKey}</button><button className="danger-button" type="button" disabled={!view?.translationApiKeyConfigured} onClick={() => void clearApiKey()}>{t.clearApiKey}</button></div><small className={view?.translationApiKeyConfigured ? "credential-ok" : "credential-missing"}>{view?.translationApiKeyConfigured ? t.apiKeyConfigured : t.apiKeyMissing}</small></Field>
+                                {activeEditor.value.provider === "youdao" ? (
+                                  <>
+                                    <Field label={t.youdaoAppKey}><input type="password" data-independent-config disabled={Boolean(view?.configReadOnly)} value={youdaoAppKey} onChange={(event) => setYoudaoAppKey(event.target.value)} placeholder={t.youdaoAppKeyPlaceholder} /></Field>
+                                    <Field label={t.youdaoAppSecret}><input type="password" data-independent-config disabled={Boolean(view?.configReadOnly)} value={youdaoAppSecret} onChange={(event) => setYoudaoAppSecret(event.target.value)} placeholder={t.youdaoAppSecretPlaceholder} /></Field>
+                                    <Field label={t.translationCredentials} wide><div className="credential-status-row" data-independent-config><small className={credentialConfigured ? "credential-ok" : "credential-missing"}>{credentialConfigured ? t.credentialsConfigured : t.credentialsMissing}</small><div className="credential-actions"><button className="secondary-button" type="button" disabled={Boolean(view?.configReadOnly) || !youdaoAppKey.trim() || !youdaoAppSecret.trim()} onClick={() => void saveTranslationCredentials("youdao")}>{t.saveCredentials}</button><button className="danger-button" type="button" disabled={Boolean(view?.configReadOnly) || !credentialConfigured} onClick={() => void clearTranslationCredentials("youdao")}>{t.clearCredentials}</button></div></div></Field>
+                                  </>
+                                ) : (
+                                  <Field label={activeEditor.value.provider === "microsoft" ? t.microsoftApiKey : t.googleApiKey} wide><div className="credential-row" data-independent-config><input type="password" disabled={Boolean(view?.configReadOnly)} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyPlaceholder} /><button className="secondary-button" type="button" disabled={Boolean(view?.configReadOnly) || !apiKey.trim()} onClick={() => void saveTranslationCredentials(activeEditor.value.provider)}>{t.saveCredentials}</button><button className="danger-button" type="button" disabled={Boolean(view?.configReadOnly) || !credentialConfigured} onClick={() => void clearTranslationCredentials(activeEditor.value.provider)}>{t.clearCredentials}</button></div><small className={credentialConfigured ? "credential-ok" : "credential-missing"}>{credentialConfigured ? t.credentialsConfigured : t.credentialsMissing}</small></Field>
+                                )}
+                                <Field label={t.providerLanguageHint} wide><small className="form-help">{activeEditor.value.provider === "youdao" ? t.youdaoLanguageHint : t.commonLanguageHint}</small></Field>
                               </div>
                               <EditorActions onCancel={cancelEditor} onDone={commitEditor} />
                             </>
