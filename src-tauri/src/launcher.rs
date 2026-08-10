@@ -13,6 +13,7 @@ use crate::{
     arguments,
     catalog::{self, CatalogEntry},
     config::{AppConfig, ConfigState, ScriptCommandConfig, TranslationConfig, WebSearchConfig},
+    dock,
     file_search::{self, FileSearchOutcome},
     i18n,
     models::{CancelStatus, IndexStatus, ResultAction, ResultKind, SearchResponse, SearchResult},
@@ -259,6 +260,7 @@ fn search_launcher_blocking(
             title: i18n::SETTINGS_RESULT_TITLE.into(),
             subtitle: i18n::SETTINGS_RESULT_SUBTITLE.into(),
             kind: ResultKind::Settings,
+            icon_data_url: String::new(),
             badge: i18n::SETTINGS_BADGE.into(),
             score: 2_100,
             action: ResultAction::OpenSettings,
@@ -271,6 +273,7 @@ fn search_launcher_blocking(
             title: value.clone(),
             subtitle: query.clone(),
             kind: ResultKind::Calculator,
+            icon_data_url: String::new(),
             badge: "计算".into(),
             score: 2_000,
             action: ResultAction::CopyText { text: value },
@@ -298,6 +301,7 @@ fn search_launcher_blocking(
                     title: output.clone(),
                     subtitle: format!("微软翻译 · → {target} · {arguments}"),
                     kind: ResultKind::Translation,
+                    icon_data_url: String::new(),
                     badge: "翻译".into(),
                     score: 2_050,
                     action: ResultAction::CopyText { text: output },
@@ -311,6 +315,7 @@ fn search_launcher_blocking(
                         "检查网络、区域或微软翻译配置".into()
                     },
                     kind: ResultKind::Error,
+                    icon_data_url: String::new(),
                     badge: "翻译".into(),
                     score: 2_050,
                     action: if error.contains("尚未配置") {
@@ -329,28 +334,31 @@ fn search_launcher_blocking(
             "参数数组模式 · 按 Enter 执行".into()
         };
         match arguments::parse(arguments) {
-            Err(error) => vec![error_result(
+            Err(error) => vec![error_result_with_icon(
                 format!("script:{}:args-error", command.id),
                 error,
                 "请检查参数引号",
+                &command.icon_data_url,
             )],
             Ok(args) if command.immediate => {
                 match scripts::run_configured(&app, command, &args, || {
                     state.search_is_cancelled(generation)
                 }) {
                     Ok(output) => vec![script_output_result(command, arguments, output)],
-                    Err(error) => vec![error_result(
+                    Err(error) => vec![error_result_with_icon(
                         format!("script:{}:error", command.id),
                         error,
                         "检查参数、脚本路径或解释器",
+                        &command.icon_data_url,
                     )],
                 }
             }
             Ok(args) => vec![SearchResult {
                 id: format!("script:{}:{arguments}", command.id),
                 title: format!("运行 {}", command.name),
-                subtitle: format!("{} {}", command.script_path, arguments),
+                subtitle: script_action_subtitle(command, arguments),
                 kind: ResultKind::Script,
+                icon_data_url: command.icon_data_url.clone(),
                 badge: "按 Enter".into(),
                 score: 2_000,
                 action: ResultAction::RunScript {
@@ -563,13 +571,27 @@ pub async fn activate_result(
 
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
+    let show_dock_icon = app
+        .state::<Arc<ConfigState>>()
+        .snapshot()
+        .launcher
+        .show_dock_icon;
     let window = app
         .get_webview_window("settings")
         .ok_or_else(|| "找不到设置窗口".to_string())?;
     window.unminimize().map_err(|error| error.to_string())?;
     window.center().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    dock::settings_opened(&app, show_dock_icon)?;
     window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn hide_settings(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    dock::settings_closed(&app)
 }
 
 #[tauri::command]
@@ -821,6 +843,7 @@ where
                 title: entry.name.clone(),
                 subtitle: path.clone(),
                 kind: result_kind,
+                icon_data_url: String::new(),
                 badge: result_badge.into(),
                 score,
                 action: ResultAction::OpenPath { path },
@@ -1036,9 +1059,15 @@ fn web_search_command<'config, 'query>(
 fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchResult> {
     let requires_arguments = web_search::requires_arguments(&search.url_template).unwrap_or(true);
     if arguments.is_empty() && requires_arguments {
-        return vec![hint_result(
+        let input_hint = if search.input_hint.is_empty() {
+            "请输入要搜索的内容"
+        } else {
+            &search.input_hint
+        };
+        return vec![hint_result_with_icon(
             &format!("{} <关键词>", search.keyword),
-            "请输入要搜索的内容",
+            input_hint,
+            &search.icon_data_url,
         )];
     }
     match web_search::expand_url(&search.url_template, arguments) {
@@ -1051,14 +1080,16 @@ fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchRe
             },
             subtitle: url.clone(),
             kind: ResultKind::Web,
+            icon_data_url: search.icon_data_url.clone(),
             badge: "网络".into(),
             score: 2_000,
             action: ResultAction::OpenUrl { url },
         }],
-        Err(error) => vec![error_result(
+        Err(error) => vec![error_result_with_icon(
             format!("web:{}:args-error", search.id),
             error,
             "请补充参数或检查引号",
+            &search.icon_data_url,
         )],
     }
 }
@@ -1077,18 +1108,37 @@ fn script_output_result(
         },
         subtitle: format!("{} {}", command.script_path, arguments),
         kind: ResultKind::Script,
+        icon_data_url: command.icon_data_url.clone(),
         badge: "脚本".into(),
         score: 2_000,
         action: ResultAction::CopyText { text: output },
     }
 }
 
-fn error_result(id: String, title: String, subtitle: &str) -> SearchResult {
+fn script_action_subtitle(command: &ScriptCommandConfig, arguments: &str) -> String {
+    if arguments.is_empty() {
+        if command.input_hint.is_empty() {
+            command.script_path.clone()
+        } else {
+            command.input_hint.clone()
+        }
+    } else {
+        format!("{} {arguments}", command.script_path)
+    }
+}
+
+fn error_result_with_icon(
+    id: String,
+    title: String,
+    subtitle: &str,
+    icon_data_url: &str,
+) -> SearchResult {
     SearchResult {
         id,
         title,
         subtitle: subtitle.into(),
         kind: ResultKind::Error,
+        icon_data_url: icon_data_url.into(),
         badge: "错误".into(),
         score: 2_000,
         action: ResultAction::None,
@@ -1102,11 +1152,16 @@ fn is_settings_query(query: &str) -> bool {
 }
 
 fn hint_result(title: &str, subtitle: &str) -> SearchResult {
+    hint_result_with_icon(title, subtitle, "")
+}
+
+fn hint_result_with_icon(title: &str, subtitle: &str, icon_data_url: &str) -> SearchResult {
     SearchResult {
         id: format!("hint:{title}"),
         title: title.into(),
         subtitle: subtitle.into(),
         kind: ResultKind::Hint,
+        icon_data_url: icon_data_url.into(),
         badge: "提示".into(),
         score: 1,
         action: ResultAction::None,
@@ -1125,7 +1180,8 @@ mod tests {
 
     use super::{
         calculate, catalog_results, command_arguments, is_settings_query, launcher_position,
-        match_score, script_command, translation_command, web_search_command, web_search_results,
+        match_score, script_action_subtitle, script_command, translation_command,
+        web_search_command, web_search_results,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -1393,6 +1449,8 @@ mod tests {
             name: "我的文档".into(),
             keyword: "mydoc".into(),
             description: String::new(),
+            icon_data_url: String::new(),
+            input_hint: String::new(),
             aliases: Vec::new(),
             enabled: true,
             url_template: "https://bytedance.feishu.cn/drive/home/".into(),
@@ -1407,6 +1465,32 @@ mod tests {
             }
             action => panic!("expected direct URL action, got {action:?}"),
         }
+    }
+
+    #[test]
+    fn configured_web_search_hint_and_icon_reach_results() {
+        let mut search = AppConfig::default().web_searches.remove(0);
+        search.input_hint = "输入站内搜索内容".into();
+        search.icon_data_url = "data:image/png;base64,AAAA".into();
+
+        let hint = web_search_results(&search, "");
+        assert_eq!(hint[0].subtitle, "输入站内搜索内容");
+        assert_eq!(hint[0].icon_data_url, search.icon_data_url);
+
+        let actionable = web_search_results(&search, "codex");
+        assert_eq!(actionable[0].kind, ResultKind::Web);
+        assert_eq!(actionable[0].icon_data_url, search.icon_data_url);
+    }
+
+    #[test]
+    fn configured_script_hint_only_replaces_empty_argument_subtitle() {
+        let mut command = AppConfig::default().script_commands.remove(0);
+        command.input_hint = "输入毫秒时间戳".into();
+        assert_eq!(script_action_subtitle(&command, ""), "输入毫秒时间戳");
+        assert_eq!(
+            script_action_subtitle(&command, "123"),
+            format!("{} 123", command.script_path)
+        );
     }
 
     #[test]

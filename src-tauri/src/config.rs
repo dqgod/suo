@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 11;
+const CONFIG_VERSION: u32 = 12;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -27,6 +27,10 @@ const MAX_THEME_WALLPAPER_PIXELS: u64 = 16_777_216;
 // 4096 x 4096 output plus bounded decoder scratch space so every image that
 // passes the frontend's dimension contract can also pass the Rust decoder.
 const MAX_THEME_WALLPAPER_ALLOCATION_BYTES: u64 = 160 * 1024 * 1024;
+const MAX_COMMAND_ICON_BYTES: usize = 256 * 1024;
+const MAX_COMMAND_ICON_DIMENSION: u32 = 512;
+const MAX_COMMAND_ICON_PIXELS: u64 = 512 * 512;
+const MAX_COMMAND_ICON_ALLOCATION_BYTES: u64 = 8 * 1024 * 1024;
 const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
 const MIN_QUERY_DEBOUNCE_MS: u64 = 0;
 const MAX_QUERY_DEBOUNCE_MS: u64 = 60_000;
@@ -194,6 +198,10 @@ pub struct ScriptCommandConfig {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
+    pub icon_data_url: String,
+    #[serde(default)]
+    pub input_hint: String,
+    #[serde(default)]
     pub aliases: Vec<String>,
     pub enabled: bool,
     pub runtime: ScriptRuntime,
@@ -225,6 +233,10 @@ pub struct WebSearchConfig {
     pub keyword: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub icon_data_url: String,
+    #[serde(default)]
+    pub input_hint: String,
     #[serde(default)]
     pub aliases: Vec<String>,
     pub enabled: bool,
@@ -662,6 +674,8 @@ impl Default for AppConfig {
                 name: "时间戳转换".into(),
                 keyword: "ts".into(),
                 description: "将毫秒时间戳转换为日期时间；第二个参数可传 +8 等时区偏移。".into(),
+                icon_data_url: String::new(),
+                input_hint: String::new(),
                 aliases: Vec::new(),
                 enabled: true,
                 runtime: ScriptRuntime::Python,
@@ -675,6 +689,8 @@ impl Default for AppConfig {
                 name: "Google".into(),
                 keyword: "google".into(),
                 description: "使用默认浏览器在 Google 中搜索输入内容。".into(),
+                icon_data_url: String::new(),
+                input_hint: String::new(),
                 aliases: Vec::new(),
                 enabled: true,
                 url_template: "https://www.google.com.hk/search?q={query}".into(),
@@ -1185,11 +1201,12 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // the configurable manual/instant settings save mode, and v8 adds
         // independent empty/non-empty query debounce settings, v9 adds the
         // launcher's cross-platform initial size and position fine tuning, and
-        // v10 adds the macOS Dock visibility preference, and v11 makes the
-        // global launcher shortcut configurable.
+        // v10 adds the macOS Dock visibility preference, v11 makes the global
+        // launcher shortcut configurable, and v12 adds optional per-command
+        // icons and empty-argument hints.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 => config.version = CONFIG_VERSION,
-        11 => {}
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 => config.version = CONFIG_VERSION,
+        12 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -1274,6 +1291,9 @@ fn normalize_script(command: &mut ScriptCommandConfig) -> Result<(), String> {
     command.name = required_trimmed(&command.name, "脚本名称", 80)?;
     command.keyword = normalize_keyword(&command.keyword, "脚本命令")?;
     command.description = optional_trimmed(&command.description, "脚本说明", 200)?;
+    command.input_hint = optional_trimmed(&command.input_hint, "脚本空参数提示", 160)?;
+    command.icon_data_url = command.icon_data_url.trim().to_string();
+    validate_command_icon_data_url(&command.icon_data_url, &format!("脚本 {}", command.name))?;
     command.aliases = normalize_aliases(&command.aliases, "脚本命令")?;
     command.script_path = required_trimmed(&command.script_path, "脚本路径", 1_024)?;
     if command.script_path.starts_with("http://") || command.script_path.starts_with("https://") {
@@ -1299,6 +1319,9 @@ fn normalize_web_search(search: &mut WebSearchConfig) -> Result<(), String> {
     search.name = required_trimmed(&search.name, "网络搜索名称", 80)?;
     search.keyword = normalize_keyword(&search.keyword, "网络搜索命令")?;
     search.description = optional_trimmed(&search.description, "网络搜索说明", 200)?;
+    search.input_hint = optional_trimmed(&search.input_hint, "网络搜索空参数提示", 160)?;
+    search.icon_data_url = search.icon_data_url.trim().to_string();
+    validate_command_icon_data_url(&search.icon_data_url, &format!("网络搜索 {}", search.name))?;
     search.aliases = normalize_aliases(&search.aliases, "网络搜索命令")?;
     search.url_template = required_trimmed(&search.url_template, "网络搜索 URL 模板", 2_048)?;
     let sample = web_search::sample_url(&search.url_template)
@@ -1816,6 +1839,38 @@ where
 }
 
 fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
+    validate_image_data_url(
+        value,
+        &format!("皮肤 {name} 的背景图"),
+        MAX_THEME_WALLPAPER_BYTES,
+        "1.5 MB",
+        MAX_THEME_WALLPAPER_DIMENSION,
+        MAX_THEME_WALLPAPER_PIXELS,
+        MAX_THEME_WALLPAPER_ALLOCATION_BYTES,
+    )
+}
+
+fn validate_command_icon_data_url(value: &str, owner: &str) -> Result<(), String> {
+    validate_image_data_url(
+        value,
+        &format!("{owner} 的图标"),
+        MAX_COMMAND_ICON_BYTES,
+        "256 KB",
+        MAX_COMMAND_ICON_DIMENSION,
+        MAX_COMMAND_ICON_PIXELS,
+        MAX_COMMAND_ICON_ALLOCATION_BYTES,
+    )
+}
+
+fn validate_image_data_url(
+    value: &str,
+    label: &str,
+    max_bytes: usize,
+    max_size_label: &str,
+    max_dimension: u32,
+    max_pixels: u64,
+    max_allocation_bytes: u64,
+) -> Result<(), String> {
     if value.is_empty() {
         return Ok(());
     }
@@ -1830,9 +1885,9 @@ fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
             .strip_prefix(prefix)
             .map(|payload| (*mime_type, payload))
     })
-    .ok_or_else(|| format!("皮肤 {name} 的背景图只允许 PNG、JPEG 或 WebP"))?;
+    .ok_or_else(|| format!("{label}只允许 PNG、JPEG 或 WebP"))?;
     if payload.is_empty() || payload.len() % 4 != 0 {
-        return Err(format!("皮肤 {name} 的背景图数据无效"));
+        return Err(format!("{label}数据无效"));
     }
     let padding = if payload.ends_with("==") {
         2
@@ -1847,36 +1902,44 @@ fn validate_wallpaper_data_url(value: &str, name: &str) -> Result<(), String> {
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
         || !payload[content_len..].bytes().all(|byte| byte == b'=')
     {
-        return Err(format!("皮肤 {name} 的背景图数据无效"));
+        return Err(format!("{label}数据无效"));
     }
     let last_sextet = payload[..content_len]
         .bytes()
         .next_back()
         .and_then(base64_sextet)
-        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
+        .ok_or_else(|| format!("{label}数据无效"))?;
     if (padding == 2 && last_sextet & 0x0f != 0) || (padding == 1 && last_sextet & 0x03 != 0) {
-        return Err(format!("皮肤 {name} 的背景图数据无效"));
+        return Err(format!("{label}数据无效"));
     }
     let decoded_bytes = payload
         .len()
         .checked_div(4)
         .and_then(|groups| groups.checked_mul(3))
         .and_then(|bytes| bytes.checked_sub(padding))
-        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
-    if decoded_bytes > MAX_THEME_WALLPAPER_BYTES {
-        return Err(format!("皮肤 {name} 的背景图不能超过 1.5 MB"));
+        .ok_or_else(|| format!("{label}数据无效"))?;
+    if decoded_bytes > max_bytes {
+        return Err(format!("{label}不能超过 {max_size_label}"));
     }
-    let decoded = decode_base64(payload, decoded_bytes)
-        .ok_or_else(|| format!("皮肤 {name} 的背景图数据无效"))?;
+    let decoded =
+        decode_base64(payload, decoded_bytes).ok_or_else(|| format!("{label}数据无效"))?;
     let is_complete_image = match mime_type {
         "image/png" => validate_png(&decoded),
         "image/jpeg" => validate_jpeg(&decoded),
         "image/webp" => validate_webp(&decoded),
         _ => false,
     };
-    if !is_complete_image || !decode_wallpaper_image(&decoded, mime_type) {
+    if !is_complete_image
+        || !decode_image_with_limits(
+            &decoded,
+            mime_type,
+            max_dimension,
+            max_pixels,
+            max_allocation_bytes,
+        )
+    {
         return Err(format!(
-            "皮肤 {name} 的背景图不是完整的 PNG、JPEG 或 WebP 文件"
+            "{label}不是完整且尺寸合规的 PNG、JPEG 或 WebP 文件"
         ));
     }
     Ok(())
@@ -1921,8 +1984,14 @@ fn base64_sextet(byte: u8) -> Option<u8> {
 
 /// Container checks above reject malformed framing before the decoder runs.
 /// Decode with explicit image and allocation limits so a tiny compressed input
-/// cannot expand into an unbounded wallpaper allocation.
-fn decode_wallpaper_image(bytes: &[u8], mime_type: &str) -> bool {
+/// cannot expand into an unbounded allocation.
+fn decode_image_with_limits(
+    bytes: &[u8],
+    mime_type: &str,
+    max_dimension: u32,
+    max_pixels: u64,
+    max_allocation_bytes: u64,
+) -> bool {
     let format = match mime_type {
         "image/png" => ImageFormat::Png,
         "image/jpeg" => ImageFormat::Jpeg,
@@ -1930,9 +1999,9 @@ fn decode_wallpaper_image(bytes: &[u8], mime_type: &str) -> bool {
         _ => return false,
     };
     let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_THEME_WALLPAPER_DIMENSION);
-    limits.max_image_height = Some(MAX_THEME_WALLPAPER_DIMENSION);
-    limits.max_alloc = Some(MAX_THEME_WALLPAPER_ALLOCATION_BYTES);
+    limits.max_image_width = Some(max_dimension);
+    limits.max_image_height = Some(max_dimension);
+    limits.max_alloc = Some(max_allocation_bytes);
 
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(limits);
@@ -1942,9 +2011,9 @@ fn decode_wallpaper_image(bytes: &[u8], mime_type: &str) -> bool {
     let (width, height) = image.dimensions();
     width > 0
         && height > 0
-        && width <= MAX_THEME_WALLPAPER_DIMENSION
-        && height <= MAX_THEME_WALLPAPER_DIMENSION
-        && u64::from(width) * u64::from(height) <= MAX_THEME_WALLPAPER_PIXELS
+        && width <= max_dimension
+        && height <= max_dimension
+        && u64::from(width) * u64::from(height) <= max_pixels
 }
 
 fn validate_png(bytes: &[u8]) -> bool {
@@ -2415,7 +2484,7 @@ pub fn save_app_config(
         }
     };
     let providers_changed = provider_settings_changed(&previous, &config);
-    dock::apply_visibility(&app, config.launcher.show_dock_icon)?;
+    dock::preference_changed(&app, config.launcher.show_dock_icon)?;
     launcher.update_preferences(
         config.launcher.close_on_blur,
         config.launcher.keep_last_input,
@@ -3134,6 +3203,32 @@ mod tests {
     }
 
     #[test]
+    fn migrates_v11_without_command_icons_or_input_hints() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v11");
+        previous["version"] = serde_json::json!(11);
+        for key in ["iconDataUrl", "inputHint"] {
+            previous["scriptCommands"][0]
+                .as_object_mut()
+                .expect("script object")
+                .remove(key);
+            previous["webSearches"][0]
+                .as_object_mut()
+                .expect("web search object")
+                .remove(key);
+        }
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v11"),
+        )
+        .expect("migrate v11 command presentation defaults");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(migrated.script_commands[0].icon_data_url.is_empty());
+        assert!(migrated.script_commands[0].input_hint.is_empty());
+        assert!(migrated.web_searches[0].icon_data_url.is_empty());
+        assert!(migrated.web_searches[0].input_hint.is_empty());
+    }
+
+    #[test]
     fn dock_visibility_round_trips_on_every_platform() {
         for visible in [false, true] {
             let mut config = AppConfig::default();
@@ -3577,6 +3672,35 @@ mod tests {
         let mut too_long = AppConfig::default();
         too_long.script_commands[0].debounce_ms = MAX_SCRIPT_DEBOUNCE_MS + 1;
         assert!(normalize_and_validate(too_long).is_err());
+    }
+
+    #[test]
+    fn validates_command_icons_and_normalizes_input_hints() {
+        let icon = wallpaper_data_url("image/png", &valid_png_bytes(73));
+        let mut valid = AppConfig::default();
+        valid.script_commands[0].icon_data_url = icon.clone();
+        valid.script_commands[0].input_hint = "  输入时间戳和可选时区  ".into();
+        valid.web_searches[0].icon_data_url = icon;
+        valid.web_searches[0].input_hint = "  输入搜索内容  ".into();
+        let normalized = normalize_and_validate(valid).expect("valid command presentation");
+        assert_eq!(
+            normalized.script_commands[0].input_hint,
+            "输入时间戳和可选时区"
+        );
+        assert_eq!(normalized.web_searches[0].input_hint, "输入搜索内容");
+
+        let mut oversized = AppConfig::default();
+        oversized.web_searches[0].icon_data_url =
+            wallpaper_data_url("image/png", &valid_png_bytes(MAX_COMMAND_ICON_BYTES + 1));
+        assert!(normalize_and_validate(oversized).is_err());
+
+        let mut invalid = AppConfig::default();
+        invalid.script_commands[0].icon_data_url = "https://example.com/icon.png".into();
+        assert!(normalize_and_validate(invalid).is_err());
+
+        let mut hint_too_long = AppConfig::default();
+        hint_too_long.web_searches[0].input_hint = "字".repeat(161);
+        assert!(normalize_and_validate(hint_too_long).is_err());
     }
 
     #[test]

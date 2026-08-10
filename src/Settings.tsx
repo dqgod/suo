@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -12,6 +11,7 @@ import {
   ScriptCommandConfig,
   ScriptRuntime,
   TranslationConfig,
+  validateCommandIconImageDataUrl,
   WebSearchConfig,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
@@ -19,7 +19,6 @@ import { SuoIcon } from "./SuoIcon";
 import AppearanceEditor from "./AppearanceEditor";
 import "./Settings.css";
 
-const settingsWindow = getCurrentWindow();
 const t = zhCN.settings;
 type Section = "general" | "search" | "configuration" | "appearance";
 type ConfigurationCategory = "scripts" | "web" | "services";
@@ -292,7 +291,7 @@ function Settings() {
 
   const close = useCallback(async () => {
     try {
-      await settingsWindow.hide();
+      await invoke("hide_settings");
     } catch (closeError) {
       setError(String(closeError));
     }
@@ -665,6 +664,8 @@ function Settings() {
       name: t.newScript,
       keyword: nextAvailableKeyword(nextDraft, "cmd"),
       description: "",
+      iconDataUrl: "",
+      inputHint: "",
       aliases: [],
       enabled: true,
       runtime: "python",
@@ -686,6 +687,8 @@ function Settings() {
       name: t.newWebSearch,
       keyword: nextAvailableKeyword(nextDraft, "web"),
       description: "",
+      iconDataUrl: "",
+      inputHint: "",
       aliases: [],
       enabled: true,
       urlTemplate: "https://example.com/search?q={query}",
@@ -1092,6 +1095,8 @@ function Settings() {
                                     <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
                                     <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
                                     <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
+                                    <CommandIconField key={`script-icon-${activeEditor.id}`} value={activeEditor.value.iconDataUrl} disabled={Boolean(view?.configReadOnly)} onChange={(iconDataUrl) => setEditor({ ...activeEditor, value: { ...activeEditor.value, iconDataUrl } })} />
+                                    <Field label={t.inputHint} wide><input maxLength={160} value={activeEditor.value.inputHint} placeholder={t.scriptInputHintPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, inputHint: event.target.value } })} /></Field>
                                     <Field label={t.aliases}><AliasesInput key={`script-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
                                     <Field label={t.runtime}><select value={activeEditor.value.runtime} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, runtime: event.target.value as ScriptRuntime } })}><option value="python">Python</option><option value="powerShell">PowerShell</option><option value="bash">Bash</option><option value="executable">Executable</option></select></Field>
                                     <div className="form-field wide">
@@ -1143,6 +1148,8 @@ function Settings() {
                                     <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
                                     <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
                                     <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
+                                    <CommandIconField key={`web-icon-${activeEditor.id}`} value={activeEditor.value.iconDataUrl} disabled={Boolean(view?.configReadOnly)} onChange={(iconDataUrl) => setEditor({ ...activeEditor, value: { ...activeEditor.value, iconDataUrl } })} />
+                                    <Field label={t.inputHint} wide><input maxLength={160} value={activeEditor.value.inputHint} placeholder={t.webInputHintPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, inputHint: event.target.value } })} /></Field>
                                     <Field label={t.aliases}><AliasesInput key={`web-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
                                     <Field label={t.urlTemplate} wide><input value={activeEditor.value.urlTemplate} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, urlTemplate: event.target.value } })} /></Field>
                                   </div>
@@ -1277,6 +1284,82 @@ function EditorActions({ onRemove, onCancel, onDone }: { onRemove?: () => void; 
     <div className="editor-actions">
       <div>{onRemove && <button className="danger-button" type="button" onClick={onRemove}>{t.remove}</button>}</div>
       <div className="editor-actions-right"><button className="secondary-button" type="button" onClick={onCancel}>{t.cancel}</button><button className="primary-button" type="button" onClick={onDone}>{t.completeEdit}</button></div>
+    </div>
+  );
+}
+
+function CommandIconField({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const requestRef = useRef(0);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => () => {
+    requestRef.current += 1;
+  }, []);
+
+  const loadIcon = (file: File) => {
+    const request = ++requestRef.current;
+    setNotice("");
+    if (!/^image\/(?:png|jpeg|webp)$/.test(file.type) || file.size > 256 * 1024) {
+      setNotice(t.commandIconInvalid);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      if (requestRef.current !== request) return;
+      const dataUrl = String(reader.result);
+      try {
+        await validateCommandIconImageDataUrl(dataUrl);
+      } catch {
+        if (requestRef.current === request) setNotice(t.commandIconInvalid);
+        return;
+      }
+      if (requestRef.current !== request) return;
+      onChange(dataUrl);
+      setNotice("");
+    };
+    reader.onerror = () => {
+      if (requestRef.current === request) setNotice(t.commandIconReadFailed);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="form-field wide command-icon-field">
+      <span>{t.commandIcon}</span>
+      <div className="command-icon-control">
+        <span className={`command-icon-preview ${value ? "loaded" : ""}`} aria-hidden="true">
+          {value ? <img src={value} alt="" draggable={false} /> : "?"}
+        </span>
+        <span className="command-icon-copy">
+          <strong>{value ? t.commandIconLoaded : t.commandIconEmpty}</strong>
+          <small>{notice || t.commandIconRequirements}</small>
+        </span>
+        <span className="command-icon-actions">
+          <input
+            ref={inputRef}
+            className="command-icon-file-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            disabled={disabled}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) loadIcon(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          <button className="secondary-button" type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>{t.chooseCommandIcon}</button>
+          {value && <button className="secondary-button" type="button" disabled={disabled} onClick={() => { requestRef.current += 1; setNotice(""); onChange(""); }}>{t.removeCommandIcon}</button>}
+        </span>
+      </div>
     </div>
   );
 }

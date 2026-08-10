@@ -31,6 +31,8 @@ export type ScriptCommandConfig = {
   name: string;
   keyword: string;
   description: string;
+  iconDataUrl: string;
+  inputHint: string;
   aliases: string[];
   enabled: boolean;
   runtime: ScriptRuntime;
@@ -45,6 +47,8 @@ export type WebSearchConfig = {
   name: string;
   keyword: string;
   description: string;
+  iconDataUrl: string;
+  inputHint: string;
   aliases: string[];
   enabled: boolean;
   urlTemplate: string;
@@ -480,6 +484,9 @@ const imagePattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})
 const maxWallpaperBytes = 1_572_864;
 const maxWallpaperDimension = 4_096;
 const maxWallpaperPixels = maxWallpaperDimension * maxWallpaperDimension;
+const maxCommandIconBytes = 256 * 1024;
+const maxCommandIconDimension = 512;
+const maxCommandIconPixels = maxCommandIconDimension * maxCommandIconDimension;
 const wallpaperDecodeTimeoutMs = 3_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -547,11 +554,39 @@ function assertWallpaper(value: unknown) {
 export async function validateWallpaperImageDataUrl(value: unknown): Promise<void> {
   assertWallpaper(value);
   if (value === "") return;
-  if (typeof Image === "undefined") throw new Error("wallpaper image decoding is unavailable");
+  const { width, height } = await decodeLocalImageDataUrl(
+    value as string,
+    "wallpaperDataUrl must decode to a complete PNG, JPEG, or WebP image",
+  );
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > maxWallpaperDimension || height > maxWallpaperDimension || width * height > maxWallpaperPixels) {
+    throw new Error("wallpaper image dimensions exceed the allowed limit");
+  }
+}
 
+export async function validateCommandIconImageDataUrl(value: unknown): Promise<void> {
+  assertWallpaper(value);
+  if (value === "") return;
+  const match = (value as string).match(imagePattern);
+  if (!match) throw new Error("command icon must be a PNG, JPEG, or WebP data URL");
+  const payload = match[2];
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  if ((payload.length / 4) * 3 - padding > maxCommandIconBytes) {
+    throw new Error("command icon is too large");
+  }
+  const { width, height } = await decodeLocalImageDataUrl(
+    value as string,
+    "command icon must decode to a complete PNG, JPEG, or WebP image",
+  );
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > maxCommandIconDimension || height > maxCommandIconDimension || width * height > maxCommandIconPixels) {
+    throw new Error("command icon dimensions exceed the allowed limit");
+  }
+}
+
+async function decodeLocalImageDataUrl(value: string, failure: string) {
+  if (typeof Image === "undefined") throw new Error(failure);
   const image = new Image();
   image.decoding = "async";
-  image.src = value as string;
+  image.src = value;
   let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
   try {
     await Promise.race([
@@ -563,13 +598,9 @@ export async function validateWallpaperImageDataUrl(value: unknown): Promise<voi
         );
       }),
     ]);
-    const width = image.naturalWidth;
-    const height = image.naturalHeight;
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > maxWallpaperDimension || height > maxWallpaperDimension || width * height > maxWallpaperPixels) {
-      throw new Error("wallpaper image dimensions exceed the allowed limit");
-    }
+    return { width: image.naturalWidth, height: image.naturalHeight };
   } catch {
-    throw new Error("wallpaperDataUrl must decode to a complete PNG, JPEG, or WebP image");
+    throw new Error(failure);
   } finally {
     if (timeout !== undefined) globalThis.clearTimeout(timeout);
     image.src = "";

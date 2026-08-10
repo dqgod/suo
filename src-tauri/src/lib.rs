@@ -50,7 +50,7 @@ pub fn run() {
             taskbar::apply_window_policy(app)?;
             let config_state = Arc::new(config::ConfigState::load(app.handle()));
             let initial_config = config_state.snapshot();
-            dock::apply_initial_visibility(app, initial_config.launcher.show_dock_icon);
+            dock::apply_initial_visibility(app);
             tray::create(app)?;
             app.manage(config_state);
 
@@ -97,6 +97,9 @@ pub fn run() {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = event_window.hide();
+                        if let Err(error) = dock::settings_closed(event_window.app_handle()) {
+                            eprintln!("关闭设置后无法隐藏 Dock 图标：{error}");
+                        }
                     }
                 });
             }
@@ -112,6 +115,7 @@ pub fn run() {
             launcher::cancel_search,
             launcher::activate_result,
             launcher::open_settings,
+            launcher::hide_settings,
             launcher::rebuild_file_index,
             launcher::get_index_status,
             hide_launcher,
@@ -139,4 +143,33 @@ pub fn run() {
             launcher::request_show_launcher(_app);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn transparent_windows_keep_macos_private_api_enabled() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        assert_eq!(
+            config.pointer("/app/macOSPrivateApi"),
+            Some(&serde_json::Value::Bool(true)),
+            "macOS ignores transparent windows without its private API feature"
+        );
+
+        let windows = config["app"]["windows"]
+            .as_array()
+            .expect("configured windows");
+        for label in ["main", "settings"] {
+            let window = windows
+                .iter()
+                .find(|window| window["label"] == label)
+                .unwrap_or_else(|| panic!("missing {label} window"));
+            assert_eq!(window["transparent"], true, "{label} must stay transparent");
+            assert_eq!(
+                window["decorations"], false,
+                "{label} must stay undecorated"
+            );
+        }
+    }
 }

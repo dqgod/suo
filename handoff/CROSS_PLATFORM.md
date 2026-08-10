@@ -24,7 +24,8 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 ## 3. 平台外观资源必须隔离
 
 - macOS 菜单栏使用 `src-tauri/icons/tray-macos-template.png` 并启用 template mode；Windows 继续使用彩色默认应用图标。
-- macOS Dock 可见性通过 `src-tauri/src/dock.rs` 隔离；Windows 不应把同一字段解释为 taskbar 隐藏。
+- macOS 的无边框透明窗口必须保留 `tauri.conf.json > app.macOSPrivateApi=true`；仅写 `transparent=true` 会被 Tauri 忽略并在 CSS 圆角外露出白色原生直角。该私有 API 不能用于 Mac App Store 分发，但当前 MVP 不包含该渠道；Windows 不依赖此开关。
+- macOS Dock 可见性通过 `src-tauri/src/dock.rs` 隔离；`showDockIcon=true` 只表示设置窗口打开期间显示，设置关闭和正常后台运行时必须隐藏，实时关闭开关不能连带隐藏设置窗口。Windows 不应把同一字段解释为 taskbar 隐藏。
 - Windows taskbar 角色通过 `src-tauri/src/taskbar.rs` 隔离：`main` 搜索窗口跳过任务栏，`settings` 设置窗口保留任务栏入口；不得把这项策略泄漏到 macOS Dock。
 - Dock 图标、菜单栏图标、搜索框 Logo 与设置页 Logo 是不同呈现位置，不要通过替换同一个资源顺带改变全部位置。
 - 平台修复必须放在 adapter 或 `cfg(target_os = ...)` 后面，避免未使用 import、错误 API 或行为泄漏到另一平台。
@@ -38,6 +39,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v9：启动器宽高与位置；
 - v10：macOS Dock 可见性。
 - v11：可配置全局快捷键；v10 及更早配置使用当前平台默认值迁移。
+- v12：脚本命令和网络搜索新增可选 `iconDataUrl` / `inputHint`；v11 及更早迁移为空值。图标只允许受限解码的本地 PNG/JPEG/WebP data URL，不得改成跨机器失效的本地路径或远程 URL。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 

@@ -1,6 +1,6 @@
 # Windows agent handoff
 
-状态：**v10 已完成（2026-08-09）；v11 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达和配置迁移仍需在 Windows 复验。
+状态：**v10 已完成（2026-08-09）；v11、v12 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达、配置迁移、命令图标与提示文案仍需在 Windows 复验。
 
 ## 已完成的 v10 目标
 
@@ -167,3 +167,16 @@ rustc host：
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构和真实交互结果。
 
 完成后把本文件顶部更新为“v11 已完成”，并同步 `handoff/README.md`；不要覆盖第 6、7 节的 v10 历史证据。
+
+## 9. 2026-08-10 v12 Windows 待验证
+
+- [ ] 从真实 v11 配置启动，确认 v11 → v12 后每个脚本命令和网络搜索的 `iconDataUrl`、`inputHint` 默认为空，其他字段逐项保持；保存与 `.bak` 版本符合预期。
+- [ ] 分别为一个脚本命令和一个网络搜索选择 PNG、JPEG、WebP 图标；完成编辑后，空参数提示、可执行结果、脚本输出及命令错误都优先显示自定义图标。
+- [ ] 移除图标后恢复内置脚本/网络图标；畸形文件、伪造 MIME、超过 256 KiB、任一边超过 512 px 或总像素超限必须在前端提示且不能落盘。
+- [ ] 为脚本命令和网络搜索填写自定义提示，验证网络搜索空参数结果及非即时脚本空参数结果；留空时继续使用既有默认文案，提示最长 160 个 UTF-16 code units。
+- [ ] 网络搜索 `google codex`、固定 URL 关键词和 `{query0}` 缺参错误保持原行为；自定义图标不得改变 Enter 动作、URL 展开或脚本 argv/timeout/cancel。
+- [ ] Windows 继续使用彩色系统托盘和任务栏图标；macOS 的“打开设置时显示 Dock 图标”不出现在 Windows 设置页，`showDockIcon` 仅安全往返保存，不得映射成 Windows taskbar 开关。
+- [ ] 在统一保存与自动保存两种模式下分别验证新增字段；编辑取消、快速连续选择图片和旧保存响应不得覆盖较新的草稿。
+- [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录测试数、最终 PE 架构、真实 UI 截图与用户配置恢复结果。
+
+完成 v11 与 v12 后分别更新本文件顶部和 `handoff/README.md`；若只完成其中一版，必须保留另一版“待验证”，不要把 macOS 实机结论当作 Windows 通过。

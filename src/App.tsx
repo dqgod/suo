@@ -38,6 +38,7 @@ type SearchResult = {
   title: string;
   subtitle: string;
   kind: ResultKind;
+  iconDataUrl: string;
   badge: string;
   score: number;
   action: ResultAction;
@@ -140,6 +141,14 @@ const kindIcons: Partial<Record<ResultKind, string>> = {
   hint: "?",
   error: "!",
 };
+
+function configuredIconDataUrl(value: unknown) {
+  return typeof value === "string"
+    && value.length <= 350_000
+    && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
+    ? value
+    : null;
+}
 
 function PathResultIcon({ kind }: { kind: ResultKind }) {
   if (kind === "directory") {
@@ -253,7 +262,8 @@ function ResultIcon({
   result: SearchResult;
   launcherVisible: boolean;
 }) {
-  const appResultId = result.kind === "app" ? result.id : null;
+  const configuredIcon = configuredIconDataUrl(result.iconDataUrl);
+  const appResultId = !configuredIcon && result.kind === "app" ? result.id : null;
   const containerRef = useRef<HTMLSpanElement>(null);
   const [inViewport, setInViewport] = useState(false);
   const [icon, setIcon] = useState<string | null | undefined>(() =>
@@ -296,13 +306,15 @@ function ResultIcon({
     };
   }, [appResultId, inViewport, launcherVisible]);
 
+  const displayedIcon = configuredIcon ?? icon;
+
   return (
     <span
       ref={containerRef}
-      className={`result-icon ${result.kind} ${icon ? "native-icon" : ""}`}
+      className={`result-icon ${result.kind} ${displayedIcon ? "native-icon" : ""}`}
       aria-hidden="true"
     >
-      {icon ? <img src={icon} alt="" draggable={false} /> : <PathResultIcon kind={result.kind} />}
+      {displayedIcon ? <img src={displayedIcon} alt="" draggable={false} /> : <PathResultIcon kind={result.kind} />}
     </span>
   );
 }

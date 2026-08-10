@@ -46,6 +46,8 @@ pub struct SearchResult {
     pub title: String,
     pub subtitle: String,
     pub kind: ResultKind,
+    /// Optional validated local PNG/JPEG/WebP data URL for configured commands.
+    pub icon_data_url: String,
     pub badge: String,
     pub score: i32,
     pub action: ResultAction,
@@ -116,7 +118,7 @@ pub struct NativeAppIcon {
 
 #[cfg(test)]
 mod tests {
-    use super::{NativeAppIcon, ResultAction, ResultKind};
+    use super::{NativeAppIcon, ResultAction, ResultKind, SearchResult};
 
     #[test]
     fn script_action_uses_camel_case_at_the_webview_boundary() {
@@ -145,5 +147,21 @@ mod tests {
         assert_eq!(value["width"], 48);
         assert_eq!(value["height"], 48);
         assert_eq!(value["pixels"].as_array().unwrap().len(), 48 * 48 * 4);
+
+        let result = serde_json::to_value(SearchResult {
+            id: "web:google:codex".into(),
+            title: "Google 搜索：codex".into(),
+            subtitle: "https://example.com".into(),
+            kind: ResultKind::Web,
+            icon_data_url: "data:image/png;base64,AAAA".into(),
+            badge: "网络".into(),
+            score: 2_000,
+            action: ResultAction::None,
+        })
+        .unwrap();
+        assert_eq!(
+            result["iconDataUrl"],
+            serde_json::Value::String("data:image/png;base64,AAAA".into())
+        );
     }
 }
