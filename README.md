@@ -38,10 +38,11 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 命令、网络搜索和翻译服务采用摘要卡片，点击后展开编辑；每项支持可选描述和独立启用开关，开启为绿色、关闭为灰色；设置页可选择最终统一“保存设置”或在合法修改后自动保存；
 - 通用设置可开启“空输入时仅显示搜索框”；空查询收缩原生窗口，开始输入后恢复完整窗口；
 - `setting`、`settings` 或 `设置` 显示设置入口，按 Enter 打开设置窗口；
-- 设置页显示当前 `config.json` 的完整路径，可打开所在文件夹、选择空目录迁移或恢复平台默认位置；切换前先复制并校验，原位置文件保留为恢复副本；
+- 设置页在说明下方整行显示当前 `config.json` 的完整路径，可打开所在文件夹、选择空目录迁移或恢复平台默认位置；切换前先复制并校验，原位置文件保留为恢复副本；
+- 通用设置可开启跨平台开机自启；登录后只在后台建立托盘/菜单栏与全局快捷键，不主动弹出搜索窗口；快捷键录制期间不会触发当前全局组合，Windows 录制 `Alt+Space` 时拦截系统菜单；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能、原生 arm64 构建和大部分真实场景；非激活搜索面板已用真实 AppKit 窗口验证，完整的系统级快捷键场景仍需人工按键复核。Windows 10 x64 已完成 v10 基线，v11–v14 增量等待下一轮 Windows 实机验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
+平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能与原生 arm64 构建，v15 开机自启等待 Mac 实机验证。Windows 10 x64 已完成 v10 基线；v15 已通过 x64 编译、102 项测试和旧配置只读启动检查，开关与快捷键录制仍待人工交互验收；v11–v14 的其余增量清单保持待验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
 
 ### 命令参数约定
 
@@ -93,7 +94,7 @@ Microsoft / Google 的 API Key，以及有道的应用 ID / 应用密钥，都�
 
 “设置 → 通用 → 配置文件位置”会显示当前实际路径，并可直接打开文件夹或选择新的空目录。Suo 先在目标目录原子写入并校验 `config.json`，再更新默认目录中固定保留的 `config-location.json` 位置指针；目标已有 `config.json` 或 `.bak` 时拒绝覆盖。旧位置文件不会自动删除，可用于手动恢复。三家翻译 Provider 的凭据仍只保存在 macOS Keychain / Windows Credential Manager，不随普通配置迁移。
 
-仍未完成的发布级工作包括：开机自启、应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布。
+仍未完成的发布级工作包括：应用来源与索引目录管理、脚本首次运行确认、`suo-json-v1` 多结果协议、日志与崩溃恢复、安装升级、签名、公证和 DMG 发布；开机自启功能已实现，但仍需完成 macOS 实机和 Windows 人工交互验收。
 
 ## 开发环境
 
@@ -123,8 +124,8 @@ cargo test
 
 ## 平台验证与交接
 
-- macOS Apple Silicon：核心功能已验证至配置 v14，最终原生 arm64 测试和 `.app` 构建通过；真实场景证据、混合架构工具链注意事项及尚需人工按键的项目见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
-- Windows x64：v10 基线已完成，v11–v14 的配置迁移、快捷键、固定 URL、配置位置、命令图标/提示、翻译 Provider 和脚本返回 Shell 动作仍需实机验证；直接执行清单见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
+- macOS Apple Silicon：核心功能已验证至配置 v14，最终原生 arm64 测试和 `.app` 构建通过；v15 LaunchAgent、真实场景证据及尚需人工按键的项目见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- Windows x64：v10 基线已完成；v15 已完成 x64 构建和自动化检查，开机自启、快捷键录制及路径布局待人工交互验收；v11–v14 的其余清单仍需实机验证，详见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
 - 已知跨平台工具链、配置迁移与平台隔离问题见 [`handoff/CROSS_PLATFORM.md`](./handoff/CROSS_PLATFORM.md)。README 仅维护当前状态，不保存逐轮测试流水。
 
 ## 分支约定

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type LauncherConfig = {
   globalHotkey: string;
+  startAtLogin: boolean;
   closeOnBlur: boolean;
   keepLastInput: boolean;
   compactWhenEmpty: boolean;

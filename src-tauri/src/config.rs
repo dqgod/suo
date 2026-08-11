@@ -10,9 +10,9 @@ use image::{GenericImageView, ImageFormat, ImageReader, Limits};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{dock, hotkey, launcher::LauncherState, web_search};
+use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 14;
+const CONFIG_VERSION: u32 = 15;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -140,6 +140,8 @@ impl<'de> Deserialize<'de> for AppConfig {
 pub struct LauncherConfig {
     #[serde(default = "hotkey::default_shortcut")]
     pub global_hotkey: String,
+    #[serde(default)]
+    pub start_at_login: bool,
     pub close_on_blur: bool,
     pub keep_last_input: bool,
     #[serde(default)]
@@ -692,6 +694,7 @@ impl Default for AppConfig {
             save_settings_manually: true,
             launcher: LauncherConfig {
                 global_hotkey: hotkey::default_shortcut(),
+                start_at_login: false,
                 close_on_blur: true,
                 keep_last_input: false,
                 compact_when_empty: false,
@@ -801,7 +804,20 @@ impl ConfigState {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     fn replace(&self, config: AppConfig) -> Result<(AppConfig, AppConfig), String> {
+        self.replace_with_side_effects(config, |_, _| Ok::<_, String>(|| Ok::<(), String>(())))
+    }
+
+    fn replace_with_side_effects<Apply, Rollback>(
+        &self,
+        config: AppConfig,
+        apply: Apply,
+    ) -> Result<(AppConfig, AppConfig), String>
+    where
+        Apply: FnOnce(&AppConfig, &AppConfig) -> Result<Rollback, String>,
+        Rollback: FnOnce() -> Result<(), String>,
+    {
         let _save_guard = self
             .save_lock
             .lock()
@@ -821,7 +837,13 @@ impl ConfigState {
             .read()
             .map_err(|_| "配置状态暂时不可用".to_string())?
             .clone();
-        persist_config(&path, &config)?;
+        let rollback = apply(&previous, &config)?;
+        if let Err(save_error) = persist_config(&path, &config) {
+            if let Err(rollback_error) = rollback() {
+                return Err(format!("{save_error}；{rollback_error}"));
+            }
+            return Err(save_error);
+        }
         let mut current = self
             .config
             .write()
@@ -834,6 +856,10 @@ impl ConfigState {
             *migration = false;
         }
         Ok((previous, config))
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.incompatible_newer_version.is_some()
     }
 
     fn config_path(&self) -> Result<PathBuf, String> {
@@ -1251,12 +1277,13 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // and empty-argument hints, v13 lets the shared fy command select
         // Microsoft, Google, or Youdao as its translation provider, and v14
         // lets each script result either copy stdout or explicitly execute it
-        // through the platform shell after a second user activation.
+        // through the platform shell after a second user activation, and v15
+        // adds cross-platform login startup, disabled by default for old files.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 => {
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 => {
             config.version = CONFIG_VERSION
         }
-        14 => {}
+        15 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -2566,27 +2593,15 @@ pub fn save_app_config(
     launcher: State<'_, Arc<LauncherState>>,
     config: AppConfig,
 ) -> Result<AppConfigView, String> {
-    // Register the requested shortcut before persisting it. A conflict must
-    // leave both the on-disk configuration and the working shortcut intact.
-    let normalized = normalize_and_validate(config)?;
-    let current = state.snapshot();
-    let shortcut_change = hotkey::RegisteredShortcutChange::apply(
-        &app,
-        &current.launcher.global_hotkey,
-        &normalized.launcher.global_hotkey,
-    )?;
-    let shortcut_changed = shortcut_change.is_some();
-    let (previous, config) = match state.replace(normalized) {
-        Ok(result) => result,
-        Err(save_error) => {
-            if let Some(change) = shortcut_change {
-                if let Err(rollback_error) = change.rollback(&app) {
-                    return Err(format!("{save_error}；{rollback_error}"));
-                }
-            }
-            return Err(save_error);
-        }
-    };
+    // Apply OS integrations and persist the matching JSON while holding the
+    // same save lock. A shortcut conflict, startup-registration failure, or
+    // disk error must leave all three states at their previous values.
+    let rollback_app = app.clone();
+    let (previous, config) = state.replace_with_side_effects(config, |previous, next| {
+        let changes = AppliedConfigIntegrations::apply(&app, previous, next)?;
+        Ok(move || changes.rollback(&rollback_app))
+    })?;
+    let shortcut_changed = previous.launcher.global_hotkey != config.launcher.global_hotkey;
     let providers_changed = provider_settings_changed(&previous, &config);
     dock::preference_changed(&app, config.launcher.show_dock_icon)?;
     launcher.update_preferences(
@@ -2608,6 +2623,56 @@ pub fn save_app_config(
             .map_err(|error| format!("配置已保存，但无法刷新搜索结果：{error}"))?;
     }
     Ok(state.view())
+}
+
+struct AppliedConfigIntegrations {
+    shortcut: Option<hotkey::RegisteredShortcutChange>,
+    autostart: Option<autostart::RegisteredAutostartChange>,
+}
+
+impl AppliedConfigIntegrations {
+    fn apply(app: &AppHandle, previous: &AppConfig, next: &AppConfig) -> Result<Self, String> {
+        let mut shortcut = hotkey::RegisteredShortcutChange::apply(
+            app,
+            &previous.launcher.global_hotkey,
+            &next.launcher.global_hotkey,
+        )?;
+        let autostart =
+            match autostart::RegisteredAutostartChange::apply(app, next.launcher.start_at_login) {
+                Ok(change) => change,
+                Err(startup_error) => {
+                    if let Some(change) = shortcut.take() {
+                        if let Err(rollback_error) = change.rollback(app) {
+                            return Err(format!("{startup_error}；{rollback_error}"));
+                        }
+                    }
+                    return Err(startup_error);
+                }
+            };
+        Ok(Self {
+            shortcut,
+            autostart,
+        })
+    }
+
+    fn rollback(self, app: &AppHandle) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Some(change) = self.autostart {
+            if let Err(error) = change.rollback(app) {
+                errors.push(error);
+            }
+        }
+        if let Some(change) = self.shortcut {
+            if let Err(error) = change.rollback(app) {
+                errors.push(error);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("；"))
+        }
+    }
 }
 
 fn provider_settings_changed(previous: &AppConfig, next: &AppConfig) -> bool {
@@ -3405,6 +3470,38 @@ mod tests {
                 normalize_and_validate(decoded).expect("validate round-tripped Dock preference");
 
             assert_eq!(normalized.launcher.show_dock_icon, visible);
+        }
+    }
+
+    #[test]
+    fn migrates_v14_with_login_startup_disabled() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v14");
+        previous["version"] = serde_json::json!(14);
+        previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("startAtLogin");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v14"),
+        )
+        .expect("migrate v14 login-startup default");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(!migrated.launcher.start_at_login);
+    }
+
+    #[test]
+    fn login_startup_preference_round_trips() {
+        for enabled in [false, true] {
+            let mut config = AppConfig::default();
+            config.launcher.start_at_login = enabled;
+            let encoded = serde_json::to_string(&config).expect("serialize login startup");
+            let decoded: AppConfig =
+                serde_json::from_str(&encoded).expect("deserialize login startup");
+            let normalized = normalize_and_validate(decoded)
+                .expect("validate round-tripped login startup preference");
+
+            assert_eq!(normalized.launcher.start_at_login, enabled);
         }
     }
 

@@ -45,8 +45,10 @@ libc = "0.2"
 objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPanel", "NSResponder", "NSWindow"] }
 plist = "1"
+tauri-plugin-autostart = "2"
 
 [target.'cfg(windows)'.dependencies]
+winreg = "0.10"
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

@@ -234,11 +234,13 @@
 }
 
 .config-location-row {
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
 }
 
 .config-location-row > div:first-child {
-  flex: 1 1 38%;
+  flex: none;
 }
 
 .config-default-path {
@@ -246,8 +248,8 @@
 }
 
 .config-location-row > .config-location-control {
-  width: min(620px, 58%);
-  flex: 0 1 620px;
+  width: 100%;
+  flex: none;
   align-items: stretch;
   gap: 9px;
 }
@@ -260,7 +262,7 @@
   color: var(--settings-primary-text);
   background: var(--field);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: calc(var(--settings-font-size) - 5px);
+  font-size: max(13px, calc(var(--settings-font-size) - 2px));
   line-height: 1.45;
   overflow-wrap: anywhere;
   user-select: text;

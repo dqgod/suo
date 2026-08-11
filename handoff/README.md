@@ -2,7 +2,7 @@
 
 本目录保存 Suo 在 Windows 与 macOS 之间切换开发机、编译环境或 Codex agent 时需要继承的阶段状态。长期有效的仓库规则仍在根目录 `AGENTS.md`；这里记录会随硬件验证推进而变化的清单、证据和已知坑。
 
-最后更新：2026-08-11，开发基线 `5871391`（其内容已合入 `master` / `dev`）。
+最后更新：2026-08-11，已拉取的 `dev` 基线为 `122ce04`；当前工作区正在验证 v15。
 
 ## 当前状态
 
@@ -20,6 +20,7 @@
 | Windows v12 增量 | **待验证** | 按 `WINDOWS.md` 验证命令图标选择/渲染、提示文案、v11→v12 迁移和 Windows 任务栏回归。 |
 | Windows v13 增量 | **待验证** | 按 `WINDOWS.md` 验证 v12→v13、共用 `fy` Provider 切换、Credential Manager 隔离与缺凭据提示。 |
 | Windows v14 增量 | **待验证** | 按 `WINDOWS.md` 验证 v13→v14、复制默认迁移、PowerShell 二次执行/一次性 action、冷启动首次位置和 Windows 原有能力回归。 |
+| v15 开机自启与快捷键录制修复 | **Windows 自动检查完成、人工交互待验；macOS 待验证** | Windows x64 构建、102 项测试和 v14 只读启动已通过；原生全局事件已接回快捷键录制器。仍需手测启动项增删、后台启动、`Alt+Space` 系统菜单拦截和同组合录制。macOS 按 `MACOS.md` 验证 LaunchAgent 与 arm64 构建。 |
 
 ## 文件导航
 

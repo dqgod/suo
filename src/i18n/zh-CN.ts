@@ -25,6 +25,8 @@ export const zhCN = {
   saved: "已保存",
   globalHotkey: "全局快捷键",
   globalHotkeyDescription: "点击右侧按键，然后按下新的组合键；保存成功后立即生效。",
+  startAtLogin: "开机自启",
+  startAtLoginDescription: "登录系统后在后台启动 Suo，不会自动弹出搜索窗口。",
   hotkeyRecording: "请按新的快捷键…",
   hotkeyRequiresModifier: "快捷键必须包含 Command、Ctrl、Alt 或 Windows 键。",
   hotkeyUnsupportedKey: "当前按键不能用作全局快捷键，请换一个组合。",

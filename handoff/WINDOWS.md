@@ -1,6 +1,6 @@
 # Windows agent handoff
 
-状态：**v10 已完成（2026-08-09）；v11、v12、v13、v14 待验证**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效；2026-08-10 新增的可录制快捷键、固定 URL 直达、配置迁移、命令图标/提示文案、翻译 Provider 切换与脚本返回动作仍需在 Windows 复验。
+状态：**v10 已完成（2026-08-09）；v11–v14 待验证；v15 x64 构建与自动检查通过，真实开机自启和快捷键录制待人工验收（2026-08-11）**。Windows x64 的既有编译、任务栏角色和人工验收结论继续有效。
 
 ## 本次 Windows 接手入口
 
@@ -8,7 +8,7 @@
 
 1. 备份真实 `%APPDATA%\io.github.dqgod.suo\config.json`、`.bak` 与位置指针并记录 SHA-256；不要在管理员 PowerShell 中运行 Suo。
 2. 完成第 2 节干净基线，确认 Node、Rust host、MSVC linker 和最终 PE 都是目标 x64 架构。
-3. 依次执行第 8–11 节，覆盖真实 v10 → v11 → v12 → v13 → v14 迁移；中间某版失败时停止向后宣称完成，但保留精确命令、退出码和 stderr。
+3. 依次执行第 8–12 节，覆盖真实 v10 → v11 → v12 → v13 → v14 → v15 迁移；中间某版失败时停止向后宣称完成，但保留精确命令、退出码和 stderr。
 4. 优先做四个真实闭环：快捷键录制/冲突回滚；含空格或中文目录的配置迁移；三家 `fy` Provider 的 Credential Manager 隔离；`open_file <目录>` 第一次 Enter 只产生命令、第二次才由 PowerShell 打开。
 5. 最后回归 Everything、开始菜单应用图标、拼音、彩色托盘、搜索/设置窗口任务栏角色和 Job Object 进程树；macOS 的非激活 `NSPanel`、Dock、Spotlight 与模板图标代码不得进入 Windows 路径。
 6. 完成后更新本文件、[`handoff/README.md`](README.md) 和根 README 的一行平台状态；不要把截图、凭据、构建产物或用户配置提交到仓库。
@@ -216,3 +216,15 @@ rustc host：
 - [ ] macOS 用于等待 AppKit 几何队列的 `dispatch2` 只能作为 `cfg(target_os = "macos")` 依赖；Windows 构建继续使用同步 `show → set_focus` 路径，不得为了兼容编译复制 macOS 队列逻辑。
 - [ ] 完全退出后冷启动，第一次按快捷键应直接按持久化宽高、紧凑状态和偏移显示，不得先在默认中心闪现再移动。
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录最终 PE 架构、真实 PowerShell 场景和用户配置恢复结果。
+
+## 12. 2026-08-11 v15 Windows 验证
+
+状态：**自动检查完成，真实交互待人工验收**。
+
+- [x] 配置协议升至 v15；单元测试覆盖 v14 缺少 `startAtLogin` 时迁移为 `false`，以及开关值的序列化往返。
+- [x] 在真实 v14 配置上启动 release；主配置与 `.bak` SHA-256 前后分别保持 `E9B6E981...88480`、`E265B64A...FBD8`，说明只加载迁移不会写回用户文件；默认关闭时 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 没有 Suo 项。
+- [x] `pnpm build`、102/102 Rust 测试、`cargo check --locked --all-targets` 和 MSVC `pnpm tauri build --no-bundle` 通过；测试覆盖录制时把已注册的全局组合回传为录制结果，而不是唤起启动器。链接器为 VS 2022 `HostX64/x64`。最终 `suo.exe` 为 15,246,848 bytes，PE machine `0x8664`（x86_64），SHA-256 `68BA048BA462314480812B44185800BFB5569B5E54B300DD2A3DF731E9C7A76B`。
+- [ ] 在设置页打开开机自启并等待自动保存，确认 Run 项为带引号的 `"完整路径\suo.exe" --autostart`；完全退出后通过该项启动，搜索窗口保持隐藏、托盘和快捷键可用。关闭开关后确认 Run 项移除。
+- [ ] 当前快捷键和录制目标都为同一组合时，只完成录制而不唤起搜索框；录制 `Alt+Space` 不显示左上角系统菜单。Esc、点击外部、标题栏关闭后，原快捷键恢复正常。
+- [ ] 配置文件路径必须位于标题/说明下一行，整行等宽文字不小于 13 px，长路径可换行；按钮仍位于路径下方。
+- [ ] Windows Graphics Capture 仍返回已记录的 `SetIsBorderRequired ... 0x80004002`，因此本轮没有用自动截图替代上述人工验收；该错误只影响当前捕获工具，不代表 Suo UI 失败。

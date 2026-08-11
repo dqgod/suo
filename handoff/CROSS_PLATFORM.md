@@ -42,10 +42,11 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v12：脚本命令和网络搜索新增可选 `iconDataUrl` / `inputHint`；v11 及更早迁移为空值。图标只允许受限解码的本地 PNG/JPEG/WebP data URL，不得改成跨机器失效的本地路径或远程 URL。
 - v13：唯一的 `fy` 翻译配置新增 `provider`；v12 及更早迁移为 `microsoft`，且必须继续使用原 `microsoft-translator-api-key` 凭据项名以保留旧密钥。
 - v14：每条脚本新增 `resultAction`；v13 及更早必须迁移为 `copy`。`executeShell` 只能在结果二次激活后执行，macOS 走 Bash、Windows 走 PowerShell；原始命令不得作为 WebView action 参数传输。
+- v15：`launcher` 新增 `startAtLogin`；v14 及更早必须迁移为 `false`。Windows 使用当前用户启动项，macOS 使用 LaunchAgent；登录启动只建立后台常驻能力，不主动显示搜索窗口。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 
-快捷键变更还必须按运行时事务处理：先验证并注册新组合，再停用旧组合和持久化；注册冲突或保存失败时保留/恢复旧组合。不要让设置页显示已保存但进程仍监听另一个快捷键。
+快捷键和开机自启变更必须与 JSON 持久化按同一运行时事务处理：先应用系统集成，再持久化；冲突、系统注册失败或保存失败时反向恢复全部旧状态。录制快捷键期间必须暂停全局唤起；Windows 临时注册 `Alt+Space` 只用于吞掉系统菜单，录制结束后立即移除，不能成为第二个启动器热键。
 
 macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 继续走原聚焦路径，不得编译或复制 AppKit 类型。
 

@@ -1,5 +1,48 @@
-use tauri::AppHandle;
+use std::sync::Mutex;
+
+use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+
+struct HotkeyRecordingState {
+    recording: bool,
+    #[cfg(target_os = "windows")]
+    temporary_alt_space_guard: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShortcutDispatch {
+    Capture(String),
+    Ignore,
+    ToggleLauncher,
+}
+
+impl HotkeyRecordingState {
+    fn dispatch(&self, shortcut: &Shortcut) -> ShortcutDispatch {
+        if self.recording {
+            // RegisterHotKey consumes combinations such as Alt+Space and the
+            // already active launcher shortcut before the WebView can receive
+            // a keydown. Forward that native event to the recorder instead.
+            return ShortcutDispatch::Capture(shortcut.to_string());
+        }
+
+        #[cfg(target_os = "windows")]
+        if self.temporary_alt_space_guard
+            && parse_shortcut("alt+Space")
+                .map(|guard| guard == *shortcut)
+                .unwrap_or(false)
+        {
+            return ShortcutDispatch::Ignore;
+        }
+
+        ShortcutDispatch::ToggleLauncher
+    }
+}
+
+static HOTKEY_RECORDING: Mutex<HotkeyRecordingState> = Mutex::new(HotkeyRecordingState {
+    recording: false,
+    #[cfg(target_os = "windows")]
+    temporary_alt_space_guard: false,
+});
 
 pub struct RegisteredShortcutChange {
     previous: Shortcut,
@@ -33,6 +76,72 @@ pub fn register_initial(app: &AppHandle, value: &str) -> String {
         Ok(()) => format!("{label} 已就绪"),
         Err(error) => format!("{label} 注册失败：{error}"),
     }
+}
+
+pub fn dispatch_shortcut(shortcut: &Shortcut) -> ShortcutDispatch {
+    let Ok(state) = HOTKEY_RECORDING.lock() else {
+        // A poisoned recorder state is safer when it suppresses shortcuts: it
+        // avoids unexpectedly opening the launcher while the user is typing.
+        return ShortcutDispatch::Ignore;
+    };
+    state.dispatch(shortcut)
+}
+
+pub fn stop_recording(app: &AppHandle) -> Result<(), String> {
+    let mut state = HOTKEY_RECORDING
+        .lock()
+        .map_err(|_| "快捷键录制状态不可用，请重启 Suo".to_string())?;
+    state.recording = false;
+    #[cfg(target_os = "windows")]
+    if state.temporary_alt_space_guard {
+        let guard = parse_shortcut("alt+Space")?;
+        app.global_shortcut()
+            .unregister(guard)
+            .map_err(|error| format!("无法退出快捷键录制：{error}"))?;
+        state.temporary_alt_space_guard = false;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_hotkey_recording(app: AppHandle, recording: bool) -> Result<(), String> {
+    if !recording {
+        return stop_recording(&app);
+    }
+
+    let mut state = HOTKEY_RECORDING
+        .lock()
+        .map_err(|_| "快捷键录制状态不可用，请重启 Suo".to_string())?;
+    if state.recording {
+        return Ok(());
+    }
+
+    // Keep this focus check under the same lock as stop_recording. If the
+    // window loses focus before a delayed begin command is handled, the
+    // command is rejected instead of recreating a guard after cleanup.
+    let settings = app
+        .get_webview_window("settings")
+        .ok_or_else(|| "找不到设置窗口".to_string())?;
+    if !settings.is_focused().map_err(|error| error.to_string())? {
+        return Err("设置窗口已失去焦点，快捷键录制未开始".into());
+    }
+
+    // Alt+Space normally opens the native Windows system menu before WebView
+    // JavaScript can cancel it. Register it only while recording so Windows
+    // consumes the chord; the global handler above deliberately ignores it.
+    #[cfg(target_os = "windows")]
+    {
+        let guard = parse_shortcut("alt+Space")?;
+        let shortcuts = app.global_shortcut();
+        if !state.temporary_alt_space_guard && !shortcuts.is_registered(guard) {
+            shortcuts.register(guard).map_err(|error| {
+                format!("无法拦截 Alt+Space 系统菜单，快捷键录制未开始：{error}")
+            })?;
+            state.temporary_alt_space_guard = true;
+        }
+    }
+    state.recording = true;
+    Ok(())
 }
 
 impl RegisteredShortcutChange {
@@ -164,5 +273,32 @@ mod tests {
     #[test]
     fn platform_default_is_valid() {
         assert!(normalize_shortcut(&default_shortcut()).is_ok());
+    }
+
+    #[test]
+    fn recording_captures_a_registered_shortcut_instead_of_toggling() {
+        let state = HotkeyRecordingState {
+            recording: true,
+            #[cfg(target_os = "windows")]
+            temporary_alt_space_guard: true,
+        };
+        let shortcut = parse_shortcut("alt+Space").unwrap();
+        assert_eq!(
+            state.dispatch(&shortcut),
+            ShortcutDispatch::Capture(shortcut.to_string())
+        );
+    }
+
+    #[test]
+    fn an_idle_recorder_allows_the_configured_shortcut_to_toggle() {
+        let state = HotkeyRecordingState {
+            recording: false,
+            #[cfg(target_os = "windows")]
+            temporary_alt_space_guard: false,
+        };
+        assert_eq!(
+            state.dispatch(&parse_shortcut("alt+KeyB").unwrap()),
+            ShortcutDispatch::ToggleLauncher
+        );
     }
 }
