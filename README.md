@@ -11,7 +11,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - macOS 使用 Spotlight；
 - 计算器、可切换的 Microsoft / Google / 有道翻译、自定义 HTTP/HTTPS 搜索；
 - Python、PowerShell、Bash 和可执行文件命令；
-- 纯文本与 `suo-json-v1` 脚本输出；
+- 当前支持纯文本单结果脚本输出；`suo-json-v1` 多结果协议仍在后续计划中；
 - 搜索界面与设置界面各自独立的三套内置皮肤，以及可导入、导出、实时预览的自定义皮肤。
 
 详细产品边界和验收标准见 [产品需求文档](./docs/PRODUCT_REQUIREMENTS.md)，当前交互视觉稿见 [UI 方案索引](./docs/README.md)。
@@ -51,6 +51,8 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - URL 不含占位符时作为固定直达链接，例如将 `mydoc` 配置为 `https://bytedance.feishu.cn/drive/home/` 后，只输入 `mydoc` 并回车即可打开。
 
 ### 脚本返回值动作
+
+不知道脚本入口、参数和 stdout/stderr 应该怎样组织时，直接从带逐行注释的 [`examples/script_template.py`](examples/script_template.py) 开始；设置字段、argv 拆分、执行时机、退出码以及两种返回值动作见 [`examples/README.md`](examples/README.md)。
 
 每条脚本命令的“返回值动作”默认是“复制返回文本”，所以现有 `ts` 等配置无需修改。选择“执行返回的 Shell 命令（高风险）”后，脚本本身仍先按安全 argv 模式运行；它的 stdout 只会显示成一个待执行结果，不会自动执行。用户必须再次点击该结果或按 `Enter`，Suo 才会在 macOS 使用 `/bin/bash -lc`、在 Windows 使用 `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` 执行返回文本。
 

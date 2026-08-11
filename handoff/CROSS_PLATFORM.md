@@ -67,6 +67,8 @@ Windows agent 修改多显示器或 DPI 逻辑时必须保留这个顺序，并�
 
 首次窗口也不能等 React 载入配置后再改尺寸。启动阶段应在窗口仍隐藏时由 Rust 同时设置持久化宽度、完整/紧凑高度和位置，再注册快捷键并允许显示；否则两个平台都可能先闪现 `tauri.conf.json` 的默认居中窗口，再移动到用户位置。
 
+macOS 还存在一层原生时序：Tao 0.35 的 `set_inner_size` / `set_outer_position` 会把 AppKit 变更异步派发到主队列，而 `show()` 同步执行 `makeKeyAndOrderFront:`。因此仅保证 Rust 调用顺序仍可能偶现“默认居中帧先显示一帧”。当前 `focus.rs` 会先经 Tauri 事件循环建立顺序，再把显示操作排到同一 AppKit 串行队列的几何操作之后；后续不得把它简化回 `set_position(); show();`。Windows 仍保留自己的同步窗口路径，不需要复制这一 AppKit 队列。
+
 ## 8. 实机状态与编译状态分开记录
 
 - Rust/TypeScript 测试只能证明代码路径；Dock、菜单栏、任务栏、全局快捷键、焦点、窗口透明区域和进程树需要真实平台验证。

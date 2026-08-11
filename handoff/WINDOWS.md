@@ -208,9 +208,11 @@ rustc host：
 
 - [ ] 从真实 v13 配置启动，确认 v13 → v14 后每条脚本 `resultAction=copy`，`ts` 输出仍在第二次 Enter 时复制，其他配置逐项保持。
 - [ ] 新建关键词 `open_file`、Python 路径 `examples/open_path.py`，选择“执行返回的 Shell 命令”；输入 `open_file <目录>` 后第一次 Enter 只显示 `Invoke-Item -LiteralPath ...`，第二次 Enter 才通过 PowerShell 打开目标。
+- [ ] 按 `examples/README.md` 新建关键词 `demo`、Python 路径 `examples/script_template.py`；`demo` 应支持零参数，`demo alpha "two words"` 的 stdout 应保留两个独立 argv。安装包中必须同时包含模板和说明文件。
 - [ ] 同一个返回结果只能执行一次；修改查询、取消搜索、禁用/删除脚本或把动作切回复制后，旧结果必须失效且不可执行。
 - [ ] PowerShell 固定使用 `-NoLogo -NoProfile -NonInteractive -Command`；空返回、NUL、超过 16 KiB、超时与取消必须拒绝，并继续通过 Job Object 终止完整进程树。
 - [ ] 结果 action 只包含不透明 `actionId`，不得把脚本 stdout 放进 WebView 可提交的动作参数；伪造或过期 ID 不得启动 PowerShell。
 - [ ] Windows 的默认 argv 脚本路径、Everything、彩色托盘/任务栏图标和设置窗口 taskbar 角色保持；新增 macOS 非激活 `NSPanel` 适配不得进入 Windows 构建，Windows 搜索框仍按原逻辑获得焦点。
+- [ ] macOS 用于等待 AppKit 几何队列的 `dispatch2` 只能作为 `cfg(target_os = "macos")` 依赖；Windows 构建继续使用同步 `show → set_focus` 路径，不得为了兼容编译复制 macOS 队列逻辑。
 - [ ] 完全退出后冷启动，第一次按快捷键应直接按持久化宽高、紧凑状态和偏移显示，不得先在默认中心闪现再移动。
 - [ ] 完成 `pnpm build`、全部 Rust 测试、`cargo check --all-targets --locked` 和 `pnpm tauri build --no-bundle`，记录最终 PE 架构、真实 PowerShell 场景和用户配置恢复结果。

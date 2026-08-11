@@ -833,11 +833,11 @@ pub fn show_launcher(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "找不到主窗口".to_string())?;
 
     window.unminimize().map_err(|error| error.to_string())?;
-    let _ = position_launcher(app);
-    window.show().map_err(|error| error.to_string())?;
-    focus::focus_shown_launcher(&window)?;
-    let _ = window.emit("launcher-shown", ());
-    Ok(())
+    // Do not reveal a stale/default frame when cursor or monitor resolution
+    // fails. On macOS the adapter additionally waits for Tao's asynchronous
+    // AppKit geometry blocks before showing the panel.
+    position_launcher(app)?;
+    focus::show_launcher_after_geometry(&window)
 }
 
 pub fn position_launcher(app: &AppHandle) -> Result<(), String> {

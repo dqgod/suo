@@ -3703,6 +3703,7 @@ name = "suo"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "dispatch2",
  "file_icon_provider",
  "image",
  "keyring",

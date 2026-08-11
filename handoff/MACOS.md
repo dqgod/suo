@@ -1,6 +1,6 @@
 # macOS Apple Silicon handoff
 
-状态：**Apple Silicon 基线及 v11–v13 已完成；v14 核心和非激活搜索面板已完成，真实系统级快捷键场景待人工复核（2026-08-10）**。
+状态：**Apple Silicon 基线及 v11–v13 已完成；v14 核心、非激活搜索面板和首帧几何时序修复已完成，真实系统级快捷键场景待人工复核（2026-08-11）**。
 
 ## 已完成硬件基线
 
@@ -70,18 +70,20 @@
 
 ## 2026-08-10 v14 增量
 
-状态：**核心功能和非激活搜索面板已完成；真实系统级快捷键场景待人工复核**。
+状态：**核心功能、非激活搜索面板和首帧几何时序修复已完成；真实系统级快捷键场景待人工复核**。
 
 - [x] 配置 v13 → v14 为每条脚本增加 `resultAction`；真实 v13 用户配置载入后默认时间戳脚本显示“复制结果”，`ts 1786082576069` 输出仍提示“按 Enter 复制返回文本”，再次 Enter 显示“结果已复制”。
 - [x] 真实设置页新增 `open_file` / `examples/open_path.py`，选择“执行返回的 Shell 命令（高风险）”时显示 Bash/PowerShell 风险说明；摘要徽标显示“执行 Shell”。
 - [x] 真实启动器输入 `open_file /private/tmp`：第一次 Enter 只显示 `/usr/bin/open /private/tmp` 与“按 Enter 通过 Bash 执行”，第二次 Enter 才打开 Finder 的 `/private/tmp`。
 - [x] WebView 结果只持有一次性 action ID；单元测试覆盖首次消费成功、二次消费失败、查询 epoch 变化后失效。空返回、NUL、16 KiB 上限、Bash 参数和进程组超时由 Rust 测试覆盖。
-- [x] 启动器的持久化宽度、完整/紧凑高度和位置在原生窗口仍隐藏时初始化；真实 v13 配置冷启动后首个可见帧为预期的 `600 × 74` 紧凑搜索框，没有先保留默认 `720 × 520` 布局。
+- [x] 新增带逐段注释的 `examples/script_template.py` 和 `examples/README.md`，明确 argv、stdout/stderr、退出码、执行时机及复制/Shell 两种返回动作；零参数和含空格参数均已直接执行验证，两个文件也已进入 `.app` resources。
+- [x] 启动器的持久化宽度、完整/紧凑高度和位置在原生窗口仍隐藏时初始化；真实 v13 配置冷启动的一轮观察中，首个可见帧为预期的 `600 × 74` 紧凑搜索框，没有先保留默认 `720 × 520` 布局。后续用户仍偶现默认居中帧一闪，定位为 Tao 的 AppKit 尺寸/位置异步派发可能晚于同步 `show()`；显示现已严格排在同一主队列的几何操作之后，仍需按下方清单做高频冷启动人工复核。
+- [x] 2026-08-11 从 Finder 精确冷启动本 worktree 的 `Suo.app`，确认进程路径属于当前 bundle；应用首次保持隐藏，再次打开所走的 `request_show_launcher` 路径显示为紧凑搜索框。辅助功能自动化只能读取动作结束后的稳定帧，无法证明亚帧闪烁已在所有快捷键时序消失，因此没有替代下方人工复核。
 - [x] 用户配置测试前后已按 SHA-256 恢复：`config.json` 为 `f3bec732...59fe7`，`.bak` 为 `6303d065...abe0d`；最终仍为 v13 且只有原 `ts` 脚本，未保留 `open_file`。
 - [x] 最终前端构建、101 项原生 arm64 Rust 测试（100 通过、1 项安装 Bundle 集成测试按预期忽略）、all-targets check、no-bundle 和 `.app` 构建均通过；裸二进制与 `Suo.app/Contents/MacOS/suo` 均由 `file` 确认为 `arm64`。
-- [x] 本机 `uname -m` 为 `arm64`，但当前默认 Rust host 是 `x86_64-apple-darwin`；已安装 `aarch64-apple-darwin` target，并用 `--target aarch64-apple-darwin` 完成测试和构建。后续复验不能只看系统架构，必须同时检查 `rustc -vV` 和最终二进制，否则默认构建会悄悄产出 Rosetta `x86_64` 应用。
+- [x] 本机 `uname -m` 为 `arm64`；旧 checkout 曾出现默认 Rust host 为 `x86_64-apple-darwin` 的情况，本轮当前工具链 host 已是 `aarch64-apple-darwin`。后续复验仍不能只看系统架构，必须同时检查 `rustc -vV` 和最终二进制，避免悄悄产出 Rosetta `x86_64` 应用。
 - [x] `main` 已转换为 AppKit 非激活 `NSPanel`，并移除 macOS 搜索框的 Tauri `set_focus()`；一次性延迟显示测试中，Suo 主窗口收到 `Focused(true)`，同时 TextEdit 菜单栏仍为“文本编辑”，辅助功能焦点仍是原文本输入区。`settings` 未转换，`open_settings` 继续调用 `set_focus()`，显式打开设置仍会激活 Suo。
-- [ ] 当前 Computer Use 无法注入系统级全局快捷键。请人工从完全退出状态启动后按一次真实快捷键，肉眼确认搜索框不再在屏幕中间闪现，原应用菜单栏和光标不变且搜索框能输入；再保持设置窗口打开、切到 Codex/其他应用，连续按两次快捷键，确认显示/隐藏搜索框都不会把设置页顶到前台；最后从结果打开设置，确认此时会切换到 Suo。
+- [ ] 当前 Computer Use 无法注入系统级全局快捷键。请至少做 20 轮“完全退出 Suo → 启动 → 立即按一次真实快捷键”，并穿插重启后等待 1–3 秒再按，肉眼确认搜索框从首个可见帧起就在保存位置，不再闪现默认居中帧；同时确认原应用菜单栏和光标不变且搜索框能输入。再保持设置窗口打开、切到 Codex/其他应用，连续按两次快捷键，确认显示/隐藏搜索框都不会把设置页顶到前台；最后从结果打开设置，确认此时会切换到 Suo。
 
 ## 仍需人工观察或在不同机器补测
 
