@@ -42,7 +42,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 通用设置可开启跨平台开机自启；登录后只在后台建立托盘/菜单栏与全局快捷键，不主动弹出搜索窗口；快捷键录制期间不会触发当前全局组合，Windows 录制 `Alt+Space` 时拦截系统菜单；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：macOS Apple Silicon 已完成至配置 v14 的核心功能与原生 arm64 构建，v15 开机自启等待 Mac 实机验证。Windows 10 x64 已完成 v10 基线；v15 已通过 x64 编译、102 项测试和旧配置只读启动检查，开关与快捷键录制仍待人工交互验收；v11–v14 的其余增量清单保持待验证。详细证据与执行清单分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)。
+平台验证状态：macOS Apple Silicon 已生成 `v0.1.0` arm64 发布候选；它将作为无 Developer ID 签名、未公证的 Pre-release 分发，v15 登录启动和系统级快捷键仍保留人工项。Windows x64 必须从相同 tag 重新构建并完成当前整体验收，通过后再向同一 Release 追加安装包。当前证据与唯一执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
 
 ### 命令参数约定
 
@@ -158,8 +158,8 @@ cargo test
 
 ## 平台验证与交接
 
-- macOS Apple Silicon：核心功能已验证至配置 v14，最终原生 arm64 测试和 `.app` 构建通过；v15 LaunchAgent、真实场景证据及尚需人工按键的项目见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
-- Windows x64：v10 基线已完成；v15 已完成 x64 构建和自动化检查，开机自启、快捷键录制及路径布局待人工交互验收；v11–v14 的其余清单仍需实机验证，详见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
+- macOS Apple Silicon：`v0.1.0` arm64 Pre-release 的构建、产物限制和剩余人工项见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- Windows x64：从相同 `v0.1.0` tag 执行干净构建、最新 UI、开机自启、快捷键、任务栏、脚本动作和配置迁移回归，详见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
 - 已知跨平台工具链、配置迁移与平台隔离问题见 [`handoff/CROSS_PLATFORM.md`](./handoff/CROSS_PLATFORM.md)。README 仅维护当前状态，不保存逐轮测试流水。
 
 ## 分支约定

@@ -87,7 +87,7 @@ pub fn dispatch_shortcut(shortcut: &Shortcut) -> ShortcutDispatch {
     state.dispatch(shortcut)
 }
 
-pub fn stop_recording(app: &AppHandle) -> Result<(), String> {
+pub fn stop_recording(_app: &AppHandle) -> Result<(), String> {
     let mut state = HOTKEY_RECORDING
         .lock()
         .map_err(|_| "快捷键录制状态不可用，请重启 Suo".to_string())?;
@@ -95,7 +95,7 @@ pub fn stop_recording(app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     if state.temporary_alt_space_guard {
         let guard = parse_shortcut("alt+Space")?;
-        app.global_shortcut()
+        _app.global_shortcut()
             .unregister(guard)
             .map_err(|error| format!("无法退出快捷键录制：{error}"))?;
         state.temporary_alt_space_guard = false;
