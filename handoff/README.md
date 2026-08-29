@@ -9,12 +9,12 @@
 | 范围 | 状态 | 下一步 |
 | --- | --- | --- |
 | macOS Apple Silicon `v0.1.0` | **发布候选已完成** | 以 Pre-release 发布 arm64 ZIP；构建证据、限制和剩余人工项见 [`MACOS.md`](MACOS.md)。 |
-| Windows x64 `v0.1.0` | **待验证** | 必须从 `v0.1.0` tag 构建并执行 [`WINDOWS.md`](WINDOWS.md)；通过后可把 Windows 安装包追加到同一个 GitHub Release。 |
+| Windows x64 `v0.1.0` | **发布候选已完成** | 已从 `v0.1.0` tag 完成 x64 构建、真实回归、安装/卸载/重装与真实注销登录验收；NSIS 安装包及 SHA-256 文件已追加到同一 Pre-release。 |
 | 跨平台约束 | **持续有效** | 修改平台代码前阅读 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，不得为一端编译而削弱另一端行为或安全边界。 |
 
 ## 当前交接文件
 
-- [`WINDOWS.md`](WINDOWS.md)：下一位 Windows agent 的唯一执行入口，包含构建、人工回归、产物和回报要求。
+- [`WINDOWS.md`](WINDOWS.md)：Windows x64 构建、真实回归、注销登录验收与 Release 资产证据。
 - [`MACOS.md`](MACOS.md)：当前 macOS 发布候选的构建证据、发布格式和未关闭限制。
 - [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)：仍然有效的平台隔离、配置迁移、焦点、窗口时序和工具链经验。
 - [`archive/`](archive/README.md)：2026-08-11 以前的逐版本执行证据，仅供追溯，不应整份照搬执行。

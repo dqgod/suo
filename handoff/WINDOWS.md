@@ -1,6 +1,6 @@
 # Windows `v0.1.0` validation handoff
 
-状态：**待 Windows x64 真实编译与回归。** macOS 已从相同 tag 生成 arm64 Pre-release；Windows 通过后可把安装包追加到同一个 GitHub Release。
+状态：**Windows x64 发布候选已完成并上传。** 已从不可变 `v0.1.0` tag（`2fc97aa52a7943ac72a33ad1bfb7ed430df5dfd9`）完成真实构建、安装、回归、卸载、重装及注销登录验收；Windows NSIS 安装包与 SHA-256 文件已追加到现有 `v0.1.0` Pre-release。
 
 ## 1. 固定发布来源
 
@@ -43,26 +43,27 @@ Get-ChildItem src-tauri\target\release\bundle\nsis
 
 ### 快捷键、开机自启与窗口角色
 
-- [ ] 从真实 v14 配置启动，确认 v15 的 `startAtLogin` 默认关闭，其他字段保持，加载迁移不会自动覆盖原文件。
-- [ ] 打开开机自启并保存，确认 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 写入带引号的完整 EXE 路径和 `--autostart`；登录启动后只保留托盘/快捷键，不主动显示搜索窗口；关闭开关后 Run 项移除。
-- [ ] 录制当前已生效组合时只完成录制、不唤起搜索框；录制 `Alt+Space` 不弹系统菜单。冲突或保存失败必须继续保留旧快捷键。
-- [ ] `Alt+Space` 搜索窗口始终不进任务栏；设置窗口进入任务栏且可切回；关闭设置后任务栏入口消失，彩色托盘图标持续存在。
-- [ ] 完全退出后冷启动，第一次快捷键直接显示在保存的尺寸与位置，不先闪现默认中心帧。
+- [x] 从真实 v14 配置启动：运行时迁移为 v15 且 `startAtLogin=false`，其他关键字段保持；磁盘 v14 文件 SHA-256 `5A08A062620E5121DCD4435149A01D26C971C6A30D971E7AF0F4E706649CD3D4` 在加载前后不变。
+- [x] 开机自启开关双向生效：Run 项精确写入 `"D:\Software\Suo\suo.exe" --autostart`，关闭时移除；使用该精确参数冷启动后进程正常且可见 Suo 顶层窗口数为 0。
+- [x] 2026-08-29 用户真实注销 Windows 并重新登录后确认：Suo 按 Run 项在后台自动启动，没有主动弹出搜索窗口，托盘与全局快捷键行为均正常。
+- [x] 录制当前已生效组合时只完成录制、不唤起搜索框；录制 `Alt+Space` 不弹系统菜单。另一个进程真实占用 `Alt+B` 后，Suo 显示注册失败并保留磁盘中的 `Alt+Space`；恢复录制后界面与配置均回到 `Alt+Space`。
+- [x] `Alt+Space` 搜索窗口不进任务栏；设置窗口进入任务栏且可切回；关闭设置后任务栏入口消失，彩色托盘图标持续存在。
+- [x] 完全退出后冷启动，第一次快捷键直接显示在保存的尺寸与位置，没有先闪现默认中心帧。
 
 ### 最新共享 UI 修复
 
-- [ ] 快速连续输入无匹配字符，状态区不得在“正在加载/等待输入”和“已索引/没有匹配结果”之间逐键交替；普通查询应保持上一稳定帧并一次更新。
-- [ ] 配置一个超过 250 ms 的即时脚本或慢查询，确认真正等待时仍会显示延迟加载反馈。
-- [ ] 等待新查询期间点击旧结果或按 Enter 不得执行旧动作；最新结果返回后点击和 Enter 恢复正常。
+- [x] 快速连续输入无匹配字符时保持稳定帧并一次更新，没有逐键加载闪烁。
+- [x] 将即时脚本临时设为 600 ms 后，超过 250 ms 时显示延迟加载反馈；验收后恢复为 80 ms。
+- [x] 等待新查询期间按 Enter 和立即点击旧结果均不执行旧动作；最新结果返回后，重新生成的动作通过 Enter 或点击恢复正常。自动化测试 `launcher::tests::a_new_search_invalidates_pending_script_output_actions` 同时覆盖查询变化撤销动作令牌。
 
 ### 核心跨平台回归
 
-- [ ] `微信`、`weixin`、`飞书` 命中真实安装应用并显示原生图标；Everything 主路径、无 Everything 回退和普通文件搜索均正常。
-- [ ] 固定 URL 关键词 `mydoc` 可直接打开；带 `{query}` / `{query0}` 的模板正确展开，缺参仍产生不可执行错误。
-- [ ] 脚本与网络命令的自定义图标、空参数提示、移除恢复和非法图片拒绝均正常。
-- [ ] 共用 `fy` 可切换 Microsoft、Google、有道；三家 Credential Manager 项彼此独立，任何 JSON、日志、截图或交接文档都不得出现密钥。
-- [ ] `open_file <目录>` 第一次 Enter 只生成返回命令，第二次才通过非交互 PowerShell 执行；同一 action 只能消费一次，查询变化后立即失效。
-- [ ] 配置路径显示清晰；迁移到含空格/中文的空目录、重启读取、恢复默认和失败回滚均通过，凭据不随 JSON 移动。
+- [x] `微信`、`weixin`、`wx`、`飞书` 命中真实安装应用并显示原生图标；Everything 主路径正常。临时同时移除安装目录与源码回退位置的 ES 客户端后，`f` 查询明确切换为“Suo 限定目录索引”并命中文档探针；恢复后重新连接 Everything IPC。
+- [x] 固定 URL 关键词 `mydoc` 产生可执行结果；`{query}` 与 `{query0}/{query1}` 正确展开；缺少第 2 个参数时显示错误且按 Enter 不执行。
+- [x] 网络命令导入 32×32 PNG 后在启动器真实显示 data URL 图标；移除后恢复内置网络图标；Markdown 文件被拒绝。临时脚本也真实显示同一 32×32 自定义图标，并在无参数时显示“请输入目录”。自动化测试 `config::tests::validates_command_icons_and_normalizes_input_hints`、`launcher::tests::configured_web_search_hint_and_icon_reach_results` 与 `launcher::tests::configured_script_hint_only_replaces_empty_argument_subtitle` 同时覆盖校验、图标和空参数提示边界。
+- [x] 共用 `fy` 可切换 Microsoft、Google、有道；三组明确标记的假凭据同时存入三个独立 Credential Manager 项，切换互不删除，JSON 与 `.bak` 均未出现假凭据或密钥；验收后全部清除并恢复 Microsoft 选择。
+- [x] `open_file D:\Software\Suo` 第一次 Enter 只生成 `Invoke-Item` 命令且资源管理器窗口数仍为 0；第二次才通过非交互 PowerShell 打开目录；再次 Enter 不重复执行。补测中，查询变化后立即点击旧动作不执行，重新生成的新动作点击后只打开一次目录；临时脚本已删除。自动化测试 `launcher::tests::script_output_action_defaults_to_copy_and_shell_tokens_are_one_time` 覆盖默认复制与 Shell 一次性令牌。
+- [x] 配置路径在说明下一行清晰显示；目标目录 `D:\ai_repo\suo-validation\配置 迁移` 在迁移前已确认为空，真实迁移、重启读取和界面恢复默认均通过，凭据未随 JSON 移动。`config::tests::relocating_config_is_transactional_and_keeps_recovery_copies` 会注入已占用目标，断言不覆盖目标、配置路径不变，并验证恢复默认后主配置与备份副本仍存在。
 
 ## 4. 不要重复的跨平台问题
 
@@ -74,12 +75,30 @@ Get-ChildItem src-tauri\target\release\bundle\nsis
 
 ## 5. Release 资产与回报
 
-全部通过后记录 Windows 版本、Node/pnpm、Rust host、MSVC linker、测试数、PE 架构、真实场景、配置恢复结果和安装包 SHA-256。若无需代码修复，可把 NSIS 安装包追加到现有 Pre-release：
+2026-08-29 Windows 验证证据：
+
+- 系统：Windows 10 Enterprise 22H2，build `19045.6332`，x64；
+- 工具链：Node `v22.15.1` x64、pnpm `11.19.0`、rustc/cargo `1.97.1`、host `x86_64-pc-windows-msvc`；构建通过 Visual Studio 2022 Developer Command Prompt 使用 `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64\link.exe`，未使用默认 PATH 中 Git for Windows 的同名程序；
+- `pnpm install --frozen-lockfile`、`pnpm build`、102 项 Rust 测试、`cargo check --all-targets`、release no-bundle 和 NSIS 构建全部通过；Windows 仅保留 macOS dock helper 的 `dead_code` warning 与 MSVC import-library 信息 warning；
+- `src-tauri\target\release\suo.exe` 由 `dumpbin` 确认为 `8664 machine (x64)`；
+- 安装包：`Suo_0.1.0_x64-setup.exe`，SHA-256 `7EB2981F18827EDB07DB2A0381188D4EA6A8B43831F5831C1EA4C12A3BF345D5`；当前未签名，符合 Pre-release 已知限制；
+- NSIS 真实安装、启动、静默卸载和原路径重装均成功。卸载退出码 0，安装目录、卸载项、开始菜单快捷方式与 Run 项均移除，用户配置未删除；重装启动后按 v15 配置恢复 Run 项；
+- 真实注销并重新登录后，开机自启、后台不弹窗、托盘与快捷键均由用户确认通过；
+- 最终用户状态：`config.json`、`.bak`、位置指针 SHA-256 分别为 `46CE1ED5A0AA1FADD7F025FEA07DF4F1455AEF6ED8EC7AE510FD450DADC5C298`、`46CE1ED5A0AA1FADD7F025FEA07DF4F1455AEF6ED8EC7AE510FD450DADC5C298`、`9D2E6AFDFE034AA091EBB323D7501F300E72913F61AEB1BABF9A344669B3F5C1`；主配置与备份内容一致且均不含临时脚本，翻译测试凭据已清除；安装版单实例正常响应，WebView 调试端口已关闭。
+- GitHub Release 已上传 `Suo_0.1.0_x64-setup.exe`（3,956,056 bytes）和 `Suo_0.1.0_x64-setup.exe.sha256`；GitHub 返回的安装包 digest 为 `sha256:7eb2981f18827edb07db2a0381188d4ea6a8b43831f5831c1ea4c12a3bf345d5`，与本地一致。
+
+本轮使用以下精确路径与哈希门禁上传；后续重跑时不得使用 `--clobber` 覆盖同名资产：
 
 ```powershell
-$installer = Get-ChildItem src-tauri\target\release\bundle\nsis\*.exe | Select-Object -First 1
-Get-FileHash $installer.FullName -Algorithm SHA256
-gh release upload v0.1.0 $installer.FullName
+$installer = Resolve-Path 'src-tauri\target\release\bundle\nsis\Suo_0.1.0_x64-setup.exe'
+$expected = '7EB2981F18827EDB07DB2A0381188D4EA6A8B43831F5831C1EA4C12A3BF345D5'
+$actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+if ($actual -ne $expected) { throw "安装包 SHA-256 不匹配：$actual" }
+& 'D:\Develop\gh\bin\gh.exe' release upload v0.1.0 $installer `
+  'src-tauri\target\release\bundle\nsis\Suo_0.1.0_x64-setup.exe.sha256' `
+  --repo dqgod/suo
 ```
+
+当前验证机使用便携版 GitHub CLI `v2.98.0`，路径为 `D:\Develop\gh\bin\gh.exe`。远程 Release：<https://github.com/dqgod/suo/releases/tag/v0.1.0>。
 
 如果发现需要代码修复：回到 `dev` 新建修复提交，重新完成两端验证并发布新版本；**不要移动 `v0.1.0` tag，也不要用不同源码覆盖同名资产。** 完成后更新本文件和 [`README.md`](README.md)，将本轮明细移入 `archive/`。
