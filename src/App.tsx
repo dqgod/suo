@@ -84,6 +84,7 @@ const initialResponse: SearchResponse = {
 
 const defaultEmptyQueryDebounceMs = 0;
 const defaultNonEmptyQueryDebounceMs = 50;
+const pendingFeedbackDelayMs = 250;
 const minimumQueryDebounceMs = 0;
 const maximumQueryDebounceMs = 60_000;
 const minimumScriptDebounceMs = 20;
@@ -344,6 +345,13 @@ function Launcher() {
   const configRevisionRef = useRef(0);
   const compactDesiredRef = useRef(false);
   const resizeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingFeedbackTimerRef = useRef<number | null>(null);
+
+  const clearPendingFeedback = useCallback(() => {
+    if (pendingFeedbackTimerRef.current === null) return;
+    window.clearTimeout(pendingFeedbackTimerRef.current);
+    pendingFeedbackTimerRef.current = null;
+  }, []);
 
   const cancelPending = useCallback(() => {
     const generation = ++requestId.current;
@@ -358,16 +366,24 @@ function Launcher() {
     preserveCancellationRef.current = null;
     queryRef.current = value;
     setQuery(value);
-    setResponse((current) => ({
-      ...current,
-      query: value.trim(),
-      provider: zhCN.loading,
-      providerDetail: zhCN.waitingForInput,
-      results: [],
-    }));
+    // Keep the last completed frame visible while the debounce timer and the
+    // next provider request are pending. Replacing it with a transient loading
+    // frame on every keystroke makes normal typing visibly alternate between
+    // two layouts. Slow providers still get feedback after a short delay.
+    clearPendingFeedback();
+    pendingFeedbackTimerRef.current = window.setTimeout(() => {
+      pendingFeedbackTimerRef.current = null;
+      if (queryRef.current !== value || activationReadyRef.current) return;
+      setResponse((current) => ({
+        ...current,
+        provider: zhCN.loading,
+        providerDetail: zhCN.waitingForInput,
+        results: [],
+      }));
+    }, pendingFeedbackDelayMs);
     const cancellation = cancelPending();
     void cancellation.promise.catch(() => undefined);
-  }, [cancelPending]);
+  }, [cancelPending, clearPendingFeedback]);
 
   const search = useCallback(async (value: string) => {
     const currentRequest = ++requestId.current;
@@ -378,6 +394,7 @@ function Launcher() {
         generation: currentRequest,
       });
       if (currentRequest === requestId.current) {
+        clearPendingFeedback();
         actionEpochRef.current = next.actionEpoch;
         activationReadyRef.current = true;
         completedRequestIdRef.current = currentRequest;
@@ -387,10 +404,11 @@ function Launcher() {
       }
     } catch (error) {
       if (currentRequest === requestId.current) {
+        clearPendingFeedback();
         setMessage(String(error));
       }
     }
-  }, []);
+  }, [clearPendingFeedback]);
 
   useEffect(() => {
     let disposed = false;
@@ -530,11 +548,12 @@ function Launcher() {
     });
     window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => {
+      clearPendingFeedback();
       void shown.then((unlisten) => unlisten());
       void hidden.then((unlisten) => unlisten());
       void indexStarted.then((unlisten) => unlisten());
     };
-  }, [cancelPending, updateQuery]);
+  }, [cancelPending, clearPendingFeedback, updateQuery]);
 
   useEffect(() => {
     if (!response.indexing) return;
@@ -581,19 +600,13 @@ function Launcher() {
   const activate = useCallback(
     async (result: SearchResult, keepOpen = false) => {
       try {
+        if (!activationReadyRef.current) return;
         if (result.action.type === "copyText") {
           await navigator.clipboard.writeText(result.action.text);
           setMessage(zhCN.copied);
           return;
         }
         if (result.action.type === "none") return;
-        if (
-          (result.action.type === "runScript" || result.action.type === "runScriptOutput") &&
-          !activationReadyRef.current
-        ) {
-          setMessage("正在恢复命令状态，请稍候");
-          return;
-        }
         const output = await invoke<SearchResult | null>("activate_result", {
           action: result.action,
           keepOpen,
@@ -634,7 +647,7 @@ function Launcher() {
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (response.query !== query.trim()) return;
+      if (!activationReadyRef.current || response.query !== query.trim()) return;
       const result = response.results[selectedIndex];
       if (result) void activate(result, event.shiftKey);
     }

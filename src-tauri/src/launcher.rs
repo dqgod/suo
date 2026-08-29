@@ -18,7 +18,7 @@ use crate::{
     },
     dock,
     file_search::{self, FileSearchOutcome},
-    focus, i18n,
+    focus, hotkey, i18n,
     models::{CancelStatus, IndexStatus, ResultAction, ResultKind, SearchResponse, SearchResult},
     scripts, translator, web_search,
 };
@@ -701,7 +701,9 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn hide_settings(app: AppHandle) -> Result<(), String> {
+    hotkey::stop_recording(&app)?;
     if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.emit("hotkey-recording-stopped", ());
         window.hide().map_err(|error| error.to_string())?;
     }
     dock::settings_closed(&app)
@@ -833,11 +835,11 @@ pub fn show_launcher(app: &AppHandle) -> Result<(), String> {
         .ok_or_else(|| "找不到主窗口".to_string())?;
 
     window.unminimize().map_err(|error| error.to_string())?;
-    let _ = position_launcher(app);
-    window.show().map_err(|error| error.to_string())?;
-    focus::focus_shown_launcher(&window)?;
-    let _ = window.emit("launcher-shown", ());
-    Ok(())
+    // Do not reveal a stale/default frame when cursor or monitor resolution
+    // fails. On macOS the adapter additionally waits for Tao's asynchronous
+    // AppKit geometry blocks before showing the panel.
+    position_launcher(app)?;
+    focus::show_launcher_after_geometry(&window)
 }
 
 pub fn position_launcher(app: &AppHandle) -> Result<(), String> {

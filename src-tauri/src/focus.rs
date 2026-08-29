@@ -5,12 +5,14 @@
 //! deliberately remains a regular Tauri window and continues to activate Suo.
 
 #[cfg(target_os = "macos")]
+use dispatch2::DispatchQueue;
+#[cfg(target_os = "macos")]
 use objc2::runtime::{AnyClass, NSObject, NSObjectProtocol};
 #[cfg(target_os = "macos")]
 use objc2::{define_class, msg_send, ClassType};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSPanel, NSWindowStyleMask};
-use tauri::{Runtime, WebviewWindow};
+use tauri::{Emitter, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
 struct SuoLauncherPanelIvars;
@@ -82,17 +84,40 @@ pub fn prepare_launcher_window<R: Runtime>(_window: &WebviewWindow<R>) -> Result
     Ok(())
 }
 
-/// `show()` already calls `makeKeyAndOrderFront:` on macOS. Once the native
-/// window is a non-activating panel that is sufficient to focus its WebView;
-/// calling Tauri's `set_focus()` would additionally activate the whole app.
+/// Reveal the launcher only after Tao's pending macOS geometry changes.
+///
+/// Tao implements `set_inner_size` and `set_outer_position` by asynchronously
+/// dispatching AppKit calls to the main queue, while `show()` calls
+/// `makeKeyAndOrderFront:` synchronously. Calling the three APIs back-to-back
+/// can therefore expose Tauri's default centered frame for one paint. First
+/// enqueue this hand-off through Tauri's event loop, then enqueue the reveal
+/// behind Tao's AppKit blocks on the same serial dispatch queue.
+///
+/// Once the native window is a non-activating panel, `show()` is sufficient to
+/// focus its WebView. Calling Tauri's `set_focus()` would additionally activate
+/// the whole app and replace the foreground application's menu bar.
 #[cfg(target_os = "macos")]
-pub fn focus_shown_launcher<R: Runtime>(_window: &WebviewWindow<R>) -> Result<(), String> {
-    Ok(())
+pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    let event_loop_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            DispatchQueue::main().exec_async(move || {
+                if let Err(error) = event_loop_window.show() {
+                    eprintln!("无法在应用窗口几何后显示 Suo 主窗口：{error}");
+                    return;
+                }
+                let _ = event_loop_window.emit("launcher-shown", ());
+            });
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn focus_shown_launcher<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
-    window.set_focus().map_err(|error| error.to_string())
+pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    let _ = window.emit("launcher-shown", ());
+    Ok(())
 }
 
 #[cfg(all(test, target_os = "macos"))]

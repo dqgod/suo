@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -288,6 +289,9 @@ function Settings() {
   const autoSaveBlockedRef = useRef(false);
   const autoSaveRunningRef = useRef(false);
   const statusTimerRef = useRef<number | null>(null);
+  const hotkeyOperationRef = useRef<Promise<void>>(Promise.resolve());
+  const hotkeyCleanupErrorRef = useRef(false);
+  const hotkeyCapturePendingRef = useRef(false);
 
   const setDraft = useCallback((update: AppConfig | null | ((current: AppConfig | null) => AppConfig | null)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
@@ -303,6 +307,59 @@ function Settings() {
       statusTimerRef.current = null;
     }, 1600);
   }, []);
+
+  const changeHotkeyRecordingBackend = useCallback((recording: boolean) => {
+    const operation = hotkeyOperationRef.current
+      .catch(() => undefined)
+      .then(() => invoke<void>("set_hotkey_recording", { recording }));
+    hotkeyOperationRef.current = operation.catch(() => undefined);
+    return operation;
+  }, []);
+
+  const stopHotkeyRecording = useCallback(async () => {
+    setRecordingHotkey(false);
+    try {
+      await changeHotkeyRecordingBackend(false);
+      if (hotkeyCleanupErrorRef.current) {
+        hotkeyCleanupErrorRef.current = false;
+        setError("");
+      }
+      return true;
+    } catch (recordingError) {
+      hotkeyCleanupErrorRef.current = true;
+      setRecordingHotkey(true);
+      setError(String(recordingError));
+      return false;
+    }
+  }, [changeHotkeyRecordingBackend]);
+
+  const beginHotkeyRecording = useCallback(async () => {
+    setError("");
+    hotkeyCapturePendingRef.current = false;
+    try {
+      await changeHotkeyRecordingBackend(true);
+      setRecordingHotkey(true);
+    } catch (recordingError) {
+      setError(String(recordingError));
+    }
+  }, [changeHotkeyRecordingBackend]);
+
+  const finishHotkeyCapture = useCallback((value: string) => {
+    if (hotkeyCapturePendingRef.current) return;
+    hotkeyCapturePendingRef.current = true;
+    setError("");
+    void (async () => {
+      try {
+        if (!await stopHotkeyRecording()) return;
+        setDraft((current) => current ? {
+          ...current,
+          launcher: { ...current.launcher, globalHotkey: value },
+        } : current);
+      } finally {
+        hotkeyCapturePendingRef.current = false;
+      }
+    })();
+  }, [setDraft, stopHotkeyRecording]);
 
   const close = useCallback(async () => {
     try {
@@ -400,7 +457,44 @@ function Settings() {
 
   useEffect(() => () => {
     if (statusTimerRef.current !== null) window.clearTimeout(statusTimerRef.current);
-  }, []);
+    void changeHotkeyRecordingBackend(false);
+  }, [changeHotkeyRecordingBackend]);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenStopped: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    let unlistenCaptured: (() => void) | undefined;
+    void listen("hotkey-recording-stopped", () => {
+      setRecordingHotkey(false);
+      if (hotkeyCleanupErrorRef.current) {
+        hotkeyCleanupErrorRef.current = false;
+        setError("");
+      }
+    }).then((dispose) => {
+      if (active) unlistenStopped = dispose;
+      else dispose();
+    });
+    void listen<string>("hotkey-recording-error", (event) => {
+      hotkeyCleanupErrorRef.current = true;
+      setError(event.payload);
+    }).then((dispose) => {
+      if (active) unlistenError = dispose;
+      else dispose();
+    });
+    void listen<string>("hotkey-recording-captured", (event) => {
+      finishHotkeyCapture(event.payload);
+    }).then((dispose) => {
+      if (active) unlistenCaptured = dispose;
+      else dispose();
+    });
+    return () => {
+      active = false;
+      unlistenStopped?.();
+      unlistenError?.();
+      unlistenCaptured?.();
+    };
+  }, [finishHotkeyCapture]);
 
   useEffect(() => {
     draftRevisionRef.current += 1;
@@ -425,7 +519,7 @@ function Settings() {
       event.preventDefault();
       event.stopImmediatePropagation();
       if (event.key === "Escape" && !event.altKey && !event.ctrlKey && !event.metaKey) {
-        setRecordingHotkey(false);
+        void stopHotkeyRecording();
         return;
       }
       const captured = shortcutFromKeyboardEvent(event);
@@ -439,15 +533,11 @@ function Settings() {
         return;
       }
       setError("");
-      setRecordingHotkey(false);
-      setDraft((current) => current ? {
-        ...current,
-        launcher: { ...current.launcher, globalHotkey: captured.value },
-      } : current);
+      finishHotkeyCapture(captured.value);
     };
     const onPointerDown = (event: PointerEvent) => {
       if (!hotkeyButtonRef.current?.contains(event.target as Node)) {
-        setRecordingHotkey(false);
+        void stopHotkeyRecording();
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -456,7 +546,7 @@ function Settings() {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, [recordingHotkey, setDraft]);
+  }, [finishHotkeyCapture, recordingHotkey, stopHotkeyRecording]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -464,7 +554,7 @@ function Settings() {
       if (saving) return;
       if (recordingHotkey) {
         event.preventDefault();
-        setRecordingHotkey(false);
+        void stopHotkeyRecording();
         return;
       }
       if (editor) {
@@ -476,7 +566,7 @@ function Settings() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, editor, recordingHotkey, saving]);
+  }, [close, editor, recordingHotkey, saving, stopHotkeyRecording]);
 
   const save = async () => {
     if (!draft) return;
@@ -935,13 +1025,16 @@ function Settings() {
                       disabled={saving || Boolean(view?.configReadOnly)}
                       aria-label={zhCN.globalHotkey}
                       onClick={() => {
-                        setError("");
-                        setRecordingHotkey(true);
+                        void beginHotkeyRecording();
                       }}
                     >
                       {recordingHotkey ? zhCN.hotkeyRecording : displayShortcut(draft.launcher.globalHotkey, isMac)}
                     </button>
                   </div>
+                  <label className="setting-row">
+                    <div><strong>{zhCN.startAtLogin}</strong><small>{zhCN.startAtLoginDescription}</small></div>
+                    <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.startAtLogin} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, startAtLogin: event.target.checked } })} />
+                  </label>
                   <label className="setting-row">
                     <div><strong>{zhCN.closeOnBlur}</strong><small>{zhCN.closeOnBlurDescription}</small></div>
                     <input className="switch" type="checkbox" disabled={saving || Boolean(view?.configReadOnly)} checked={draft.launcher.closeOnBlur} onChange={(event) => setDraft({ ...draft, launcher: { ...draft.launcher, closeOnBlur: event.target.checked } })} />

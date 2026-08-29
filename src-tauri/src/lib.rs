@@ -1,5 +1,7 @@
 mod app_icon;
 mod arguments;
+#[cfg(any(target_os = "macos", windows))]
+mod autostart;
 mod calculator;
 mod catalog;
 mod config;
@@ -32,17 +34,35 @@ pub fn run() {
 
     // 单实例插件必须最先注册，避免第二个进程初始化索引或抢占全局快捷键。
     #[cfg(any(target_os = "macos", windows))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        launcher::request_show_launcher(app);
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if !autostart::is_background_launch(&args) {
+            launcher::request_show_launcher(app);
+        }
     }));
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec![autostart::STARTUP_ARG]),
+    ));
 
     let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        launcher::toggle_launcher(app);
+                        match hotkey::dispatch_shortcut(shortcut) {
+                            hotkey::ShortcutDispatch::Capture(value) => {
+                                if let Some(settings) = app.get_webview_window("settings") {
+                                    let _ = settings.emit("hotkey-recording-captured", value);
+                                }
+                            }
+                            hotkey::ShortcutDispatch::Ignore => {}
+                            hotkey::ShortcutDispatch::ToggleLauncher => {
+                                launcher::toggle_launcher(app);
+                            }
+                        }
                     }
                 })
                 .build(),
@@ -51,6 +71,13 @@ pub fn run() {
             taskbar::apply_window_policy(app)?;
             let config_state = Arc::new(config::ConfigState::load(app.handle()));
             let initial_config = config_state.snapshot();
+            if !config_state.is_read_only() {
+                if let Err(error) =
+                    autostart::sync(app.handle(), initial_config.launcher.start_at_login)
+                {
+                    eprintln!("无法同步开机自启设置：{error}");
+                }
+            }
             dock::apply_initial_visibility(app);
             tray::create(app)?;
             app.manage(config_state);
@@ -98,14 +125,40 @@ pub fn run() {
 
             if let Some(window) = app.get_webview_window("settings") {
                 let event_window = window.clone();
-                window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
+                window.on_window_event(move |event| match event {
+                    WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
+                        if let Err(error) = hotkey::stop_recording(event_window.app_handle()) {
+                            eprintln!("关闭设置时无法结束快捷键录制：{error}");
+                            let _ = event_window.emit("hotkey-recording-error", error);
+                            return;
+                        }
+                        let _ = event_window.emit("hotkey-recording-stopped", ());
                         let _ = event_window.hide();
                         if let Err(error) = dock::settings_closed(event_window.app_handle()) {
                             eprintln!("关闭设置后无法隐藏 Dock 图标：{error}");
                         }
                     }
+                    WindowEvent::Focused(false) => {
+                        if let Err(error) = hotkey::stop_recording(event_window.app_handle()) {
+                            eprintln!("设置失焦时无法结束快捷键录制：{error}");
+                            let _ = event_window.emit("hotkey-recording-error", error);
+                        } else {
+                            let _ = event_window.emit("hotkey-recording-stopped", ());
+                        }
+                    }
+                    WindowEvent::Focused(true) => {
+                        // If Windows could not unregister the temporary
+                        // Alt+Space guard while focus was leaving, retry as
+                        // soon as the user returns to Settings.
+                        if let Err(error) = hotkey::stop_recording(event_window.app_handle()) {
+                            eprintln!("设置重新聚焦时仍无法结束快捷键录制：{error}");
+                            let _ = event_window.emit("hotkey-recording-error", error);
+                        } else {
+                            let _ = event_window.emit("hotkey-recording-stopped", ());
+                        }
+                    }
+                    _ => {}
                 });
             }
 
@@ -128,6 +181,7 @@ pub fn run() {
             config::open_config_directory,
             config::change_config_directory,
             config::save_app_config,
+            hotkey::set_hotkey_recording,
             config::set_translation_credentials,
             config::clear_translation_credentials,
             scripts::reveal_script_in_folder
