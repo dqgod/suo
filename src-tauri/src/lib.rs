@@ -21,6 +21,8 @@ mod taskbar;
 mod translator;
 mod tray;
 mod web_search;
+#[cfg(target_os = "windows")]
+mod windows_apps;
 
 use std::sync::Arc;
 
@@ -92,6 +94,8 @@ pub fn run() {
                 initial_config.launcher.keep_last_input,
             );
             app.manage(state.clone());
+            #[cfg(target_os = "windows")]
+            LauncherState::start_packaged_application_catalog(state.clone(), app.handle().clone());
             // macOS protected folders can trigger privacy prompts. Defer the
             // fallback scan until the user explicitly requests a file search.
             #[cfg(not(target_os = "macos"))]

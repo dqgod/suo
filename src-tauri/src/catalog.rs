@@ -7,6 +7,7 @@ use std::{fs, path::Path};
 use std::env;
 
 use pinyin::ToPinyin;
+use sha2::{Digest, Sha256};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,10 @@ pub struct CatalogEntry {
     /// Bundle metadata and localized display names are searchable without
     /// changing the stable path-derived title shown in launcher results.
     pub aliases: Vec<CatalogAlias>,
+    /// Windows packaged applications do not have a launchable filesystem
+    /// path. Their validated AUMID stays native-only and the public result
+    /// action refers back to the opaque catalog result id.
+    pub windows_app_user_model_id: Option<String>,
 }
 
 impl CatalogEntry {
@@ -60,6 +65,40 @@ impl CatalogEntry {
             pinyin_name,
             pinyin_initials,
             aliases: Vec::new(),
+            windows_app_user_model_id: None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn from_windows_packaged_application(
+        name: String,
+        app_user_model_id: String,
+    ) -> Option<Self> {
+        let path = crate::windows_apps::shell_path(&app_user_model_id)?;
+        let normalized_name = name.to_lowercase();
+        let normalized_path = app_user_model_id.to_lowercase();
+        let (pinyin_name, pinyin_initials) = pinyin_search_keys(&name);
+        Some(Self {
+            name,
+            path,
+            is_directory: false,
+            normalized_name,
+            normalized_path,
+            pinyin_name,
+            pinyin_initials,
+            aliases: Vec::new(),
+            windows_app_user_model_id: Some(app_user_model_id),
+        })
+    }
+
+    pub(crate) fn application_result_id(&self) -> String {
+        if let Some(app_user_model_id) = &self.windows_app_user_model_id {
+            // Keep the AUMID native-only. The deterministic digest is merely a
+            // catalog lookup key and grants no capability on its own.
+            let digest = Sha256::digest(app_user_model_id.as_bytes());
+            format!("app:windows:{digest:x}")
+        } else {
+            format!("app:{}", self.path.to_string_lossy())
         }
     }
 
@@ -151,6 +190,19 @@ fn discover_windows_applications() -> Vec<CatalogEntry> {
             Some("lnk" | "url" | "exe")
         )
     })
+}
+
+#[cfg(target_os = "windows")]
+pub fn discover_windows_packaged_applications() -> Result<Vec<CatalogEntry>, String> {
+    Ok(crate::windows_apps::discover()?
+        .into_iter()
+        .filter_map(|application| {
+            CatalogEntry::from_windows_packaged_application(
+                application.name,
+                application.app_user_model_id,
+            )
+        })
+        .collect())
 }
 
 #[cfg(target_os = "macos")]

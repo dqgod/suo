@@ -1,6 +1,17 @@
-# Windows `v0.1.0` validation handoff
+# Windows release validation handoff
 
-状态：**Windows x64 发布候选已完成并上传。** 已从不可变 `v0.1.0` tag（`2fc97aa52a7943ac72a33ad1bfb7ed430df5dfd9`）完成真实构建、安装、回归、卸载、重装及注销登录验收；Windows NSIS 安装包与 SHA-256 文件已追加到现有 `v0.1.0` Pre-release。
+状态：**Windows x64 `v0.1.1` 发布候选已完成；`v0.1.0` 历史 Release 保持不变。** `v0.1.1` 补齐打包应用发现、启动与原生图标，并修复启动器获得输入焦点时原前台应用任务栏选中外观跳动；Windows 自动化与真实场景验证均已通过。macOS 仍需从新的不可变 tag 完成对应构建回归。
+
+## 0. `v0.1.0` 之后的 `dev` 验证（2026-08-30）
+
+- [x] Windows 搜索框仍获得真实前台焦点并接收键盘输入，但显示后通过 `ITaskbarList::ActivateTab` 只恢复原前台窗口的任务栏选中外观。以 ChatGPT 为前台执行真实 `Alt+Space` 后，前台句柄由 ChatGPT 切换到 `Suo / 梭`，而任务栏左侧 400×160 区域前后 64,000 个像素完全一致；搜索窗口仍没有自己的任务栏入口。
+- [x] Windows 在后台调用固定系统 PowerShell 的 `Get-StartApps` 补充 MSIX/UWP/打包应用，完成后刷新当前查询，不阻塞全局快捷键注册；失败时保留传统开始菜单 `.lnk/.exe` 结果。
+- [x] `chatgpt`、`xbox`、`microsoft store` 在真实 dev release 中均命中“Windows 应用”，并显示各自不同的原生 Shell 图标；自动化实测也确认三个 AUMID 均能发现并产生非空 RGBA 图标。
+- [x] 打包应用使用经校验的 AUMID 在原生 `IApplicationActivationManager` 中启动；前端只收到 SHA-256 目录摘要，伪造 result id 无法解析启动目标或图标路径。真实按 Enter 后 Microsoft Store 的 `WinStore.App` 新进程启动。
+- [x] 同名传统快捷方式与打包应用不会仅因显示名称相同而互相覆盖；回归测试同时保留两个独立动作。
+- [x] 109 项常规 Rust 单元测试、2 项本机打包应用发现/图标测试、`cargo check --all-targets`、前端生产构建和 NSIS 正式构建通过。`Suo_0.1.1_x64-setup.exe` 为 x64、Product/File Version 均为 `0.1.1`，SHA-256 为 `CADD589EF27644E40CEDB9A06E5F59DC433283219511962E9895B3B602A09F07`；仍未签名，符合当前 Pre-release 限制。
+
+这轮改动全部由 `cfg(windows)` adapter 隔离。macOS 接手时仍需运行完整构建，确认 `CatalogEntry` 新字段、`ResultAction::LaunchApplication` 序列化分支和前端刷新监听不会造成交叉平台编译或运行回归；不得把 Windows taskbar/AUMID/PowerShell 逻辑移入 macOS 路径。
 
 ## 1. 固定发布来源
 

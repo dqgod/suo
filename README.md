@@ -18,13 +18,13 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 
 ## `dev` 当前状态
 
-当前 `dev` 已实现 Windows 首轮可运行闭环，并于 2026-08-08 完成 macOS Apple Silicon 首轮实机验证：
+当前 `dev` 已实现 Windows 首轮可运行闭环，并于 2026-08-08 完成 macOS Apple Silicon 首轮实机验证；2026-08-30 起继续承载 `v0.1.0` 之后的迭代：
 
 - 默认以 Windows `Alt+Space`、macOS `Command+Space` 唤起/隐藏无边框窗口，`Esc` 关闭；通用设置可点击录制并更换组合键，冲突时保留原快捷键；
 - Windows 与 macOS 均启用单实例保护；正常运行时再次启动会唤醒已有主窗口；
-- macOS 搜索框使用不会激活 Suo 的原生面板：唤起后继续保留原应用的菜单栏和输入焦点显示，同时搜索框可接收键盘输入；显式打开设置页时仍会正常激活 Suo。Windows 保持原有搜索窗口聚焦行为；
+- macOS 搜索框使用不会激活 Suo 的原生面板：唤起后继续保留原应用的菜单栏和输入焦点显示，同时搜索框可接收键盘输入；显式打开设置页时仍会正常激活 Suo。Windows 搜索框继续获得键盘焦点，但会维持原前台应用的任务栏选中外观，避免反复显隐时任务栏按钮跳动；
 - 常驻系统托盘；左键唤醒主窗口，右键菜单可显示 Suo、打开设置或退出进程；macOS 使用随菜单栏明暗自动反色的中空模板图标，并可选择只在设置窗口打开期间显示 Dock 图标；Windows 保留彩色托盘图标，快捷键搜索窗口不占任务栏，设置窗口仍显示任务栏图标；
-- 搜索开始菜单应用和桌面、文档、下载目录文件；中文应用名称支持拼音全拼和首字母；macOS 同时读取 `.app` 的 Bundle 名称、URL scheme 和中文本地化名称，因此 `微信` / `weixin` 可命中 WeChat，`飞书` / `feishu` 可命中 Lark；
+- 搜索开始菜单应用和桌面、文档、下载目录文件；Windows 在后台补充系统 `Get-StartApps` 目录中的 MSIX/UWP 应用，因此 ChatGPT、Xbox、Microsoft Store 等没有传统快捷方式的应用也可搜索和启动；系统目录不可用时仍保留传统开始菜单结果；中文应用名称支持拼音全拼和首字母；macOS 同时读取 `.app` 的 Bundle 名称、URL scheme 和中文本地化名称，因此 `微信` / `weixin` 可命中 WeChat，`飞书` / `feishu` 可命中 Lark；
 - `f <关键词>` 通过官方 `ES.exe` 连接已有 Everything，IPC 不可用时自动回退限定目录索引；
 - macOS 的 `f <关键词>` 通过 Spotlight 文件名索引搜索，失败时同样回退限定目录索引；
 - 通用设置可分别配置空输入和非空输入的尾沿防抖（均为 0–60000 ms，默认 0 / 50 ms），并取消或丢弃过期查询；即时脚本继续逐项配置自己的 20–60000 ms 执行延迟；
@@ -34,7 +34,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - `fy hello` 使用当前选择的 Microsoft Translator、Google 翻译或有道翻译，支持 `fy:ja hello`；各提供方凭据彼此独立，只存入系统凭据库而非 JSON；
 - 搜索界面与设置界面拥有完全独立的午夜、纸张、森林主题库、自定义皮肤和强调色；分别使用严格校验的 `suo-launcher-theme-v1` / `suo-settings-theme-v1` 导入导出文件，支持实时预览、可读性提示、经受限解码的本地背景图和平台覆盖；
 - 搜索皮肤可分别调整窗口和搜索框边框、输入文字、普通/选中结果颜色与字号、结果行高和图标尺寸，并可隐藏放大镜、Suo Logo 与来源标签；
-- 应用搜索结果异步加载系统原生图标，并限制并发、缓存、像素大小与可访问路径；文件夹使用统一文件夹图标，其余文件使用统一文件图标；Windows 已通过微信开始菜单快捷方式的真实图标提取验证；
+- 应用搜索结果异步加载系统原生图标，并限制并发、缓存、像素大小与可访问路径；文件夹使用统一文件夹图标，其余文件使用统一文件图标；Windows 已通过微信开始菜单快捷方式以及 ChatGPT、Xbox、Microsoft Store 打包应用的真实图标提取验证；
 - 命令、网络搜索和翻译服务采用摘要卡片，点击后展开编辑；每项支持可选描述和独立启用开关，开启为绿色、关闭为灰色；设置页可选择最终统一“保存设置”或在合法修改后自动保存；
 - 通用设置可开启“空输入时仅显示搜索框”；空查询收缩原生窗口，开始输入后恢复完整窗口；
 - `setting`、`settings` 或 `设置` 显示设置入口，按 Enter 打开设置窗口；
@@ -42,7 +42,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 通用设置可开启跨平台开机自启；登录后只在后台建立托盘/菜单栏与全局快捷键，不主动弹出搜索窗口；快捷键录制期间不会触发当前全局组合，Windows 录制 `Alt+Space` 时拦截系统菜单；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：macOS Apple Silicon 已生成 `v0.1.0` arm64 发布候选；它将作为无 Developer ID 签名、未公证的 Pre-release 分发，v15 登录启动和系统级快捷键仍保留人工项。Windows x64 必须从相同 tag 重新构建并完成当前整体验收，通过后再向同一 Release 追加安装包。当前证据与唯一执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
+平台验证状态：`v0.1.1` Windows x64 发布候选已完成自动化门禁与本机真实场景验证；macOS Apple Silicon 仍需从同一不可变 tag 完成构建回归和 arm64 资产。当前版本继续作为未签名、未公证的 Pre-release 分发。平台证据与执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
 
 ### 命令参数约定
 

@@ -36,7 +36,8 @@ struct PendingScriptOutputAction {
 
 pub struct LauncherState {
     applications: RwLock<Vec<CatalogEntry>>,
-    application_paths: HashMap<String, PathBuf>,
+    application_paths: RwLock<HashMap<String, PathBuf>>,
+    windows_application_ids: RwLock<HashMap<String, String>>,
     files: RwLock<Vec<CatalogEntry>>,
     indexing: AtomicBool,
     hotkey_status: RwLock<String>,
@@ -55,16 +56,21 @@ impl LauncherState {
         let applications = catalog::discover_applications();
         let application_paths = applications
             .iter()
-            .map(|entry| {
-                (
-                    format!("app:{}", entry.path.to_string_lossy()),
-                    entry.path.clone(),
-                )
+            .map(|entry| (entry.application_result_id(), entry.path.clone()))
+            .collect();
+        let windows_application_ids = applications
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .windows_app_user_model_id
+                    .as_ref()
+                    .map(|value| (entry.application_result_id(), value.clone()))
             })
             .collect();
         Self {
             applications: RwLock::new(applications),
-            application_paths,
+            application_paths: RwLock::new(application_paths),
+            windows_application_ids: RwLock::new(windows_application_ids),
             files: RwLock::new(Vec::new()),
             indexing: AtomicBool::new(false),
             hotkey_status: RwLock::new("正在注册默认快捷键".into()),
@@ -92,6 +98,52 @@ impl LauncherState {
         });
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn start_packaged_application_catalog(state: Arc<Self>, app: AppHandle) {
+        std::thread::spawn(move || {
+            let packaged = match catalog::discover_windows_packaged_applications() {
+                Ok(entries) => entries,
+                Err(error) => {
+                    eprintln!("无法补充 Windows 打包应用目录：{error}");
+                    return;
+                }
+            };
+
+            if packaged.is_empty() {
+                return;
+            }
+
+            // Publish lookup maps before the searchable catalog. A result that
+            // becomes visible can therefore resolve its icon and activation
+            // target immediately, even while the background thread finishes.
+            if let Ok(mut paths) = state.application_paths.write() {
+                for entry in &packaged {
+                    paths.insert(entry.application_result_id(), entry.path.clone());
+                }
+            } else {
+                return;
+            }
+            if let Ok(mut application_ids) = state.windows_application_ids.write() {
+                for entry in &packaged {
+                    if let Some(app_user_model_id) = &entry.windows_app_user_model_id {
+                        application_ids
+                            .insert(entry.application_result_id(), app_user_model_id.clone());
+                    }
+                }
+            } else {
+                return;
+            }
+            if let Ok(mut applications) = state.applications.write() {
+                applications.extend(packaged);
+                applications.sort_by(|left, right| {
+                    left.name.to_lowercase().cmp(&right.name.to_lowercase())
+                });
+                drop(applications);
+                let _ = app.emit("application-catalog-updated", ());
+            }
+        });
+    }
+
     pub fn set_hotkey_status(&self, value: String) {
         if let Ok(mut status) = self.hotkey_status.write() {
             *status = value;
@@ -110,7 +162,15 @@ impl LauncherState {
     }
 
     pub fn application_path_for_result_id(&self, result_id: &str) -> Option<PathBuf> {
-        self.application_paths.get(result_id).cloned()
+        self.application_paths.read().ok()?.get(result_id).cloned()
+    }
+
+    fn windows_application_id_for_result_id(&self, result_id: &str) -> Option<String> {
+        self.windows_application_ids
+            .read()
+            .ok()?
+            .get(result_id)
+            .cloned()
     }
 
     fn search_is_cancelled(&self, generation: u64) -> bool {
@@ -589,6 +649,7 @@ pub async fn activate_result(
     let may_move_focus = matches!(
         &action,
         ResultAction::OpenPath { .. }
+            | ResultAction::LaunchApplication { .. }
             | ResultAction::OpenUrl { .. }
             | ResultAction::RunScriptOutput { .. }
             | ResultAction::OpenSettings
@@ -605,6 +666,27 @@ pub async fn activate_result(
             open::that(path)
                 .map(|_| None)
                 .map_err(|error| error.to_string())
+        }
+        ResultAction::LaunchApplication { result_id } => {
+            state.ensure_action_epoch(action_epoch)?;
+            let Some(app_user_model_id) = state.windows_application_id_for_result_id(&result_id)
+            else {
+                return Err("Windows 应用已不在当前目录中".into());
+            };
+            #[cfg(target_os = "windows")]
+            {
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::windows_apps::launch(&app_user_model_id)
+                })
+                .await
+                .map_err(|error| format!("Windows 应用启动任务异常结束：{error}"))??;
+                Ok(None)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = app_user_model_id;
+                Err("当前平台不支持 Windows 应用".into())
+            }
         }
         ResultAction::OpenUrl { url } => {
             state.ensure_action_epoch(action_epoch)?;
@@ -976,15 +1058,32 @@ where
             } else {
                 (kind, badge)
             };
+            let id = if result_kind == ResultKind::App {
+                entry.application_result_id()
+            } else {
+                format!("{}:{path}", result_kind.as_str())
+            };
+            let subtitle = if entry.windows_app_user_model_id.is_some() {
+                "Windows 应用".into()
+            } else {
+                path.clone()
+            };
+            let action = if entry.windows_app_user_model_id.is_some() {
+                ResultAction::LaunchApplication {
+                    result_id: id.clone(),
+                }
+            } else {
+                ResultAction::OpenPath { path }
+            };
             SearchResult {
-                id: format!("{}:{path}", result_kind.as_str()),
+                id,
                 title: entry.name.clone(),
-                subtitle: path.clone(),
+                subtitle,
                 kind: result_kind,
                 icon_data_url: String::new(),
                 badge: result_badge.into(),
                 score,
-                action: ResultAction::OpenPath { path },
+                action,
             }
         })
         .collect()
@@ -1353,6 +1452,7 @@ mod tests {
         calculate, catalog_results, command_arguments, configured_launcher_size, is_settings_query,
         launcher_position, match_score, script_action_subtitle, script_command,
         script_output_result, translation_command, web_search_command, web_search_results,
+        LauncherState,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -1477,6 +1577,79 @@ mod tests {
         assert_eq!(results[0].badge, "文件夹");
         assert_eq!(results[1].kind, ResultKind::File);
         assert_eq!(results[1].badge, "文件");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn packaged_application_results_use_opaque_activation_and_icon_ids() {
+        let entry = CatalogEntry::from_windows_packaged_application(
+            "Microsoft Store".into(),
+            "Microsoft.WindowsStore_8wekyb3d8bbwe!App".into(),
+        )
+        .expect("valid packaged app");
+
+        let result = catalog_results(
+            &[entry],
+            "store",
+            ResultKind::App,
+            "应用",
+            8,
+            800,
+            true,
+            || false,
+        )
+        .pop()
+        .expect("matching packaged app");
+
+        assert_eq!(result.title, "Microsoft Store");
+        assert_eq!(result.subtitle, "Windows 应用");
+        assert!(result.id.starts_with("app:windows:"));
+        assert!(!result.id.contains("Microsoft.WindowsStore"));
+        assert!(matches!(
+            result.action,
+            ResultAction::LaunchApplication { ref result_id } if result_id == &result.id
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn same_named_desktop_and_packaged_applications_remain_distinct() {
+        let desktop = CatalogEntry::from_application_path_with_type(
+            PathBuf::from("C:/Start Menu/ChatGPT.lnk"),
+            false,
+        );
+        let packaged = CatalogEntry::from_windows_packaged_application(
+            "ChatGPT".into(),
+            "OpenAI.Codex_2p2nqsd0c76g0!App".into(),
+        )
+        .expect("valid packaged app");
+        let results = catalog_results(
+            &[desktop, packaged],
+            "chatgpt",
+            ResultKind::App,
+            "应用",
+            8,
+            800,
+            true,
+            || false,
+        );
+
+        assert_eq!(results.len(), 2);
+        assert_ne!(results[0].id, results[1].id);
+        assert!(results
+            .iter()
+            .any(|result| matches!(result.action, ResultAction::OpenPath { .. })));
+        assert!(results
+            .iter()
+            .any(|result| matches!(result.action, ResultAction::LaunchApplication { .. })));
+    }
+
+    #[test]
+    fn forged_packaged_application_result_ids_resolve_to_nothing() {
+        let state = LauncherState::new();
+        let forged = "app:windows:0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(state.windows_application_id_for_result_id(forged).is_none());
+        assert!(state.application_path_for_result_id(forged).is_none());
     }
 
     #[test]

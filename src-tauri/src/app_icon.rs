@@ -174,6 +174,10 @@ fn insert_cached(cache: &mut IconCache, path: PathBuf, icon: Option<NativeAppIco
 
 #[cfg(target_os = "windows")]
 fn load_platform_icon(path: &Path) -> Option<NativeAppIcon> {
+    if crate::windows_apps::app_user_model_id_from_shell_path(path).is_some() {
+        return load_windows_packaged_icon(path);
+    }
+
     // A Shell API lookup of a .lnk can legally return the generic shortcut
     // document icon. Resolve only shortcuts discovered in the runtime app
     // catalog to verified local executables, without calling
@@ -188,6 +192,51 @@ fn load_platform_icon(path: &Path) -> Option<NativeAppIcon> {
     }
 
     load_windows_native_icon(path)
+}
+
+#[cfg(target_os = "windows")]
+fn load_windows_packaged_icon(path: &Path) -> Option<NativeAppIcon> {
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::SIZE,
+            Graphics::Gdi::DeleteObject,
+            System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
+            UI::Shell::{
+                IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY,
+                SIIGBF_SCALEUP,
+            },
+        },
+    };
+
+    // `file_icon_provider` uses this same Shell image-factory pipeline, but its
+    // public wrapper rejects non-filesystem parsing names before reaching it.
+    // Packaged AUMIDs have already been validated against the runtime catalog,
+    // so call the native parsing-name API directly here.
+    let initialized_com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok() };
+    let icon = (|| {
+        let parsing_name = HSTRING::from(path);
+        let factory: IShellItemImageFactory =
+            unsafe { SHCreateItemFromParsingName(&parsing_name, None).ok()? };
+        let size = i32::from(ICON_SIZE);
+        let bitmap = unsafe {
+            factory
+                .GetImage(
+                    SIZE { cx: size, cy: size },
+                    SIIGBF_ICONONLY | SIIGBF_SCALEUP,
+                )
+                .ok()?
+        };
+        let icon = icon_from_windows_bitmap(bitmap);
+        unsafe {
+            let _ = DeleteObject(bitmap.into());
+        }
+        icon
+    })();
+    if initialized_com {
+        unsafe { CoUninitialize() };
+    }
+    icon
 }
 
 #[cfg(target_os = "windows")]
@@ -468,17 +517,18 @@ fn convert_icon(icon: file_icon_provider::Icon) -> Option<NativeAppIcon> {
 
 #[cfg(target_os = "windows")]
 fn is_supported_application_path(path: &Path) -> bool {
-    is_local_regular_file(path)
-        && matches!(
-            path.extension()
-                .and_then(|value| value.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref(),
-            // Application discovery may keep .url entries launchable, but
-            // only executables and local Start Menu shortcuts are trusted as
-            // native-icon inputs.
-            Some("lnk" | "exe")
-        )
+    crate::windows_apps::app_user_model_id_from_shell_path(path).is_some()
+        || is_local_regular_file(path)
+            && matches!(
+                path.extension()
+                    .and_then(|value| value.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .as_deref(),
+                // Application discovery may keep .url entries launchable, but
+                // only executables and local Start Menu shortcuts are trusted as
+                // native-icon inputs.
+                Some("lnk" | "exe")
+            )
 }
 
 #[cfg(target_os = "windows")]
@@ -598,7 +648,7 @@ fn load_platform_icon(_path: &Path) -> Option<NativeAppIcon> {
 #[cfg(test)]
 mod tests {
     use std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Barrier,
@@ -692,6 +742,35 @@ mod tests {
         });
 
         assert_eq!(peak.load(Ordering::SeqCst), 2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn accepts_only_validated_packaged_application_shell_paths() {
+        assert!(super::is_supported_application_path(Path::new(
+            "shell:AppsFolder\\Microsoft.WindowsStore_8wekyb3d8bbwe!App"
+        )));
+        assert!(!super::is_supported_application_path(Path::new(
+            "shell:AppsFolder\\..\\cmd.exe"
+        )));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires the built-in Microsoft Store package"]
+    fn extracts_icons_from_installed_packaged_applications() {
+        for app_user_model_id in [
+            "OpenAI.Codex_2p2nqsd0c76g0!App",
+            "Microsoft.GamingApp_8wekyb3d8bbwe!Microsoft.Xbox.App",
+            "Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+        ] {
+            let icon = super::load_cached(PathBuf::from(format!(
+                "shell:AppsFolder\\{app_user_model_id}"
+            )))
+            .unwrap_or_else(|| panic!("{app_user_model_id} should expose a Shell icon"));
+            assert_eq!(icon.pixels.len(), (icon.width * icon.height * 4) as usize);
+            assert!(icon.pixels.chunks_exact(4).any(|rgba| rgba[3] != 0));
+        }
     }
 
     #[test]

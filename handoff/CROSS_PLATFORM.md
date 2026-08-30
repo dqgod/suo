@@ -26,7 +26,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - macOS 菜单栏使用 `src-tauri/icons/tray-macos-template.png` 并启用 template mode；Windows 继续使用彩色默认应用图标。
 - macOS 的无边框透明窗口必须保留 `tauri.conf.json > app.macOSPrivateApi=true`；仅写 `transparent=true` 会被 Tauri 忽略并在 CSS 圆角外露出白色原生直角。该私有 API 不能用于 Mac App Store 分发，但当前 MVP 不包含该渠道；Windows 不依赖此开关。
 - macOS Dock 可见性通过 `src-tauri/src/dock.rs` 隔离；`showDockIcon=true` 只表示设置窗口打开期间显示，设置关闭和正常后台运行时必须隐藏，实时关闭开关不能连带隐藏设置窗口。Windows 不应把同一字段解释为 taskbar 隐藏。
-- Windows taskbar 角色通过 `src-tauri/src/taskbar.rs` 隔离：`main` 搜索窗口跳过任务栏，`settings` 设置窗口保留任务栏入口；不得把这项策略泄漏到 macOS Dock。
+- Windows taskbar 角色通过 `src-tauri/src/taskbar.rs` 隔离：`main` 搜索窗口跳过任务栏，`settings` 设置窗口保留任务栏入口；显示 `main` 时仅用 `ITaskbarList::ActivateTab` 维持原前台应用按钮的选中外观，不把键盘焦点还给原窗口；不得把这项策略泄漏到 macOS Dock。
 - Dock 图标、菜单栏图标、搜索框 Logo 与设置页 Logo 是不同呈现位置，不要通过替换同一个资源顺带改变全部位置。
 - 平台修复必须放在 adapter 或 `cfg(target_os = ...)` 后面，避免未使用 import、错误 API 或行为泄漏到另一平台。
 - Windows 开发阶段曾让 `std::env` import 和仅 Windows 使用的参数暴露到 macOS 编译；此类 warning 应通过精确 `cfg` 或明确的跨平台接口处理，不要长期留在共享模块。
@@ -48,7 +48,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 
 快捷键和开机自启变更必须与 JSON 持久化按同一运行时事务处理：先应用系统集成，再持久化；冲突、系统注册失败或保存失败时反向恢复全部旧状态。录制快捷键期间必须暂停全局唤起；Windows 临时注册 `Alt+Space` 只用于吞掉系统菜单，录制结束后立即移除，不能成为第二个启动器热键。
 
-macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 继续走原聚焦路径，不得编译或复制 AppKit 类型。
+macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 仍调用 `set_focus()` 让搜索框接收输入，随后只恢复原窗口的 taskbar presentation；不得编译或复制 AppKit 类型。
 
 ## 5. 可移动配置仍需要固定引导位置
 
@@ -58,7 +58,7 @@ macOS 默认配置是 `~/Library/Application Support/io.github.dqgod.suo/config.
 
 ## 6. macOS 应用名不等于 `.app` 文件名
 
-`WeChat.app` 的中文“微信”可能只存在于 `zh-Hans.lproj/InfoPlist.strings`，`Lark.app` 的 Feishu/飞书可能来自 `CFBundleName`、URL scheme 或中文本地化资源。macOS 应用搜索需要把可信 Bundle 元数据作为别名，并兼容 UTF-8、UTF-16 与 plist 格式；不要为单个应用硬编码映射。Windows 继续使用开始菜单入口，不应编译或读取 macOS plist 路径。
+`WeChat.app` 的中文“微信”可能只存在于 `zh-Hans.lproj/InfoPlist.strings`，`Lark.app` 的 Feishu/飞书可能来自 `CFBundleName`、URL scheme 或中文本地化资源。macOS 应用搜索需要把可信 Bundle 元数据作为别名，并兼容 UTF-8、UTF-16 与 plist 格式；不要为单个应用硬编码映射。Windows 同时使用开始菜单入口和后台 `Get-StartApps` 打包应用目录，后者通过经校验的 AUMID、`IApplicationActivationManager` 和 `shell:AppsFolder` 图标解析适配；不应编译或读取 macOS plist 路径。
 
 ## 7. 默认位置与工作区不是同一个公式
 

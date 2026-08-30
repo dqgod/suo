@@ -2,7 +2,7 @@
 
 本目录只保存当前跨平台交接状态和仍需执行的验证。长期规则见根目录 [`AGENTS.md`](../AGENTS.md)，已经完成的逐版本执行记录已移入 [`archive/`](archive/README.md)，不再作为新一轮操作清单。
 
-最后更新：2026-08-29。当前发布候选来自 `dev`，版本为 `v0.1.0`，配置协议为 v15。
+最后更新：2026-08-30。`v0.1.0` 已发布为 Pre-release，配置协议为 v15；Windows 打包应用目录和任务栏视觉状态修复已形成 `v0.1.1` Windows x64 发布候选，既有 tag 与资产不移动、不覆盖。
 
 ## 当前状态
 
@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | macOS Apple Silicon `v0.1.0` | **发布候选已完成** | 以 Pre-release 发布 arm64 ZIP；构建证据、限制和剩余人工项见 [`MACOS.md`](MACOS.md)。 |
 | Windows x64 `v0.1.0` | **发布候选已完成** | 已从 `v0.1.0` tag 完成 x64 构建、真实回归、安装/卸载/重装与真实注销登录验收；NSIS 安装包及 SHA-256 文件已追加到同一 Pre-release。 |
+| Windows x64 `v0.1.1` | **发布候选已完成** | 已补 ChatGPT/Xbox/Microsoft Store 等打包应用发现、启动和图标，以及保持原应用 taskbar 选中外观；Windows 安装包已构建并通过自动化门禁，macOS 仍需从 `v0.1.1` tag 完成跨平台构建回归。 |
 | 跨平台约束 | **持续有效** | 修改平台代码前阅读 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，不得为一端编译而削弱另一端行为或安全边界。 |
 
 ## 当前交接文件

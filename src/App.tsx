@@ -15,6 +15,7 @@ import { zhCN } from "./i18n/zh-CN";
 
 type ResultAction =
   | { type: "openPath"; path: string }
+  | { type: "launchApplication"; resultId: string }
   | { type: "openUrl"; url: string }
   | { type: "copyText"; text: string }
   | { type: "runScript"; commandId: string; args: string[] }
@@ -456,10 +457,20 @@ function Launcher() {
       // list. setQuery("") is a no-op here, so refresh it explicitly.
       if (wasEmpty) void search("");
     });
+    const applicationCatalogUpdated = listen("application-catalog-updated", () => {
+      // Windows discovers packaged/MSIX applications in the background so
+      // startup and hotkey registration stay fast. Refresh the current query
+      // once those results become available.
+      void search(queryRef.current);
+    });
     return () => {
       disposed = true;
       void updated.then((unlisten) => unlisten(), () => undefined);
       void providersUpdated.then((unlisten) => unlisten(), () => undefined);
+      void applicationCatalogUpdated.then(
+        (unlisten) => unlisten(),
+        () => undefined,
+      );
     };
   }, [search, updateQuery]);
 

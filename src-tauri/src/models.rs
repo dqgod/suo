@@ -63,6 +63,12 @@ pub enum ResultAction {
     OpenPath {
         path: String,
     },
+    /// Launch a Windows packaged app through a runtime catalog lookup. The
+    /// webview receives no AUMID and cannot ask native code to activate an
+    /// application that was not discovered locally.
+    LaunchApplication {
+        result_id: String,
+    },
     OpenUrl {
         url: String,
     },
@@ -139,6 +145,13 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "runScriptOutput");
         assert_eq!(value["actionId"], "opaque-action");
+
+        let value = serde_json::to_value(ResultAction::LaunchApplication {
+            result_id: "app:windows:opaque-digest".into(),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "launchApplication");
+        assert_eq!(value["resultId"], "app:windows:opaque-digest");
     }
 
     #[test]

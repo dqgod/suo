@@ -112,10 +112,26 @@ pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Re
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())?;
+    let _ = window.emit("launcher-shown", ());
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    let previous_taskbar_item = crate::taskbar::capture_foreground_taskbar_item();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    if let Some(previous_taskbar_item) = previous_taskbar_item {
+        if let Err(error) = crate::taskbar::preserve_taskbar_selection(previous_taskbar_item) {
+            // Taskbar presentation is cosmetic. Never make a working launcher
+            // unavailable when a Windows Shell implementation rejects it.
+            eprintln!("{error}");
+        }
+    }
     let _ = window.emit("launcher-shown", ());
     Ok(())
 }
