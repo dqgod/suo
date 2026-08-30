@@ -1,6 +1,6 @@
 # Windows release validation handoff
 
-状态：**Windows x64 `v0.1.1` 发布候选已完成；`v0.1.0` 历史 Release 保持不变。** `v0.1.1` 补齐打包应用发现、启动与原生图标，并修复启动器获得输入焦点时原前台应用任务栏选中外观跳动；Windows 自动化与真实场景验证均已通过。macOS 仍需从新的不可变 tag 完成对应构建回归。
+状态：**Windows x64 `v0.1.1` 已作为当前最新 Pre-release 发布；`v0.1.0` 历史 Release 保持不变。** `v0.1.1` 补齐打包应用发现、启动与原生图标，并修复启动器获得输入焦点时原前台应用任务栏选中外观跳动；Windows 自动化与真实场景验证均已通过。macOS 仍需从新的不可变 tag 完成对应构建回归并追加 arm64 资产。
 
 ## 0. `v0.1.0` 之后的 `dev` 验证（2026-08-30）
 
@@ -10,6 +10,7 @@
 - [x] 打包应用使用经校验的 AUMID 在原生 `IApplicationActivationManager` 中启动；前端只收到 SHA-256 目录摘要，伪造 result id 无法解析启动目标或图标路径。真实按 Enter 后 Microsoft Store 的 `WinStore.App` 新进程启动。
 - [x] 同名传统快捷方式与打包应用不会仅因显示名称相同而互相覆盖；回归测试同时保留两个独立动作。
 - [x] 109 项常规 Rust 单元测试、2 项本机打包应用发现/图标测试、`cargo check --all-targets`、前端生产构建和 NSIS 正式构建通过。`Suo_0.1.1_x64-setup.exe` 为 x64、Product/File Version 均为 `0.1.1`，SHA-256 为 `CADD589EF27644E40CEDB9A06E5F59DC433283219511962E9895B3B602A09F07`；仍未签名，符合当前 Pre-release 限制。
+- [x] GitHub Release <https://github.com/dqgod/suo/releases/tag/v0.1.1> 已上传 `Suo_0.1.1_x64-setup.exe`（3,983,883 bytes）与对应 `.sha256` 文件；GitHub digest 为 `sha256:cadd589ef27644e40cedb9a06e5f59dc433283219511962e9895b3b602a09f07`，与本地一致。不可变 tag 指向 `f367c5fd59bd1784b56fe1429b34d91cbb2da710`。
 
 这轮改动全部由 `cfg(windows)` adapter 隔离。macOS 接手时仍需运行完整构建，确认 `CatalogEntry` 新字段、`ResultAction::LaunchApplication` 序列化分支和前端刷新监听不会造成交叉平台编译或运行回归；不得把 Windows taskbar/AUMID/PowerShell 逻辑移入 macOS 路径。
 
