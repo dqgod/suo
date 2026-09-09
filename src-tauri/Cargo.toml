@@ -1,6 +1,6 @@
 [package]
 name = "suo"
-version = "0.1.1"
+version = "0.1.2"
 description = "A lightweight cross-platform launcher"
 authors = ["dqgod"]
 edition = "2021"
@@ -51,6 +51,7 @@ tauri-plugin-autostart = "2"
 winreg = "0.10"
 windows = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_Security",
   "Win32_Storage_FileSystem",

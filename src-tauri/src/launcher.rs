@@ -1855,11 +1855,13 @@ mod tests {
         let epoch = state.begin_search(1);
         let mut command = AppConfig::default().script_commands.remove(0);
 
-        let copied = script_output_result(&state, epoch, &command, "", "value".into()).unwrap();
+        let multiline = "UTC+8 当前时间：2026-09-09\nUnix时间戳：1788958239819";
+        let copied = script_output_result(&state, epoch, &command, "", multiline.into()).unwrap();
         assert_eq!(copied.badge, "复制");
+        assert_eq!(copied.title, multiline);
         assert!(matches!(
             copied.action,
-            ResultAction::CopyText { ref text } if text == "value"
+            ResultAction::CopyText { ref text } if text == multiline
         ));
 
         command.result_action = ScriptResultAction::ExecuteShell;

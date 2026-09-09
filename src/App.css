@@ -391,16 +391,22 @@ button {
 .result-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .result-copy strong {
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--launcher-result-primary);
   font-size: var(--launcher-result-primary-size);
   font-weight: 620;
+  line-height: 1.35;
 }
 
 .result-copy small {
+  white-space: nowrap;
   color: var(--launcher-result-secondary);
   font-size: var(--launcher-result-secondary-size);
 }

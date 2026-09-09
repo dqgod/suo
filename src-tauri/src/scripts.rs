@@ -102,6 +102,7 @@ where
         if matches!(config.runtime, ScriptRuntime::PowerShell) {
             command.args(["-NoProfile", "-NonInteractive", "-File"]);
         }
+        configure_plain_text_encoding(&mut command, config.runtime);
         command.arg(&script).args(args);
         if let Some(parent) = script.parent() {
             command.current_dir(parent);
@@ -282,15 +283,71 @@ where
     let stdout = stdout.unwrap_or_default();
     let stderr = stderr.unwrap_or_default();
     if status.success() {
-        Ok(String::from_utf8_lossy(&stdout).trim().to_string())
+        Ok(normalize_plain_text_output(&stdout))
     } else {
-        let error = String::from_utf8_lossy(&stderr).trim().to_string();
+        let error = normalize_plain_text_output(&stderr);
         Err(if error.is_empty() {
             format!("脚本退出码：{:?}", status.code())
         } else {
             error
         })
     }
+}
+
+fn configure_plain_text_encoding(command: &mut Command, runtime: ScriptRuntime) {
+    if matches!(runtime, ScriptRuntime::Python) {
+        // Python uses the active Windows code page when stdout/stderr are pipes.
+        // Make the text protocol deterministic without changing argv handling.
+        command.env("PYTHONIOENCODING", "utf-8");
+    }
+}
+
+fn decode_plain_text(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(text) =
+        decode_windows_code_page(bytes, unsafe { windows::Win32::Globalization::GetACP() })
+    {
+        return text;
+    }
+
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn normalize_plain_text_output(bytes: &[u8]) -> String {
+    decode_plain_text(bytes).trim().to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn decode_windows_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
+    use windows::Win32::Globalization::{MultiByteToWideChar, MULTI_BYTE_TO_WIDE_CHAR_FLAGS};
+
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let required =
+        unsafe { MultiByteToWideChar(code_page, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None) };
+    if required <= 0 {
+        return None;
+    }
+    let mut wide = vec![0_u16; required as usize];
+    let written = unsafe {
+        MultiByteToWideChar(
+            code_page,
+            MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+            bytes,
+            Some(&mut wide),
+        )
+    };
+    if written <= 0 {
+        return None;
+    }
+    wide.truncate(written as usize);
+    String::from_utf16(&wide).ok()
 }
 
 fn spawn_capped_reader<R>(
@@ -624,9 +681,42 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::hide_console;
     use super::{
-        collect_output, result_shell_command, spawn_capped_reader, validate_result_shell_command,
-        MAX_OUTPUT_BYTES, MAX_RESULT_SHELL_COMMAND_BYTES,
+        collect_output, configure_plain_text_encoding, normalize_plain_text_output,
+        result_shell_command, spawn_capped_reader, validate_result_shell_command, MAX_OUTPUT_BYTES,
+        MAX_RESULT_SHELL_COMMAND_BYTES,
     };
+
+    #[test]
+    fn plain_text_preserves_utf8_chinese_and_internal_newlines() {
+        assert_eq!(
+            normalize_plain_text_output(
+                "\nUTC+8 当前时间：2026-09-09\nUnix时间戳：1788958239819\r\n".as_bytes()
+            ),
+            "UTC+8 当前时间：2026-09-09\nUnix时间戳：1788958239819"
+        );
+    }
+
+    #[test]
+    fn python_plain_text_requests_utf8_for_piped_output() {
+        let mut command = Command::new("python");
+        configure_plain_text_encoding(&mut command, crate::config::ScriptRuntime::Python);
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "PYTHONIOENCODING" && value == Some(std::ffi::OsStr::new("utf-8"))
+        }));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_plain_text_can_decode_gbk_fallback() {
+        let gbk = [
+            0x55, 0x54, 0x43, 0x2B, 0x38, 0x20, 0xB5, 0xB1, 0xC7, 0xB0, 0xCA, 0xB1, 0xBC, 0xE4,
+            0xA3, 0xBA, 0x32, 0x30, 0x32, 0x36,
+        ];
+        assert_eq!(
+            super::decode_windows_code_page(&gbk, 936).as_deref(),
+            Some("UTC+8 当前时间：2026")
+        );
+    }
 
     #[test]
     fn result_shell_command_validation_is_bounded() {

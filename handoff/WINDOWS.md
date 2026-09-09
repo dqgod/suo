@@ -1,6 +1,14 @@
 # Windows release validation handoff
 
-状态：**Windows x64 `v0.1.1` 已作为当前最新 Pre-release 发布；`v0.1.0` 历史 Release 保持不变。** `v0.1.1` 补齐打包应用发现、启动与原生图标，并修复启动器获得输入焦点时原前台应用任务栏选中外观跳动；Windows 自动化与真实场景验证均已通过。macOS 仍需从新的不可变 tag 完成对应构建回归并追加 arm64 资产。
+状态：**Windows x64 `v0.1.1` 已发布；`dev` 正在验证 `v0.1.2`。** `v0.1.2` 修复脚本管道中文输出并支持受控的两行结果展示；不移动或覆盖既有 tag/Release。macOS 后续需从相同提交补跨平台构建回归。
+
+## 0.1 `v0.1.2` 脚本输出修复（2026-09-09）
+
+- [x] Python 子进程显式使用 UTF-8 stdout/stderr；普通文本严格 UTF-8 解码失败后，Windows 使用当前 ANSI 系统代码页回退，避免 CP936 中文被替换为 `�`。
+- [x] 纯文本仍去除首尾空白，但中间换行会原样进入结果标题与复制动作；启动器使用 `pre-line` 并限制为最多两行，普通单行结果保持不变。
+- [x] 新增 UTF-8 中文、多行、Python 输出环境、CP936 回退以及 `SearchResult.title`/`CopyText` 换行传递测试；112 项常规 Rust 测试、前端生产构建和 `cargo check --all-targets` 通过，独立复审无 Critical/Important。
+- [x] 已生成 x64 NSIS 安装包 `Suo_0.1.2_x64-setup.exe`（3,984,352 bytes），Product/File Version 均为 `0.1.2`，SHA-256 为 `9AC4A8185AB529F29BC0DC1394D899C6B028E88DF77D2E8C5615FA15F85C1630`；当前仍未签名。
+- [ ] 从 `v0.1.2` NSIS 安装包重装后，以用户当前两行中文 `timestamp.py` 完成真实启动器肉眼验收；安装目录脚本属于用户修改，重装前必须另行备份，不得静默丢失。
 
 ## 0. `v0.1.0` 之后的 `dev` 验证（2026-08-30）
 
