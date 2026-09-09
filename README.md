@@ -57,7 +57,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 
 每条脚本命令的“返回值动作”默认是“复制返回文本”，所以现有 `ts` 等配置无需修改。选择“执行返回的 Shell 命令（高风险）”后，脚本本身仍先按安全 argv 模式运行；它的 stdout 只会显示成一个待执行结果，不会自动执行。用户必须再次点击该结果或按 `Enter`，Suo 才会在 macOS 使用 `/bin/bash -lc`、在 Windows 使用 `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` 执行返回文本。
 
-示例 [`examples/open_path.py`](examples/open_path.py) 接收一个文件或目录参数并生成平台命令。可在“设置 → 命令与服务 → 脚本命令”新增：关键词 `open_file`、运行时 `Python`、路径 `examples/open_path.py`、执行方式“按 Enter 执行”、返回值动作“执行返回的 Shell 命令”。输入 `open_file ~` 后，第一次 `Enter` 运行 Python 并显示命令，第二次 `Enter` 才打开目录。
+示例 [`examples/open_path.py`](examples/open_path.py) 接收一个文件或目录参数并生成平台命令。Suo 首次启动会把它初始化到用户脚本目录。可在“设置 → 命令与服务 → 脚本命令”新增：关键词 `open_file`、运行时 `Python`、路径 `scripts/open_path.py`、执行方式“按 Enter 执行”、返回值动作“执行返回的 Shell 命令”。输入 `open_file ~` 后，第一次 `Enter` 运行 Python 并显示命令，第二次 `Enter` 才打开目录。
 
 该模式等同于执行可信本地代码，只应为本人可审查的本地脚本开启。Suo 使用一次性、不透明的结果授权，查询变化、配置变化或首次执行后立即失效，并继续应用非 root/非管理员限制、脚本超时、输出上限和进程树取消；但它不会尝试判断返回命令是否安全。
 
@@ -94,13 +94,22 @@ Microsoft / Google 的 API Key，以及有道的应用 ID / 应用密钥，都�
 
 “设置 → 通用 → 配置文件位置”会显示当前实际路径，并可直接打开文件夹或选择新的空目录。Suo 先在目标目录原子写入并校验 `config.json`，再更新默认目录中固定保留的 `config-location.json` 位置指针；目标已有 `config.json` 或 `.bak` 时拒绝覆盖。旧位置文件不会自动删除，可用于手动恢复。三家翻译 Provider 的凭据仍只保存在 macOS Keychain / Windows Credential Manager，不随普通配置迁移。
 
+### 用户脚本目录
+
+Suo 自带的 [`examples/`](examples/) 仅作为安装包中的只读模板。首次启动或模板缺失时，Suo 会把模板分别初始化到：
+
+- macOS：`~/Library/Application Support/io.github.dqgod.suo/scripts`
+- Windows：`%APPDATA%\io.github.dqgod.suo\scripts`
+
+默认 `ts` 命令使用 `scripts/timestamp.py`。Suo 仅创建不存在的模板文件，升级、重装和后续启动都不会覆盖同名用户脚本；即使把 `config.json` 迁移到其他目录，用户脚本目录也保持上述固定位置。旧版默认 `examples/timestamp.py` 配置会自动迁移，用户自行配置的绝对路径或其他相对路径保持不变。
+
 ## TODO / 迭代路线图
 
 以下顺序以个人日常可用、跨平台稳定和可发布性为优先。完成项必须同时具备代码验证和受影响平台的真实场景证据；具体执行记录继续放在 [`handoff/`](handoff/README.md)，不在本节堆积机器日志。
 
 ### P0：发布质量与稳定性
 
-- [ ] 清完当前跨平台验证债务：完成 Windows v11–v15 回归、macOS v15 开机自启实测，并同步清理 `handoff/` 中已过期的待办状态；
+- [ ] 清完当前跨平台验证债务：完成 Windows v11–v16 回归、macOS v16 用户脚本目录实测，并同步清理 `handoff/` 中已过期的待办状态；
 - [ ] 建立可复现的发布流程：产出 Windows 安装版/便携版和 macOS 对应架构应用，补齐代码签名、公证、卸载、升级保留配置及回滚检查；当前阶段不接自动更新；
 - [ ] 增加脚本首次运行确认；脚本路径、内容或解释器发生变化后重新确认，保留现有 argv、超时、输出上限、无提权和进程树终止边界；
 - [ ] 增加有界滚动日志、崩溃恢复和“复制诊断信息”：默认只记元数据，按大小/保留期轮转并批量写入，导出时脱敏用户目录、查询、参数和凭据；

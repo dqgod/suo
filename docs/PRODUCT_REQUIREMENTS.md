@@ -265,7 +265,7 @@ fy <text>
 | `inputHint` | 否 | 最多 160 个字符；Enter 执行脚本只输入关键词时替代脚本路径作为结果副标题，不声明参数必填 |
 | `aliases` | 否 | 命令别名；主关键词和别名在不区分大小写的全局命名空间中唯一 |
 | `runtime` | 是 | `python`、`bash`、`shell`、`powershell`、`executable` |
-| `scriptPath` | 是 | 脚本或可执行文件绝对路径 |
+| `scriptPath` | 是 | 脚本或可执行文件路径；推荐用固定用户脚本目录下的 `scripts/...` 相对路径，也支持绝对路径 |
 | `resultAction` | 是 | `copy`（默认）或显式高风险的 `executeShell` |
 | `argumentMode` | 是 | `argv` 或原始字符串；默认 `argv` 并支持引号，均不执行 Shell 展开 |
 | `argumentRule` | 否 | 后续可用于参数提示/校验；当前 MVP 不声明参数 Schema，参数数量与含义由脚本决定 |
@@ -288,7 +288,7 @@ fy <text>
   "keyword": "ts",
   "runtime": "python",
   "interpreterPath": "python3",
-  "scriptPath": "~/Suo/scripts/timestamp.py",
+  "scriptPath": "scripts/timestamp.py",
   "argumentMode": "argv",
   "executionMode": "immediate",
   "debounceMs": 50,
@@ -712,7 +712,8 @@ type ResultItem = {
 - Enter 执行脚本配置图标后，动作结果和输出结果均使用该图标；只输入关键词时可显示自定义提示，但零参数仍保持可执行；
 - `ts 1786082576069 +8` 将两个 argv 参数传给示例脚本，由脚本将第二项解释为时区偏移；
 - v13 及更早脚本配置迁移后 `resultAction=copy`；`ts` 的既有复制行为保持不变；
-- 将 `open_file` 配置为 `examples/open_path.py` 且 `resultAction=executeShell` 后，第一次 Enter 只显示返回命令，第二次 Enter 才在 macOS Bash / Windows PowerShell 执行；同一结果不可执行两次，查询或配置变化后不可再执行；
+- 将 `open_file` 配置为 `scripts/open_path.py` 且 `resultAction=executeShell` 后，第一次 Enter 只显示返回命令，第二次 Enter 才在 macOS Bash / Windows PowerShell 执行；同一结果不可执行两次，查询或配置变化后不可再执行；
+- 首次启动将缺失的内置脚本模板初始化到平台默认应用配置目录的 `scripts/` 子目录，重复启动、升级和重装不得覆盖已存在文件；v15 的内置 `timestamp-example` 默认路径迁移为 `scripts/timestamp.py`，自定义路径保持不变；
 - 空返回、NUL、超过 16 KiB、超时、失败退出和取消均不得留下可执行授权；WebView 篡改 action ID 不得执行任意命令；
 - 即时脚本可配置 20–60000 ms 输入停顿延迟，低于 20 ms 的配置无法保存；
 - 带空格、引号和 shell 元字符的参数不会在 argv 模式下被二次解释；

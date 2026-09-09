@@ -2,7 +2,7 @@
 
 本目录只保存当前跨平台交接状态和仍需执行的验证。长期规则见根目录 [`AGENTS.md`](../AGENTS.md)，已经完成的逐版本执行记录已移入 [`archive/`](archive/README.md)，不再作为新一轮操作清单。
 
-最后更新：2026-09-09。`v0.1.1` 仍是当前最新 Pre-release，配置协议为 v15；`dev` 已形成 `v0.1.2` Windows 候选，修复脚本中文输出解码并支持最多两行结果展示，尚未创建新 tag 或 Release。
+最后更新：2026-09-09。`v0.1.1` 仍是当前最新 Pre-release；`dev` 已形成配置协议 v16 的 `v0.1.2` Windows 候选，修复脚本中文输出解码、支持最多两行结果展示，并把可编辑脚本迁移到不会被安装包覆盖的用户目录，尚未创建新 tag 或 Release。
 
 ## 当前状态
 
@@ -11,7 +11,7 @@
 | macOS Apple Silicon `v0.1.0` | **发布候选已完成** | 以 Pre-release 发布 arm64 ZIP；构建证据、限制和剩余人工项见 [`MACOS.md`](MACOS.md)。 |
 | Windows x64 `v0.1.0` | **发布候选已完成** | 已从 `v0.1.0` tag 完成 x64 构建、真实回归、安装/卸载/重装与真实注销登录验收；NSIS 安装包及 SHA-256 文件已追加到同一 Pre-release。 |
 | Windows x64 `v0.1.1` | **Windows 资产已发布** | 已补 ChatGPT/Xbox/Microsoft Store 等打包应用发现、启动和图标，以及保持原应用 taskbar 选中外观；NSIS 安装包与校验文件已上传，macOS 仍需从 `v0.1.1` tag 完成跨平台构建回归并追加 arm64 资产。 |
-| Windows x64 `v0.1.2` `dev` | **候选已构建** | 已修复 Python/系统代码页脚本中文输出并保留内部换行；Windows x64 NSIS 安装包已生成，重装后需用真实中文两行脚本复验，macOS 需补跨平台构建。 |
+| Windows x64 `v0.1.2` `dev` | **候选已构建** | 已修复 Python/系统代码页脚本中文输出并保留内部换行；配置 v16 将自带模板初始化到用户脚本目录，升级不覆盖修改。NSIS 已重新生成，旧脚本已迁入用户目录；仍需重装后复验内容保留，macOS 需补跨平台构建。 |
 | 跨平台约束 | **持续有效** | 修改平台代码前阅读 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，不得为一端编译而削弱另一端行为或安全边界。 |
 
 ## 当前交接文件

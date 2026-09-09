@@ -586,12 +586,30 @@ fn find_script(app: &AppHandle, configured_path: &str) -> Option<PathBuf> {
         return expanded.is_file().then_some(expanded);
     }
 
-    let resource = app.path().resolve(&expanded, BaseDirectory::Resource).ok();
     let config_relative = app
         .path()
         .app_config_dir()
         .ok()
         .map(|directory| directory.join(&expanded));
+    if expanded.starts_with(Path::new("scripts")) {
+        let bundled_template = bundled_template_path(&expanded);
+        let bundled_resource = bundled_template
+            .as_ref()
+            .and_then(|path| app.path().resolve(path, BaseDirectory::Resource).ok());
+        let bundled_source_tree = bundled_template.map(|path| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(path)
+        });
+
+        return config_relative
+            .into_iter()
+            .chain(bundled_resource)
+            .chain(bundled_source_tree)
+            .find(|path| path.is_file());
+    }
+
+    let resource = app.path().resolve(&expanded, BaseDirectory::Resource).ok();
     let source_tree = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(&expanded);
@@ -601,6 +619,15 @@ fn find_script(app: &AppHandle, configured_path: &str) -> Option<PathBuf> {
         .chain(config_relative)
         .chain([source_tree])
         .find(|path| path.is_file())
+}
+
+fn bundled_template_path(path: &Path) -> Option<PathBuf> {
+    if path.parent() != Some(Path::new("scripts")) {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?;
+    matches!(name, "timestamp.py" | "open_path.py" | "script_template.py")
+        .then(|| Path::new("examples").join(name))
 }
 
 #[cfg(target_os = "windows")]
@@ -681,10 +708,20 @@ mod tests {
     #[cfg(target_os = "windows")]
     use super::hide_console;
     use super::{
-        collect_output, configure_plain_text_encoding, normalize_plain_text_output,
-        result_shell_command, spawn_capped_reader, validate_result_shell_command, MAX_OUTPUT_BYTES,
-        MAX_RESULT_SHELL_COMMAND_BYTES,
+        bundled_template_path, collect_output, configure_plain_text_encoding,
+        normalize_plain_text_output, result_shell_command, spawn_capped_reader,
+        validate_result_shell_command, MAX_OUTPUT_BYTES, MAX_RESULT_SHELL_COMMAND_BYTES,
     };
+
+    #[test]
+    fn only_known_user_script_templates_have_bundled_fallbacks() {
+        assert_eq!(
+            bundled_template_path(std::path::Path::new("scripts/timestamp.py")),
+            Some(std::path::PathBuf::from("examples/timestamp.py"))
+        );
+        assert!(bundled_template_path(std::path::Path::new("scripts/custom.py")).is_none());
+        assert!(bundled_template_path(std::path::Path::new("other/timestamp.py")).is_none());
+    }
 
     #[test]
     fn plain_text_preserves_utf8_chinese_and_internal_newlines() {

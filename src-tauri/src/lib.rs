@@ -20,6 +20,7 @@ mod spotlight;
 mod taskbar;
 mod translator;
 mod tray;
+mod user_scripts;
 mod web_search;
 #[cfg(target_os = "windows")]
 mod windows_apps;
@@ -71,6 +72,9 @@ pub fn run() {
         )
         .setup(|app| {
             taskbar::apply_window_policy(app)?;
+            if let Err(error) = user_scripts::provision_bundled_templates(app.handle()) {
+                eprintln!("无法初始化用户脚本模板：{error}");
+            }
             let config_state = Arc::new(config::ConfigState::load(app.handle()));
             let initial_config = config_state.snapshot();
             if !config_state.is_read_only() {

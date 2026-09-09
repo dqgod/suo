@@ -43,6 +43,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v13：唯一的 `fy` 翻译配置新增 `provider`；v12 及更早迁移为 `microsoft`，且必须继续使用原 `microsoft-translator-api-key` 凭据项名以保留旧密钥。
 - v14：每条脚本新增 `resultAction`；v13 及更早必须迁移为 `copy`。`executeShell` 只能在结果二次激活后执行，macOS 走 Bash、Windows 走 PowerShell；原始命令不得作为 WebView action 参数传输。
 - v15：`launcher` 新增 `startAtLogin`；v14 及更早必须迁移为 `false`。Windows 使用当前用户启动项，macOS 使用 LaunchAgent；登录启动只建立后台常驻能力，不主动显示搜索窗口。
+- v16：只把内置 `timestamp-example` 的旧默认路径 `examples/timestamp.py` 迁移为 `scripts/timestamp.py`，其他自定义路径必须保持。`examples/` 是 bundle 中的只读初始化模板；缺失模板复制到平台默认应用配置目录的 `scripts/`，必须使用“不存在才创建”语义，升级与重装不得覆盖用户文件。该目录不跟随可迁移的 `config.json`。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 

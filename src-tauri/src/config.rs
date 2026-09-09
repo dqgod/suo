@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 15;
+const CONFIG_VERSION: u32 = 16;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -726,7 +726,7 @@ impl Default for AppConfig {
                 aliases: Vec::new(),
                 enabled: true,
                 runtime: ScriptRuntime::Python,
-                script_path: "examples/timestamp.py".into(),
+                script_path: "scripts/timestamp.py".into(),
                 result_action: ScriptResultAction::Copy,
                 immediate: true,
                 debounce_ms: default_script_debounce_ms(),
@@ -1265,6 +1265,16 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         ));
     }
 
+    if config.version <= 15 {
+        for command in &mut config.script_commands {
+            if command.id == "timestamp-example"
+                && command.script_path.trim().replace('\\', "/") == "examples/timestamp.py"
+            {
+                command.script_path = "scripts/timestamp.py".into();
+            }
+        }
+    }
+
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
         // v4 adds per-script debounce, v5 adds custom themes, v6 splits the
@@ -1277,13 +1287,14 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // and empty-argument hints, v13 lets the shared fy command select
         // Microsoft, Google, or Youdao as its translation provider, and v14
         // lets each script result either copy stdout or explicitly execute it
-        // through the platform shell after a second user activation, and v15
-        // adds cross-platform login startup, disabled by default for old files.
+        // through the platform shell after a second user activation, v15 adds
+        // cross-platform login startup, disabled by default for old files, and
+        // v16 moves the bundled timestamp example to a user-owned script copy.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 => {
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 => {
             config.version = CONFIG_VERSION
         }
-        15 => {}
+        16 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -3488,6 +3499,54 @@ mod tests {
         .expect("migrate v14 login-startup default");
         assert_eq!(migrated.version, CONFIG_VERSION);
         assert!(!migrated.launcher.start_at_login);
+    }
+
+    #[test]
+    fn migrates_v15_timestamp_template_to_user_owned_script() {
+        let mut legacy = AppConfig::default();
+        legacy.version = 15;
+        legacy.script_commands[0].script_path = "examples\\timestamp.py".into();
+
+        let migrated = normalize_and_validate(legacy).expect("migrate v15 timestamp template");
+
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.script_commands[0].script_path,
+            "scripts/timestamp.py"
+        );
+
+        let mut custom = AppConfig::default();
+        custom.version = 15;
+        custom.script_commands[0].script_path = "/Users/example/custom-timestamp.py".into();
+        let migrated_custom =
+            normalize_and_validate(custom).expect("preserve custom timestamp path");
+        assert_eq!(
+            migrated_custom.script_commands[0].script_path,
+            "/Users/example/custom-timestamp.py"
+        );
+
+        let mut same_path_custom_command = AppConfig::default();
+        same_path_custom_command.version = 15;
+        same_path_custom_command.script_commands[0].id = "my-own-command".into();
+        same_path_custom_command.script_commands[0].script_path = "examples/timestamp.py".into();
+        let migrated_same_path_custom_command = normalize_and_validate(same_path_custom_command)
+            .expect("preserve matching path on a custom command");
+        assert_eq!(
+            migrated_same_path_custom_command.script_commands[0].script_path,
+            "examples/timestamp.py"
+        );
+
+        for custom_case_path in ["Examples/timestamp.py", "examples/TIMESTAMP.py"] {
+            let mut custom_case = AppConfig::default();
+            custom_case.version = 15;
+            custom_case.script_commands[0].script_path = custom_case_path.into();
+            let migrated_custom_case =
+                normalize_and_validate(custom_case).expect("preserve case-sensitive custom path");
+            assert_eq!(
+                migrated_custom_case.script_commands[0].script_path,
+                custom_case_path
+            );
+        }
     }
 
     #[test]
