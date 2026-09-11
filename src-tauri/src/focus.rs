@@ -11,7 +11,7 @@ use objc2::runtime::{AnyClass, NSObject, NSObjectProtocol};
 #[cfg(target_os = "macos")]
 use objc2::{define_class, msg_send, ClassType};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPanel, NSWindowStyleMask};
+use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
 use tauri::{Emitter, Runtime, WebviewWindow};
 
 #[cfg(target_os = "macos")]
@@ -20,6 +20,24 @@ struct SuoLauncherPanelIvars;
 #[cfg(target_os = "macos")]
 fn launcher_panel_style(style: NSWindowStyleMask) -> NSWindowStyleMask {
     style | NSWindowStyleMask::NonactivatingPanel
+}
+
+#[cfg(target_os = "macos")]
+fn launcher_panel_collection_behavior(
+    behavior: NSWindowCollectionBehavior,
+) -> NSWindowCollectionBehavior {
+    // A launcher invoked over a native full-screen app must be allowed into
+    // that app's dedicated Space. Joining all Spaces keeps the single panel
+    // available on the Space belonging to the monitor under the cursor, while
+    // FullScreenAuxiliary lets it coexist above the full-screen window.
+    // Clear mutually exclusive modes first so an upstream Tauri/AppKit default
+    // cannot turn this combination into an invalid or ineffective policy.
+    let incompatible = NSWindowCollectionBehavior::MoveToActiveSpace
+        | NSWindowCollectionBehavior::FullScreenPrimary
+        | NSWindowCollectionBehavior::FullScreenNone;
+    (behavior - incompatible)
+        | NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::FullScreenAuxiliary
 }
 
 #[cfg(target_os = "macos")]
@@ -72,6 +90,9 @@ pub fn prepare_launcher_window<R: Runtime>(window: &WebviewWindow<R>) -> Result<
 
         let panel = &*native_window.cast::<SuoLauncherPanel>();
         panel.setStyleMask(launcher_panel_style(panel.styleMask()));
+        panel.setCollectionBehavior(launcher_panel_collection_behavior(
+            panel.collectionBehavior(),
+        ));
         panel.setHidesOnDeactivate(false);
         panel.setBecomesKeyOnlyIfNeeded(false);
     }
@@ -138,8 +159,8 @@ pub fn show_launcher_after_geometry<R: Runtime>(window: &WebviewWindow<R>) -> Re
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::launcher_panel_style;
-    use objc2_app_kit::NSWindowStyleMask;
+    use super::{launcher_panel_collection_behavior, launcher_panel_style};
+    use objc2_app_kit::{NSWindowCollectionBehavior, NSWindowStyleMask};
 
     #[test]
     fn launcher_panel_style_preserves_existing_flags_and_becomes_nonactivating() {
@@ -149,5 +170,22 @@ mod tests {
         assert!(style.contains(NSWindowStyleMask::NonactivatingPanel));
         assert!(style.contains(NSWindowStyleMask::Titled));
         assert!(style.contains(NSWindowStyleMask::FullSizeContentView));
+    }
+
+    #[test]
+    fn launcher_panel_joins_full_screen_spaces_without_conflicting_modes() {
+        let behavior = launcher_panel_collection_behavior(
+            NSWindowCollectionBehavior::MoveToActiveSpace
+                | NSWindowCollectionBehavior::FullScreenPrimary
+                | NSWindowCollectionBehavior::FullScreenNone
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+
+        assert!(behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces));
+        assert!(behavior.contains(NSWindowCollectionBehavior::FullScreenAuxiliary));
+        assert!(behavior.contains(NSWindowCollectionBehavior::IgnoresCycle));
+        assert!(!behavior.contains(NSWindowCollectionBehavior::MoveToActiveSpace));
+        assert!(!behavior.contains(NSWindowCollectionBehavior::FullScreenPrimary));
+        assert!(!behavior.contains(NSWindowCollectionBehavior::FullScreenNone));
     }
 }

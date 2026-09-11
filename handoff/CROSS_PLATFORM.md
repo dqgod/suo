@@ -54,6 +54,8 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 
 macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 仍调用 `set_focus()` 让搜索框接收输入，随后只恢复原窗口的 taskbar presentation；不得编译或复制 AppKit 类型。
 
+macOS 原生全屏应用会占用独立 Space。启动器面板必须同时保留 `CanJoinAllSpaces` 与 `FullScreenAuxiliary` collection behavior，并清除与之冲突的 `MoveToActiveSpace`、`FullScreenPrimary` 和 `FullScreenNone`；否则快捷键虽然触发，窗口仍可能留在普通桌面而无法覆盖当前全屏应用。该策略只作用于 `main` 面板，不得套用到设置窗口，也不得把 AppKit collection behavior 泄漏到 Windows。多显示器的目标位置仍由共享几何逻辑按鼠标所在显示器计算。
+
 ## 5. 可移动配置仍需要固定引导位置
 
 macOS 默认配置是 `~/Library/Application Support/io.github.dqgod.suo/config.json`，Windows 默认配置是 `%APPDATA%\io.github.dqgod.suo\config.json`。用户把配置迁走后，程序不能靠被迁走的 `config.json` 记录自身位置；默认目录中的 `config-location.json` 是固定、版本化的启动指针。
