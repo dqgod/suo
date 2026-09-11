@@ -1,11 +1,19 @@
 # macOS Apple Silicon release handoff
 
-状态：**Windows 已把 `v0.1.2` / 配置协议 v17 的 x64 资产上传至[同名 GitHub Pre-release](https://github.com/dqgod/suo/releases/tag/v0.1.2)；macOS Apple Silicon 必须从同一不可变 `v0.1.2` tag 完成构建与真实验证后，才能向同一个 Release 追加 arm64 资产。** 仍无 Developer ID 签名、未公证，不是正式稳定版。
+状态：**正在准备 `v0.1.3` / 配置协议 v17 的 macOS Apple Silicon Pre-release。该版本包含原生全屏 Space 覆盖修复；Windows 必须从同一不可变 tag 重新构建，不能把 `v0.1.2` 安装包改名复用。** 仍无 Developer ID 签名、未公证，不是正式稳定版。
 
-## `v0.1.2` 接手目标（2026-09-11）
+## `v0.1.3` 原生全屏 Space 修复（2026-09-11）
 
-- 来源：先 `git fetch origin --tags`，确认 `v0.1.2` tag 与 GitHub Release 均解析到提交 `74c27fa9279a4807c5704c0188f75096576e06de`。验证发布源码时使用 tag；若发现必须修改代码，回到 `dev` 提交修复并协调新版本，**不得移动或重建 `v0.1.2` tag**。
-- 产品版本：`0.1.2`；配置协议：v17；目标：Apple Silicon / `arm64`，macOS 13+。
+- 问题：从 macOS 原生全屏应用所在的独立 Space 按全局快捷键时，快捷键会触发，但单一启动器面板仍停留在普通桌面，当前页面看不到搜索框。
+- 修复：`src-tauri/src/focus.rs` 在既有非激活 `NSPanel` 上增加 `CanJoinAllSpaces | FullScreenAuxiliary`，并移除冲突的 Space/全屏角色；继续沿用鼠标所在显示器的定位、非激活焦点策略和 AppKit 几何队列，不改变设置窗口或 Windows 行为。
+- 自动化：`pnpm install --frozen-lockfile`、`pnpm build`、120 个 Rust 测试（119 通过、1 个安装应用探测测试 ignored）、`cargo check --locked --all-targets` 和 `pnpm tauri build --bundles app` 通过；主程序与 `.app` 内可执行文件均为 Mach-O arm64，最低系统版本仍为 macOS 13.0。
+- 实机：从 LaunchServices 启动工作树 `.app`，把活动监视器置于原生全屏 Space 后按 `Command+Space`，搜索框能在其上层显示并接收输入；关闭搜索框后活动监视器保持当前全屏应用，没有切换 Space 或激活 Suo。验证后已恢复原 `/Applications/Suo.app`，真实 `config.json` 与 `.bak` 的 SHA-256 与测试前一致，测试时创建的 `scripts/` 已移到临时备份。
+- 限制：当前机器的 CoreGraphics 只报告 1 块活动显示器，因此“双物理显示器、各自普通/全屏 Space、不同缩放”的组合仍需连接第二块显示器后手工关闭。`v0.1.3` tag 一旦发布即不可移动或重建。
+
+## `v0.1.3` 发布目标（2026-09-11）
+
+- 来源：先 `git fetch origin --tags`，确认本地与远程 `v0.1.3` tag 指向同一发布提交。验证和发布产物必须使用该不可变 tag；若发现必须修改代码，回到 `dev` 修复并协调更高版本。
+- 产品版本：`0.1.3`；配置协议：v17；目标：Apple Silicon / `arm64`，macOS 13+。
 - 本轮共享能力：用户脚本目录与只创建不覆盖的模板、UTF-8/多行脚本输出、类型化文字/图片/二维码结果、默认 `qr` 命令、完整图片缩略图、脚本/网络搜索删除二次确认。
 - Windows-only 的 `SHOpenFolderAndSelectItems`、PIDL、COM 和路径分隔符修复不得进入 macOS 分支；macOS“在文件夹中显示”继续使用 `/usr/bin/open -R`。
 
@@ -16,7 +24,7 @@ git fetch origin --tags
 git switch dev
 git pull --ff-only origin dev
 git rev-parse HEAD
-git rev-list -n 1 v0.1.2
+git rev-list -n 1 v0.1.3
 git status --short --branch
 uname -m
 node -p process.arch
@@ -25,7 +33,7 @@ cargo --version
 pnpm --version
 ```
 
-`uname -m`、Node 与 Rust host 都应为 `arm64` / `aarch64-apple-darwin`。先在 `dev` 阅读本文件；正式产物必须从 `v0.1.2` tag 的源码构建。如果 `dev` 仅比 tag 多交接文档提交，可以阅读最新文档后切回 tag；不得从含未提交代码的工作区发布。
+`uname -m`、Node 与 Rust host 都应为 `arm64` / `aarch64-apple-darwin`。先在 `dev` 阅读本文件；正式产物必须从 `v0.1.3` tag 的源码构建。如果 `dev` 仅比 tag 多交接文档提交，可以阅读最新文档后切回 tag；不得从含未提交代码的工作区发布。
 
 ## 自动化与构建
 
@@ -67,6 +75,7 @@ file src-tauri/target/release/bundle/macos/Suo.app/Contents/MacOS/suo
 ## macOS 核心回归
 
 - Command+Space、非激活 `NSPanel`、原应用菜单栏/输入光标、Esc、失焦策略和单实例保持既有行为；设置窗口仍是普通可聚焦窗口。
+- 在每块目标显示器上分别从普通 Space 和原生全屏应用的独立 Space 唤起：搜索框必须出现在鼠标所在显示器及当前 Space 的全屏应用上层，关闭后不得切换 Space、退出全屏或激活 Suo；不同缩放的双显示器必须分别验证定位和工作区夹紧。
 - 搜索窗口不错误显示 Dock 图标；设置窗口打开时按用户配置显示 Dock 图标；菜单栏模板图标在浅色/深色下可见，退出/设置菜单正常。
 - 圆角透明窗口不能重新出现白色直角，`app.macOSPrivateApi=true` 必须保留；紧凑空输入与完整结果窗口都要检查。
 - `startAtLogin` LaunchAgent 开关、后台冷启动、退出清理至少做一次真实用户会话验证；不得使用 `sudo`。
@@ -74,16 +83,16 @@ file src-tauri/target/release/bundle/macos/Suo.app/Contents/MacOS/suo
 
 ## arm64 资产与上传
 
-验证全部通过后，从 tag 构建出的真实 `.app` 创建 `Suo_0.1.2_macos_arm64.zip`：
+验证全部通过后，从 tag 构建出的真实 `.app` 创建 `Suo_0.1.3_macos_arm64.zip`：
 
 ```bash
 ditto --sequesterRsrc --keepParent \
   src-tauri/target/release/bundle/macos/Suo.app \
-  Suo_0.1.2_macos_arm64.zip
-shasum -a 256 Suo_0.1.2_macos_arm64.zip
+  Suo_0.1.3_macos_arm64.zip
+shasum -a 256 Suo_0.1.3_macos_arm64.zip
 ```
 
-重新解压 ZIP，经 Finder/LaunchServices 冷启动并再次核对 Mach-O arm64 后，才把 ZIP 与 `.sha256` 追加到现有 `v0.1.2` Pre-release。不得覆盖 Windows 资产，也不得用裸执行 `Contents/MacOS/suo` 代替 bundle 验收。完成后更新本文件与 [根 README](../README.md)，提交并推送到 `dev`。
+重新解压 ZIP，经 Finder/LaunchServices 冷启动并再次核对 Mach-O arm64 后，才创建 `v0.1.3` Pre-release 并上传 ZIP 与 `.sha256`。Windows 后续必须从同一 tag 追加 x64 安装包；不得复用旧版本资产，也不得用裸执行 `Contents/MacOS/suo` 代替 bundle 验收。完成后更新本文件与 [根 README](../README.md)，提交并推送到 `dev`。
 
 ## `v0.1.0` 历史发布证据
 

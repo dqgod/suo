@@ -2,7 +2,7 @@
 
 本目录只保存当前跨平台交接状态和仍需执行的验证。长期规则见根目录 [`AGENTS.md`](../AGENTS.md)，已经完成的逐版本执行记录已移入 [`archive/`](archive/README.md)，不再作为新一轮操作清单。
 
-最后更新：2026-09-11。[`v0.1.2`](https://github.com/dqgod/suo/releases/tag/v0.1.2) 是当前最新 Pre-release，配置协议为 v17；新增类型化图片/二维码结果、默认 `qr` 示例、完整图片缩略图、可靠脚本定位和删除二次确认。Windows x64 资产已完成构建、校验、复审和上传；macOS Apple Silicon 需从同一不可变 tag 完成构建与真实验证。
+最后更新：2026-09-11。[`v0.1.2`](https://github.com/dqgod/suo/releases/tag/v0.1.2) 是当前最新 Pre-release，配置协议为 v17；新增类型化图片/二维码结果、默认 `qr` 示例、完整图片缩略图、可靠脚本定位和删除二次确认。Windows x64 资产已完成构建、校验、复审和上传；macOS Apple Silicon 需从同一不可变 tag 完成构建与真实验证。`dev` 另有尚未发布的 macOS 原生全屏 Space 覆盖修复，必须进入后续新版本，不能回写现有 tag。
 
 ## 当前状态
 
@@ -13,6 +13,7 @@
 | Windows x64 `v0.1.1` | **Windows 资产已发布** | 已补 ChatGPT/Xbox/Microsoft Store 等打包应用发现、启动和图标，以及保持原应用 taskbar 选中外观；NSIS 安装包与校验文件已上传，macOS 仍需从 `v0.1.1` tag 完成跨平台构建回归并追加 arm64 资产。 |
 | Windows x64 `v0.1.2` | **Windows 资产已发布** | 类型化脚本结果、默认本地二维码、完整图片缩略图、Windows 混合路径分隔符和删除二次确认已通过自动化构建与独立复审；NSIS 与 SHA-256 已上传，最新安装包的真实界面复测仍未关闭。 |
 | macOS Apple Silicon `v0.1.2` | **待接手** | 从同一不可变 tag 执行 [`MACOS.md`](MACOS.md) 的 v16/v17 迁移、三类脚本结果、Finder 定位、删除确认、窗口/Dock 与 arm64 构建验收；通过后向同一 Release 追加 ZIP。 |
+| macOS `dev` 原生全屏 Space | **单显示器实机通过** | 非激活面板已可覆盖原生全屏 Space，自动化与 arm64 `.app` 构建通过；仍需连接第二块显示器验证 A/B 屏各自普通/全屏 Space 与不同缩放，之后随新版本发布。 |
 | 跨平台约束 | **持续有效** | 修改平台代码前阅读 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，不得为一端编译而削弱另一端行为或安全边界。 |
 
 ## 当前交接文件
