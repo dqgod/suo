@@ -43,7 +43,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 通用设置可开启跨平台开机自启；登录后只在后台建立托盘/菜单栏与全局快捷键，不主动弹出搜索窗口；快捷键录制期间不会触发当前全局组合，Windows 录制 `Alt+Space` 时拦截系统菜单；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：[`v0.1.2`](https://github.com/dqgod/suo/releases/tag/v0.1.2) 是当前最新 Pre-release，已发布 Windows x64 安装包；自动化门禁、正式构建、哈希校验与独立复审已完成，最新安装包的真实界面复测仍按交接清单继续。macOS Apple Silicon 需从同一不可变 tag 完成构建与真实回归，再向同一 Release 追加 arm64 资产。当前版本仍未签名、未公证。平台证据与执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
+平台验证状态：[`v0.1.3`](https://github.com/dqgod/suo/releases/tag/v0.1.3) 是当前最新 Pre-release，已发布 macOS Apple Silicon arm64 ZIP 与 SHA-256；自动化门禁、最终 ZIP 解包冷启动和单显示器原生全屏 Space 实机验证已完成。Windows x64 需从同一不可变 tag 重新构建、验证并向该 Release 追加安装包。当前版本仍未使用 Developer ID 签名或公证。未完成项分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，完整完成证据与旧版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
 
 ### 命令参数约定
 
@@ -172,8 +172,8 @@ cargo test
 
 ## 平台验证与交接
 
-- macOS Apple Silicon：`v0.1.2` 的拉取、v16/v17 迁移、脚本结果、Finder、删除确认、arm64 构建和 Release 追加清单见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
-- Windows x64：`v0.1.2` 候选的构建、哈希、脚本结果、文件定位、删除确认及剩余真实界面复测见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
+- macOS Apple Silicon：`v0.1.3` 已完成发布的证据在 [`handoff/archive/MACOS_V0.1.3_2026-09-11.md`](./handoff/archive/MACOS_V0.1.3_2026-09-11.md)，剩余双显示器、v17 真实迁移和原生集成待办见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- Windows x64：从不可变 `v0.1.3` tag 构建、真实回归并向同一 Release 追加安装包的当前清单见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
 - 已知跨平台工具链、配置迁移与平台隔离问题见 [`handoff/CROSS_PLATFORM.md`](./handoff/CROSS_PLATFORM.md)。README 仅维护当前状态，不保存逐轮测试流水。
 
 ## 分支约定

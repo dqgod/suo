@@ -4,5 +4,7 @@
 
 - [`MACOS_THROUGH_V15_2026-08-11.md`](MACOS_THROUGH_V15_2026-08-11.md)：Apple Silicon 基线及 v10–v15 期间的构建、配置恢复与真实界面记录。
 - [`WINDOWS_THROUGH_V15_2026-08-11.md`](WINDOWS_THROUGH_V15_2026-08-11.md)：Windows v10 基线、任务栏策略及 v11–v15 原始验证清单和执行证据。
+- [`MACOS_V0.1.3_2026-09-11.md`](MACOS_V0.1.3_2026-09-11.md)：v0.1.3 arm64 构建、原生全屏 Space 实机、最终 ZIP 冷启动和 GitHub 资产校验。
+- [`WINDOWS_V0.1.2_2026-09-11.md`](WINDOWS_V0.1.2_2026-09-11.md)：已被 v0.1.3 接替的 Windows v0.1.2 发布资产和验证状态摘要。
 
 归档文件不再随当前状态更新。若其中的结论已经被新代码替代，以当前 `AGENTS.md`、产品需求、`CROSS_PLATFORM.md` 和活跃平台文件为准。
