@@ -11,7 +11,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - macOS 使用 Spotlight；
 - 计算器、可切换的 Microsoft / Google / 有道翻译、自定义 HTTP/HTTPS 搜索；
 - Python、PowerShell、Bash 和可执行文件命令；
-- 当前支持纯文本单结果脚本输出；`suo-json-v1` 多结果协议仍在后续计划中；
+- 当前支持带类型前缀的文本、图片与二维码单结果脚本输出；`suo-json-v1` 多结果协议仍在后续计划中；
 - 搜索界面与设置界面各自独立的三套内置皮肤，以及可导入、导出、实时预览的自定义皮肤。
 
 详细产品边界和验收标准见 [产品需求文档](./docs/PRODUCT_REQUIREMENTS.md)，当前交互视觉稿见 [UI 方案索引](./docs/README.md)，逐版本改动见 [更新记录](./CHANGELOG.md)。
@@ -29,7 +29,8 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - macOS 的 `f <关键词>` 通过 Spotlight 文件名索引搜索，失败时同样回退限定目录索引；
 - 通用设置可分别配置空输入和非空输入的尾沿防抖（均为 0–60000 ms，默认 0 / 50 ms），并取消或丢弃过期查询；即时脚本继续逐项配置自己的 20–60000 ms 执行延迟；
 - 通用设置可在 560–1200 px 宽、320–720 px 高范围内调整启动器，并相对原始居中偏上位置微调水平/垂直偏移；多显示器上会自动夹紧到目标工作区，首次快捷键显示前即由原生层应用已保存的尺寸、紧凑高度和位置，避免默认居中窗口一闪再移动；
-- `11+1` 本地计算；脚本命令可在设置中增删改并选择可选本地图标、空参数提示，支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；Python 输出固定为 UTF-8，其他纯文本先按 UTF-8 解码并在 Windows 失败时回退系统代码页；内部换行会保留并最多展示两行；返回文本默认在再次按 Enter 时复制，也可显式选择高风险的“执行返回的 Shell 命令”；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
+- `11+1` 本地计算；脚本命令可在设置中增删改并选择可选本地图标、空参数提示，删除前使用独立确认框二次确认；支持 Python、PowerShell、Bash 和可执行文件、安全多 argv、即时或 Enter 执行；Python 输出固定为 UTF-8，其他纯文本先按 UTF-8 解码并在 Windows 失败时回退系统代码页；内部换行会保留并最多展示两行；返回文本默认在再次按 Enter 时复制，也可显式选择高风险的“执行返回的 Shell 命令”；脚本路径旁可打开所在文件夹并选中文件；参数数量与含义由脚本决定；
+- 脚本可用 `SUO_RESULT:text:`、`SUO_RESULT:image:` 或 `SUO_RESULT:qrcode:` 返回文本、受限本地图片或二维码；默认 `qr <文字或网址>` 示例完全在本机生成 PNG 并显示，按 Enter 复制二维码原始内容；
 - 网络搜索可在设置中增删改，并选择可选本地图标、空参数提示；不含占位符的 HTTP/HTTPS URL 是固定直达链接，只输入关键词即可生成打开结果；`{query}` 表示无需引号的整段参数，`{query0}`、`{query1}`…表示位置参数，所有链接都只在按 Enter 后交给浏览器；
 - `fy hello` 使用当前选择的 Microsoft Translator、Google 翻译或有道翻译，支持 `fy:ja hello`；各提供方凭据彼此独立，只存入系统凭据库而非 JSON；
 - 搜索界面与设置界面拥有完全独立的午夜、纸张、森林主题库、自定义皮肤和强调色；分别使用严格校验的 `suo-launcher-theme-v1` / `suo-settings-theme-v1` 导入导出文件，支持实时预览、可读性提示、经受限解码的本地背景图和平台覆盖；
@@ -42,7 +43,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 通用设置可开启跨平台开机自启；登录后只在后台建立托盘/菜单栏与全局快捷键，不主动弹出搜索窗口；快捷键录制期间不会触发当前全局组合，Windows 录制 `Alt+Space` 时拦截系统菜单；
 - 查询取消、陈旧结果保护、可配置脚本超时、1 MB 流式输出上限和进程树终止。
 
-平台验证状态：`v0.1.1` 已作为当前最新 Pre-release 发布 Windows x64 安装包；Windows 自动化门禁与本机真实场景验证已完成。macOS Apple Silicon 仍需从同一不可变 tag 完成构建回归并追加 arm64 资产。当前版本仍未签名、未公证。平台证据与执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
+平台验证状态：`dev` 已形成 `v0.1.2` Windows x64 发布候选，自动化门禁、正式构建和哈希校验已完成，正在关闭发布前独立复审；GitHub tag 与 Release 尚未创建。发布后 macOS Apple Silicon 需从同一不可变 tag 完成构建与真实回归，再向同一 Release 追加 arm64 资产。当前版本仍未签名、未公证。平台证据与执行入口分别见 [`handoff/MACOS.md`](handoff/MACOS.md) 和 [`handoff/WINDOWS.md`](handoff/WINDOWS.md)，旧的逐版本流水已移入 [`handoff/archive/`](handoff/archive/README.md)。
 
 ### 命令参数约定
 
@@ -56,6 +57,10 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 不知道脚本入口、参数和 stdout/stderr 应该怎样组织时，直接从带逐行注释的 [`examples/script_template.py`](examples/script_template.py) 开始；设置字段、argv 拆分、执行时机、退出码以及两种返回值动作见 [`examples/README.md`](examples/README.md)。
 
 每条脚本命令的“返回值动作”默认是“复制返回文本”，所以现有 `ts` 等配置无需修改。选择“执行返回的 Shell 命令（高风险）”后，脚本本身仍先按安全 argv 模式运行；它的 stdout 只会显示成一个待执行结果，不会自动执行。用户必须再次点击该结果或按 `Enter`，Suo 才会在 macOS 使用 `/bin/bash -lc`、在 Windows 使用 `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` 执行返回文本。
+
+脚本可以用区分大小写的类型前缀明确选择返回内容：`SUO_RESULT:text:` 返回文本，旧 `SUO_RESULT:` 继续按文本兼容；`SUO_RESULT:image:` 返回一张 PNG/JPEG/WebP data URL，纯 Base64 则按 PNG 解释；`SUO_RESULT:qrcode:` 让 Suo 在本地把后续文字渲染为二维码 PNG。只要 stdout 中出现结果前缀，普通 `print()` 日志就会忽略；一次执行不能混合文本和图片类型。图片会在 Rust 中完成格式、完整性、尺寸和解码上限校验，再进入 WebView；不允许远程 URL 或 SVG。stderr 和脚本返回的 Shell 命令执行输出不应用此前缀解析。
+
+默认 `qr` 命令指向 [`examples/qr.py`](examples/qr.py) 初始化出的 `scripts/qr.py`。输入 `qr www.google.com` 后脚本只返回 `qrcode` 类型和原始内容，二维码编码与 PNG 生成由 Suo 本地完成，不需要 `qrcode`、Pillow 等额外 Python 包，也不会访问二维码服务；内容上限为 500 个 UTF-8 字节，中文和 emoji 会写入 UTF-8 字符集声明；后端保留清晰原图，搜索结果中的图片缩略图限制在 240 px 内并随窗口高度进一步缩小，以保证整张图片与操作区域都可见；选中结果按 Enter 会复制原始文字或网址。
 
 示例 [`examples/open_path.py`](examples/open_path.py) 接收一个文件或目录参数并生成平台命令。Suo 首次启动会把它初始化到用户脚本目录。可在“设置 → 命令与服务 → 脚本命令”新增：关键词 `open_file`、运行时 `Python`、路径 `scripts/open_path.py`、执行方式“按 Enter 执行”、返回值动作“执行返回的 Shell 命令”。输入 `open_file ~` 后，第一次 `Enter` 运行 Python 并显示命令，第二次 `Enter` 才打开目录。
 
@@ -101,7 +106,7 @@ Suo 自带的 [`examples/`](examples/) 仅作为安装包中的只读模板。�
 - macOS：`~/Library/Application Support/io.github.dqgod.suo/scripts`
 - Windows：`%APPDATA%\io.github.dqgod.suo\scripts`
 
-默认 `ts` 命令使用 `scripts/timestamp.py`。Suo 仅创建不存在的模板文件，升级、重装和后续启动都不会覆盖同名用户脚本；即使把 `config.json` 迁移到其他目录，用户脚本目录也保持上述固定位置。旧版默认 `examples/timestamp.py` 配置会自动迁移，用户自行配置的绝对路径或其他相对路径保持不变。
+默认 `ts` 命令使用 `scripts/timestamp.py`，默认 `qr` 命令使用 `scripts/qr.py`。Suo 仅创建不存在的模板文件，升级、重装和后续启动都不会覆盖同名用户脚本；即使把 `config.json` 迁移到其他目录，用户脚本目录也保持上述固定位置。旧版默认 `examples/timestamp.py` 配置会自动迁移，用户自行配置的绝对路径或其他相对路径保持不变；v16 升级到 v17 时，仅在 `qr` 关键字/别名和 `qr-example` ID 均未被占用时添加二维码示例。
 
 ## TODO / 迭代路线图
 
@@ -109,7 +114,7 @@ Suo 自带的 [`examples/`](examples/) 仅作为安装包中的只读模板。�
 
 ### P0：发布质量与稳定性
 
-- [ ] 清完当前跨平台验证债务：完成 Windows v11–v16 回归、macOS v16 用户脚本目录实测，并同步清理 `handoff/` 中已过期的待办状态；
+- [ ] 清完当前跨平台验证债务：完成 Windows v11–v17 回归、macOS v17 用户脚本目录与脚本图片实测，并同步清理 `handoff/` 中已过期的待办状态；
 - [ ] 建立可复现的发布流程：产出 Windows 安装版/便携版和 macOS 对应架构应用，补齐代码签名、公证、卸载、升级保留配置及回滚检查；当前阶段不接自动更新；
 - [ ] 增加脚本首次运行确认；脚本路径、内容或解释器发生变化后重新确认，保留现有 argv、超时、输出上限、无提权和进程树终止边界；
 - [ ] 增加有界滚动日志、崩溃恢复和“复制诊断信息”：默认只记元数据，按大小/保留期轮转并批量写入，导出时脱敏用户目录、查询、参数和凭据；
@@ -167,8 +172,8 @@ cargo test
 
 ## 平台验证与交接
 
-- macOS Apple Silicon：`v0.1.0` arm64 Pre-release 的构建、产物限制和剩余人工项见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
-- Windows x64：从相同 `v0.1.0` tag 执行干净构建、最新 UI、开机自启、快捷键、任务栏、脚本动作和配置迁移回归，详见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
+- macOS Apple Silicon：`v0.1.2` 的拉取、v16/v17 迁移、脚本结果、Finder、删除确认、arm64 构建和 Release 追加清单见 [`handoff/MACOS.md`](./handoff/MACOS.md)。
+- Windows x64：`v0.1.2` 候选的构建、哈希、脚本结果、文件定位、删除确认及剩余真实界面复测见 [`handoff/WINDOWS.md`](./handoff/WINDOWS.md)。
 - 已知跨平台工具链、配置迁移与平台隔离问题见 [`handoff/CROSS_PLATFORM.md`](./handoff/CROSS_PLATFORM.md)。README 仅维护当前状态，不保存逐轮测试流水。
 
 ## 分支约定

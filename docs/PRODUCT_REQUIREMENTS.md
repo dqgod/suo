@@ -324,7 +324,20 @@ Suo 只负责将命令后的文本安全拆分为独立 argv；参数数量、�
 
 `executeShell` 是逐脚本显式开启的高风险能力：macOS 固定通过 `/bin/bash -lc`，Windows 固定通过非交互 PowerShell `-Command` 执行。WebView 只能收到一次性不透明 action ID，不得收到或自行构造原始 Shell 动作；后端必须在当前查询 epoch 内缓存命令、二次校验脚本仍启用且动作类型未改变，并在首次激活、查询变化、取消或配置变化后销毁授权。空返回、NUL 和超过 16 KiB 的命令不可执行；执行继续服从 100–60000 ms 超时、1 MB 输出上限、非 root/非管理员限制和平台进程树终止。
 
-#### 5.5.2 结构化输出
+#### 5.5.2 类型化单结果
+
+成功脚本可使用区分大小写的行首前缀选择一种结果类型：
+
+- `SUO_RESULT:`：兼容旧脚本，等同文本；
+- `SUO_RESULT:text:`：文本，一行一个标记，多行按换行合并；
+- `SUO_RESULT:image:`：一张 PNG/JPEG/WebP data URL；仅提供 Base64 时按 PNG 解释；
+- `SUO_RESULT:qrcode:`：二维码原始内容，由 Suo 核心在本地编码并生成 PNG。
+
+只要出现任一结果前缀，未标记 stdout 即视为日志并忽略；没有前缀时保留旧版完整 stdout 文本行为。一次执行不能混合文本和图片，也不能返回多张图片。图片必须先在 Rust 中完成 Base64、容器完整性和有界解码校验：解码后最多 512 KB、最长边 1024 px，仅允许 PNG/JPEG/WebP，拒绝远程 URL 与 SVG；WebView 在赋给图片 `src` 前重复 MIME、Base64 字符和长度白名单。二维码最多接收 500 个 UTF-8 字节并显式声明 UTF-8 ECI 26；后端生成的原图保持至少 4 px/模块，搜索结果统一显示最大 240 px、随启动器可用高度继续缩小的完整缩略图，不访问网络服务。
+
+图片结果仅兼容 `copy` 动作：普通图片复制 data URL，二维码复制编码前原始内容；`executeShell` 必须拒绝图片。错误 stderr、二次执行 Shell 的输出不解析此前缀。默认 `qr` 示例指向用户目录中的 `scripts/qr.py`，脚本自身不依赖第三方 Python 图片包。
+
+#### 5.5.3 结构化输出（后续）
 
 复杂脚本可输出一行 JSON：
 
@@ -344,7 +357,7 @@ Suo 只负责将命令后的文本安全拆分为独立 argv；参数数量、�
 
 解析失败时显示“脚本输出格式错误”，并允许用户从诊断页复制 stdout/stderr，但不得把异常栈直接塞进主结果列表。
 
-#### 5.5.3 执行与安全边界
+#### 5.5.4 执行与安全边界
 
 - 默认使用参数数组启动进程，不把整段输入拼接成 shell 字符串；
 - `argv` 模式下禁止 shell expansion、命令替换、管道与重定向；
@@ -441,7 +454,7 @@ https://www.google.com.hk/search?q=codex
 - 编辑器工作副本只更新当前 scope 的右侧预览；无修改时保存按钮必须置灰并提示“当前皮肤没有修改”。统一保存开启时，“保存皮肤”只写入页面草稿并等待全局“保存设置”；统一保存关闭时，正在使用的皮肤显示“保存并应用”并在一次点击后持久化和生效，非正在使用的皮肤先显示“保存皮肤”，保存完成后按钮变为“应用”，由用户显式切换运行皮肤；
 - 提供新建、重命名、删除、恢复默认、导入和导出；只读配置下禁止修改；
 - 搜索皮肤只接受 `suo-launcher-theme-v1`，设置皮肤只接受 `suo-settings-theme-v1`；错 scope、旧 `suo-theme-v1`、不支持版本、字段缺失、未知字段和越界值均拒绝，失败不得改变当前草稿；
-- 配置 v6 将 v5 及更早的统一 `appearance` 自动复制并迁移为 `launcherTheme` / `settingsTheme` 两个独立 scope；v6 文件缺少任一 scope 时拒绝加载。配置 v7 新增 `saveSettingsManually`，v6 及更早版本迁移时默认开启；配置 v8 新增空输入与非空输入防抖，旧版本迁移后分别保持 0 ms 和 50 ms；配置 v9 新增启动器宽高与位置偏移，v8 迁移后宽度继续跟随当前搜索皮肤、高度为 520 px、偏移为 0/0；配置 v10 新增 macOS Dock 图标可见性，v9 迁移后默认开启；配置 v11 新增 `globalHotkey`，v10 及更早版本按当前平台迁移为默认组合键；配置 v12 为脚本和网络搜索新增可选 `iconDataUrl` / `inputHint`，v11 及更早配置迁移后均为空并保持原结果外观与提示；配置 v13 为共用 `fy` 增加 `translation.provider`，v12 及更早迁移为 `microsoft` 并继续读取原 Microsoft 系统凭据项；配置 v14 为脚本增加 `resultAction`，v13 及更早迁移为 `copy`，不得让旧脚本在升级后自动获得 Shell 执行能力；配置 v15 新增 `launcher.startAtLogin`，v14 及更早迁移后默认关闭；
+- 配置 v6 将 v5 及更早的统一 `appearance` 自动复制并迁移为 `launcherTheme` / `settingsTheme` 两个独立 scope；v6 文件缺少任一 scope 时拒绝加载。配置 v7 新增 `saveSettingsManually`，v6 及更早版本迁移时默认开启；配置 v8 新增空输入与非空输入防抖，旧版本迁移后分别保持 0 ms 和 50 ms；配置 v9 新增启动器宽高与位置偏移，v8 迁移后宽度继续跟随当前搜索皮肤、高度为 520 px、偏移为 0/0；配置 v10 新增 macOS Dock 图标可见性，v9 迁移后默认开启；配置 v11 新增 `globalHotkey`，v10 及更早版本按当前平台迁移为默认组合键；配置 v12 为脚本和网络搜索新增可选 `iconDataUrl` / `inputHint`，v11 及更早配置迁移后均为空并保持原结果外观与提示；配置 v13 为共用 `fy` 增加 `translation.provider`，v12 及更早迁移为 `microsoft` 并继续读取原 Microsoft 系统凭据项；配置 v14 为脚本增加 `resultAction`，v13 及更早迁移为 `copy`，不得让旧脚本在升级后自动获得 Shell 执行能力；配置 v15 新增 `launcher.startAtLogin`，v14 及更早迁移后默认关闭；配置 v16 仅把内置 `timestamp-example` 的旧默认路径迁移为用户脚本目录中的 `scripts/timestamp.py`，其他相对路径、绝对路径和用户文件保持不变；配置 v17 仅在 `qr-example` ID、`qr` 关键字及所有别名均未被占用且未超过数量上限时追加默认二维码命令，不抢占用户配置；
 - 可选择本地 PNG、JPEG 或 WebP 背景图，单张原始文件最大 1.5 MB，宽高均不得超过 4096 px；背景图以内嵌 data URL 保存和导出，不加载远程 URL；Base64 必须规范，并须通过实际图片解码与资源上限检查，只有文件头、伪造或截断的数据必须拒绝；
 - 文字与背景默认满足 WCAG AA；编辑器实时显示核心文字和边界对比度，可读性警告不得要求用户重复点击同一个保存按钮，也不得伪装成保存失败；透明窗口或背景图会受桌面内容影响，编辑器不得把纯色近似检查描述为最终“通过”，并需提示在真实桌面复核；
 - macOS 与 Windows 可在各自 scope 中保存独立的模糊和透明度覆盖值。
@@ -714,12 +727,15 @@ type ResultItem = {
 - v13 及更早脚本配置迁移后 `resultAction=copy`；`ts` 的既有复制行为保持不变；
 - 将 `open_file` 配置为 `scripts/open_path.py` 且 `resultAction=executeShell` 后，第一次 Enter 只显示返回命令，第二次 Enter 才在 macOS Bash / Windows PowerShell 执行；同一结果不可执行两次，查询或配置变化后不可再执行；
 - 首次启动将缺失的内置脚本模板初始化到平台默认应用配置目录的 `scripts/` 子目录，重复启动、升级和重装不得覆盖已存在文件；v15 的内置 `timestamp-example` 默认路径迁移为 `scripts/timestamp.py`，自定义路径保持不变；
+- 成功的纯文本脚本 stdout 若包含区分大小写的 `SUO_RESULT:` 行，只返回所有标记行并去掉前缀及其后一个可选空格，忽略其他 stdout 日志；无标记脚本保持完整 stdout 兼容，stderr 与结果 Shell 输出不得套用该过滤；
+- `SUO_RESULT:text:` 与旧文本前缀可兼容混用；`SUO_RESULT:image:` 能显示一张通过 512 KB / 1024 px 有界解码的 PNG/JPEG/WebP，raw Base64 按 PNG 处理；非法、远程、SVG、多图或文本图片混合结果显示可操作错误；
+- `qr www.google.com` 通过默认 `scripts/qr.py` 在本地生成并显示二维码，不安装 Python 图片依赖、不访问第三方服务，按 Enter 复制 `www.google.com`；
 - 空返回、NUL、超过 16 KiB、超时、失败退出和取消均不得留下可执行授权；WebView 篡改 action ID 不得执行任意命令；
 - 即时脚本可配置 20–60000 ms 输入停顿延迟，低于 20 ms 的配置无法保存；
 - 带空格、引号和 shell 元字符的参数不会在 argv 模式下被二次解释；
 - 超时能终止进程树；输出超限时安全截断；
 - 未找到解释器、脚本无权限、退出码非零均有可操作提示；
-- 设置页可打开脚本所在文件夹，并在 Finder/Explorer 中选中实际解析后的脚本文件；
+- 设置页可打开脚本所在文件夹，并在 Finder/Explorer 中选中实际解析后的脚本文件；Windows 必须兼容配置中的 `/` 与 `\` 混合分隔符；
 - 修改脚本文件后再次运行会触发重新确认。
 
 ### 主题

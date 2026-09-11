@@ -10,6 +10,7 @@ const USER_SCRIPTS_DIRECTORY: &str = "scripts";
 const BUNDLED_TEMPLATE_DIRECTORY: &str = "examples";
 const BUNDLED_TEMPLATES: &[&str] = &[
     "timestamp.py",
+    "qr.py",
     "open_path.py",
     "script_template.py",
     "README.md",
@@ -106,6 +107,7 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&timestamp).unwrap(), "user-edited");
         assert!(destination.join("open_path.py").is_file());
+        assert!(destination.join("qr.py").is_file());
         assert!(destination.join("script_template.py").is_file());
         assert!(destination.join("README.md").is_file());
         let _ = fs::remove_dir_all(root);

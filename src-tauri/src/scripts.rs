@@ -1,5 +1,5 @@
 use std::{
-    io::Read,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -11,18 +11,43 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use image::{DynamicImage, ImageFormat, Luma};
+use qrcode::{bits::Bits, EcLevel, QrCode, QrResult, Version};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
-use crate::config::{ScriptCommandConfig, ScriptRuntime};
+use crate::config::{validate_script_result_image_data_url, ScriptCommandConfig, ScriptRuntime};
 
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_RESULT_SHELL_COMMAND_BYTES: usize = 16 * 1024;
+const SCRIPT_RESULT_PREFIX: &str = "SUO_RESULT:";
+const SCRIPT_TEXT_RESULT_PREFIX: &str = "SUO_RESULT:text:";
+const SCRIPT_IMAGE_RESULT_PREFIX: &str = "SUO_RESULT:image:";
+const SCRIPT_QR_RESULT_PREFIX: &str = "SUO_RESULT:qrcode:";
+// Keep the preview scannable inside the launcher. At error-correction level M,
+// 500 UTF-8 bytes fit in version 17 or smaller (85 modules plus the quiet zone).
+// Rendering every module as 4x4 pixels therefore stays within the 384 px preview.
+const MAX_QR_CONTENT_BYTES: usize = 500;
+const UTF8_ECI_DESIGNATOR: u32 = 26;
+const QR_IMAGE_PIXELS: u32 = 384;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScriptOutput {
+    Text(String),
+    Image { data_url: String, copy_text: String },
+}
 
 #[tauri::command]
 pub fn reveal_script_in_folder(app: AppHandle, configured_path: String) -> Result<(), String> {
     let script = find_script(&app, &configured_path)
         .ok_or_else(|| format!("找不到脚本：{}", configured_path.trim()))?;
-    let mut command = reveal_command(&script)?;
+    reveal_script(&script)
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_script(script: &Path) -> Result<(), String> {
+    let mut command = Command::new("/usr/bin/open");
+    command.arg("-R").arg(script);
     let mut child = command
         .spawn()
         .map_err(|error| format!("无法在文件夹中显示 {}：{error}", script.display()))?;
@@ -32,29 +57,76 @@ pub fn reveal_script_in_folder(app: AppHandle, configured_path: String) -> Resul
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn reveal_command(script: &Path) -> Result<Command, String> {
-    let mut command = Command::new("/usr/bin/open");
-    command.arg("-R").arg(script);
-    Ok(command)
+#[cfg(target_os = "windows")]
+fn reveal_script(script: &Path) -> Result<(), String> {
+    use windows::{
+        core::PCWSTR,
+        Win32::{
+            Foundation::RPC_E_CHANGED_MODE,
+            System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
+            UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems},
+        },
+    };
+
+    struct ComApartment(bool);
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    let script_path = windows_shell_path(script);
+
+    // SAFETY: the string remains alive and NUL-terminated for the complete call. The PIDL is
+    // checked for null and released with ILFree. A zero-item selection tells Explorer to open
+    // the parent of this fully qualified item and select the item itself.
+    unsafe {
+        let initialized_com = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if initialized_com.is_err() && initialized_com != RPC_E_CHANGED_MODE {
+            return Err(format!(
+                "无法初始化 Windows 文件定位环境：{}",
+                initialized_com.message()
+            ));
+        }
+        // RPC_E_CHANGED_MODE means this worker already has a usable COM apartment of another
+        // type. Continue without uninitializing an apartment owned by the caller.
+        let _apartment = ComApartment(initialized_com.is_ok());
+        let script_pidl = ILCreateFromPathW(PCWSTR(script_path.as_ptr()));
+        if script_pidl.is_null() {
+            return Err(format!("无法解析脚本路径：{}", script.display()));
+        }
+
+        let result = SHOpenFolderAndSelectItems(script_pidl, None, 0)
+            .map_err(|error| format!("无法在文件夹中选中 {}：{error}", script.display()));
+        ILFree(Some(script_pidl));
+        result
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn reveal_command(script: &Path) -> Result<Command, String> {
-    use std::ffi::OsString;
-    use std::os::windows::process::CommandExt;
+fn windows_shell_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
 
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut selection = OsString::from("/select,");
-    selection.push(script.as_os_str());
-    let mut command = Command::new("explorer.exe");
-    command.arg(selection);
-    command.creation_flags(CREATE_NO_WINDOW);
-    Ok(command)
+    // PathBuf preserves the slash used in a relative config value. Shell PIDL parsing is
+    // stricter than ordinary Win32 file APIs, so normalize only separator code units while
+    // preserving every non-UTF-8-capable Windows path unit losslessly.
+    path.as_os_str()
+        .encode_wide()
+        .map(|unit| {
+            if unit == u16::from(b'/') {
+                u16::from(b'\\')
+            } else {
+                unit
+            }
+        })
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn reveal_command(_script: &Path) -> Result<Command, String> {
+fn reveal_script(_script: &Path) -> Result<(), String> {
     Err("当前平台不支持在文件夹中显示脚本".into())
 }
 
@@ -63,7 +135,7 @@ pub fn run_configured<F>(
     config: &ScriptCommandConfig,
     args: &[String],
     is_cancelled: F,
-) -> Result<String, String>
+) -> Result<ScriptOutput, String>
 where
     F: Fn() -> bool,
 {
@@ -94,7 +166,7 @@ where
         let child = command
             .spawn()
             .map_err(|error| format!("无法执行 {}：{error}", script.display()))?;
-        return collect_output(child, &is_cancelled, timeout);
+        return collect_script_output(child, &is_cancelled, timeout);
     }
 
     for interpreter in interpreters {
@@ -111,7 +183,7 @@ where
         configure_process_group(&mut command);
         hide_console(&mut command);
         match command.spawn() {
-            Ok(child) => return collect_output(child, &is_cancelled, timeout),
+            Ok(child) => return collect_script_output(child, &is_cancelled, timeout),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 last_not_found = Some(error);
             }
@@ -205,7 +277,26 @@ fn result_shell_command(shell: &str, command_text: &str) -> Command {
     command
 }
 
-fn collect_output<F>(
+fn collect_output<F>(child: Child, is_cancelled: &F, timeout: Duration) -> Result<String, String>
+where
+    F: Fn() -> bool,
+{
+    collect_process_output(child, is_cancelled, timeout)
+}
+
+fn collect_script_output<F>(
+    child: Child,
+    is_cancelled: &F,
+    timeout: Duration,
+) -> Result<ScriptOutput, String>
+where
+    F: Fn() -> bool,
+{
+    let output = collect_process_output(child, is_cancelled, timeout)?;
+    parse_script_result_output(&output)
+}
+
+fn collect_process_output<F>(
     mut child: Child,
     is_cancelled: &F,
     timeout: Duration,
@@ -320,6 +411,129 @@ fn decode_plain_text(bytes: &[u8]) -> String {
 
 fn normalize_plain_text_output(bytes: &[u8]) -> String {
     decode_plain_text(bytes).trim().to_string()
+}
+
+fn parse_script_result_output(output: &str) -> Result<ScriptOutput, String> {
+    enum RichResult<'a> {
+        Image(&'a str),
+        QrCode(&'a str),
+    }
+
+    let mut found_prefix = false;
+    let mut text_lines = Vec::new();
+    let mut rich_result = None;
+
+    for line in output.lines() {
+        let (text, rich) = if let Some(value) = line.strip_prefix(SCRIPT_TEXT_RESULT_PREFIX) {
+            (Some(value.strip_prefix(' ').unwrap_or(value)), None)
+        } else if let Some(value) = line.strip_prefix(SCRIPT_IMAGE_RESULT_PREFIX) {
+            (None, Some(RichResult::Image(value)))
+        } else if let Some(value) = line.strip_prefix(SCRIPT_QR_RESULT_PREFIX) {
+            (None, Some(RichResult::QrCode(value)))
+        } else if let Some(value) = line.strip_prefix(SCRIPT_RESULT_PREFIX) {
+            (Some(value.strip_prefix(' ').unwrap_or(value)), None)
+        } else {
+            continue;
+        };
+        found_prefix = true;
+
+        if let Some(text) = text {
+            if rich_result.is_some() {
+                return Err("一次脚本执行不能同时返回文本和图片".into());
+            }
+            text_lines.push(text);
+        }
+        if let Some(rich) = rich {
+            if !text_lines.is_empty() {
+                return Err("一次脚本执行不能同时返回文本和图片".into());
+            }
+            if rich_result.is_some() {
+                return Err("一次脚本执行只能返回一张图片".into());
+            }
+            rich_result = Some(rich);
+        }
+    }
+
+    if !found_prefix {
+        return Ok(ScriptOutput::Text(output.trim().to_string()));
+    }
+    if let Some(result) = rich_result {
+        return match result {
+            RichResult::Image(value) => parse_image_result(value),
+            RichResult::QrCode(value) => generate_qr_result(value),
+        };
+    }
+    Ok(ScriptOutput::Text(text_lines.join("\n").trim().to_string()))
+}
+
+fn parse_image_result(value: &str) -> Result<ScriptOutput, String> {
+    let value = value.trim();
+    let data_url = if value.starts_with("data:") {
+        value.to_string()
+    } else {
+        // A raw payload has no MIME metadata. Treat it as PNG so the protocol stays concise
+        // while JPEG/WebP callers use an explicit data URL.
+        format!("data:image/png;base64,{value}")
+    };
+    validate_script_result_image_data_url(&data_url)?;
+    Ok(ScriptOutput::Image {
+        copy_text: data_url.clone(),
+        data_url,
+    })
+}
+
+fn generate_qr_result(value: &str) -> Result<ScriptOutput, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("二维码内容不能为空".into());
+    }
+    if value.len() > MAX_QR_CONTENT_BYTES {
+        return Err(format!("二维码内容不能超过 {MAX_QR_CONTENT_BYTES} 字节"));
+    }
+
+    let code = generate_utf8_qr_code(value)?;
+    let image = code
+        .render::<Luma<u8>>()
+        // Keep a high-quality source image. The launcher independently scales
+        // all script images into a complete, height-aware thumbnail.
+        .max_dimensions(QR_IMAGE_PIXELS, QR_IMAGE_PIXELS)
+        .build();
+    let mut png = Cursor::new(Vec::new());
+    DynamicImage::ImageLuma8(image)
+        .write_to(&mut png, ImageFormat::Png)
+        .map_err(|error| format!("无法编码二维码图片：{error}"))?;
+    let data_url = format!(
+        "data:image/png;base64,{}",
+        BASE64_STANDARD.encode(png.into_inner())
+    );
+    validate_script_result_image_data_url(&data_url)?;
+    Ok(ScriptOutput::Image {
+        data_url,
+        copy_text: value.to_string(),
+    })
+}
+
+fn generate_utf8_qr_code(value: &str) -> Result<QrCode, String> {
+    // `QrCode::new` treats input as opaque bytes and emits no character-set
+    // declaration. Prefix byte mode with ECI 26 so standards-compliant readers
+    // decode Chinese, emoji, and other non-ASCII content as UTF-8.
+    for version in 1..=40 {
+        let Ok(bits) = utf8_qr_bits(value, Version::Normal(version)) else {
+            continue;
+        };
+        if let Ok(code) = QrCode::with_bits(bits, EcLevel::M) {
+            return Ok(code);
+        }
+    }
+    Err("无法生成二维码：内容超过二维码容量".into())
+}
+
+fn utf8_qr_bits(value: &str, version: Version) -> QrResult<Bits> {
+    let mut bits = Bits::new(version);
+    bits.push_eci_designator(UTF8_ECI_DESIGNATOR)?;
+    bits.push_byte_data(value.as_bytes())?;
+    bits.push_terminator(EcLevel::M)?;
+    Ok(bits)
 }
 
 #[cfg(target_os = "windows")]
@@ -626,8 +840,11 @@ fn bundled_template_path(path: &Path) -> Option<PathBuf> {
         return None;
     }
     let name = path.file_name()?.to_str()?;
-    matches!(name, "timestamp.py" | "open_path.py" | "script_template.py")
-        .then(|| Path::new("examples").join(name))
+    matches!(
+        name,
+        "timestamp.py" | "qr.py" | "open_path.py" | "script_template.py"
+    )
+    .then(|| Path::new("examples").join(name))
 }
 
 #[cfg(target_os = "windows")]
@@ -709,8 +926,9 @@ mod tests {
     use super::hide_console;
     use super::{
         bundled_template_path, collect_output, configure_plain_text_encoding,
-        normalize_plain_text_output, result_shell_command, spawn_capped_reader,
-        validate_result_shell_command, MAX_OUTPUT_BYTES, MAX_RESULT_SHELL_COMMAND_BYTES,
+        generate_utf8_qr_code, normalize_plain_text_output, parse_script_result_output,
+        result_shell_command, spawn_capped_reader, utf8_qr_bits, validate_result_shell_command,
+        ScriptOutput, MAX_OUTPUT_BYTES, MAX_QR_CONTENT_BYTES, MAX_RESULT_SHELL_COMMAND_BYTES,
     };
 
     #[test]
@@ -718,6 +936,10 @@ mod tests {
         assert_eq!(
             bundled_template_path(std::path::Path::new("scripts/timestamp.py")),
             Some(std::path::PathBuf::from("examples/timestamp.py"))
+        );
+        assert_eq!(
+            bundled_template_path(std::path::Path::new("scripts/qr.py")),
+            Some(std::path::PathBuf::from("examples/qr.py"))
         );
         assert!(bundled_template_path(std::path::Path::new("scripts/custom.py")).is_none());
         assert!(bundled_template_path(std::path::Path::new("other/timestamp.py")).is_none());
@@ -731,6 +953,122 @@ mod tests {
             ),
             "UTC+8 当前时间：2026-09-09\nUnix时间戳：1788958239819"
         );
+    }
+
+    #[test]
+    fn prefixed_script_results_exclude_unmarked_stdout_logs() {
+        assert_eq!(
+            parse_script_result_output(
+                "starting conversion\nSUO_RESULT:text: 第一行\nloaded cache\nSUO_RESULT:第二行\ndone"
+            )
+            .unwrap(),
+            ScriptOutput::Text("第一行\n第二行".into())
+        );
+    }
+
+    #[test]
+    fn scripts_without_a_result_prefix_keep_legacy_stdout_behavior() {
+        let output = "legacy first line\nlegacy second line";
+        assert_eq!(
+            parse_script_result_output(output).unwrap(),
+            ScriptOutput::Text("legacy first line\nlegacy second line".into())
+        );
+        assert_eq!(
+            normalize_plain_text_output(b"error\nSUO_RESULT: remains an error detail"),
+            "error\nSUO_RESULT: remains an error detail"
+        );
+    }
+
+    #[test]
+    fn typed_qr_results_become_valid_local_png_images() {
+        let output = parse_script_result_output(
+            "debug log\nSUO_RESULT:qrcode: https://www.google.com\nfinished",
+        )
+        .expect("render QR result");
+        let ScriptOutput::Image {
+            data_url,
+            copy_text,
+        } = output
+        else {
+            panic!("expected image output");
+        };
+        assert!(data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(copy_text, "https://www.google.com");
+
+        let explicit_image = parse_script_result_output(&format!("SUO_RESULT:image: {data_url}"))
+            .expect("accept validated image data URL");
+        assert!(matches!(
+            explicit_image,
+            ScriptOutput::Image { data_url: ref parsed, .. } if parsed == &data_url
+        ));
+
+        let raw_png = data_url
+            .strip_prefix("data:image/png;base64,")
+            .expect("generated PNG prefix");
+        assert!(matches!(
+            parse_script_result_output(&format!("SUO_RESULT:image: {raw_png}"))
+                .expect("accept raw PNG base64"),
+            ScriptOutput::Image { data_url: ref parsed, .. } if parsed == &data_url
+        ));
+    }
+
+    #[test]
+    fn qr_results_declare_utf8_and_bound_preview_density() {
+        let unicode = "你好，Suo 🚀";
+        let code = generate_utf8_qr_code(unicode).expect("encode Unicode QR result");
+        assert!(code.version().width() <= 85);
+
+        // Normal QR mode starts with ECI mode 0111, designator 26 (00011010),
+        // then byte mode 0100. These first 16 bits prove the UTF-8 declaration
+        // is present before the Unicode payload.
+        let bits = utf8_qr_bits(unicode, qrcode::Version::Normal(2)).unwrap();
+        assert_eq!(&bits.into_bytes()[..2], &[0x71, 0xA4]);
+
+        let maximum = "x".repeat(MAX_QR_CONTENT_BYTES);
+        let maximum_code = generate_utf8_qr_code(&maximum).unwrap();
+        assert!(maximum_code.version().width() <= 85);
+        let preview = maximum_code
+            .render::<image::Luma<u8>>()
+            .max_dimensions(384, 384)
+            .build();
+        let modules_with_quiet_zone = maximum_code.width() as u32 + 8;
+        assert!(preview.width() / modules_with_quiet_zone >= 4);
+        assert!(parse_script_result_output(&format!(
+            "SUO_RESULT:qrcode: {}",
+            "x".repeat(MAX_QR_CONTENT_BYTES + 1)
+        ))
+        .unwrap_err()
+        .contains("500"));
+    }
+
+    #[test]
+    fn typed_results_reject_mixed_or_invalid_image_content() {
+        assert!(parse_script_result_output(
+            "SUO_RESULT:text: caption\nSUO_RESULT:image: not-base64"
+        )
+        .unwrap_err()
+        .contains("不能同时"));
+        assert!(parse_script_result_output("SUO_RESULT:image: not-base64")
+            .unwrap_err()
+            .contains("无效"));
+        assert!(
+            parse_script_result_output("SUO_RESULT:qrcode: one\nSUO_RESULT:qrcode: two")
+                .unwrap_err()
+                .contains("只能返回一张")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_paths_normalize_mixed_separators_without_losing_unicode() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let encoded =
+            super::windows_shell_path(std::path::Path::new(r"C:\Users\测试/scripts/timestamp.py"));
+        assert_eq!(encoded.last(), Some(&0));
+        assert!(!encoded[..encoded.len() - 1].contains(&u16::from(b'/')));
+        let decoded = std::ffi::OsString::from_wide(&encoded[..encoded.len() - 1]);
+        assert_eq!(decoded, r"C:\Users\测试\scripts\timestamp.py");
     }
 
     #[test]
@@ -790,30 +1128,6 @@ mod tests {
                 "-Command",
                 r"Start-Process C:\\",
             ]
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn finder_reveal_command_selects_the_script() {
-        let command = super::reveal_command(std::path::Path::new("/tmp/example script.py"))
-            .expect("macOS reveal command should be available");
-        assert_eq!(command.get_program(), "/usr/bin/open");
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["-R", "/tmp/example script.py"]
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn explorer_reveal_command_selects_the_script() {
-        let command = super::reveal_command(std::path::Path::new(r"C:\scripts\example script.py"))
-            .expect("Windows reveal command should be available");
-        assert_eq!(command.get_program(), "explorer.exe");
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            [r"/select,C:\scripts\example script.py"]
         );
     }
 

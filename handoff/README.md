@@ -2,7 +2,7 @@
 
 本目录只保存当前跨平台交接状态和仍需执行的验证。长期规则见根目录 [`AGENTS.md`](../AGENTS.md)，已经完成的逐版本执行记录已移入 [`archive/`](archive/README.md)，不再作为新一轮操作清单。
 
-最后更新：2026-09-09。`v0.1.1` 仍是当前最新 Pre-release；`dev` 已形成配置协议 v16 的 `v0.1.2` Windows 候选，修复脚本中文输出解码、支持最多两行结果展示，并把可编辑脚本迁移到不会被安装包覆盖的用户目录，尚未创建新 tag 或 Release。
+最后更新：2026-09-11。`v0.1.1` 仍是当前最新 Pre-release；`dev` 已形成配置协议 v17 的 `v0.1.2` Windows 候选，新增类型化图片/二维码结果、默认 `qr` 示例、完整图片缩略图、可靠脚本定位和删除二次确认。Windows x64 资产已完成构建与校验，尚待发布前复审、tag 和 Release；macOS Apple Silicon 在发布后从同一不可变 tag 接手构建与真实验证。
 
 ## 当前状态
 
@@ -11,7 +11,8 @@
 | macOS Apple Silicon `v0.1.0` | **发布候选已完成** | 以 Pre-release 发布 arm64 ZIP；构建证据、限制和剩余人工项见 [`MACOS.md`](MACOS.md)。 |
 | Windows x64 `v0.1.0` | **发布候选已完成** | 已从 `v0.1.0` tag 完成 x64 构建、真实回归、安装/卸载/重装与真实注销登录验收；NSIS 安装包及 SHA-256 文件已追加到同一 Pre-release。 |
 | Windows x64 `v0.1.1` | **Windows 资产已发布** | 已补 ChatGPT/Xbox/Microsoft Store 等打包应用发现、启动和图标，以及保持原应用 taskbar 选中外观；NSIS 安装包与校验文件已上传，macOS 仍需从 `v0.1.1` tag 完成跨平台构建回归并追加 arm64 资产。 |
-| Windows x64 `v0.1.2` `dev` | **候选已构建** | 已修复 Python/系统代码页脚本中文输出并保留内部换行；配置 v16 将自带模板初始化到用户脚本目录，升级不覆盖修改。NSIS 已重新生成，旧脚本已迁入用户目录；仍需重装后复验内容保留，macOS 需补跨平台构建。 |
+| Windows x64 `v0.1.2` `dev` | **候选待发布** | 类型化脚本结果、默认本地二维码、完整图片缩略图、Windows 混合路径分隔符和删除二次确认已完成自动化构建；关闭独立复审后再创建 tag、Pre-release 并上传 NSIS 与 SHA-256。 |
+| macOS Apple Silicon `v0.1.2` | **等待 Windows 发布** | tag 与 Windows 资产发布后，从同一不可变 tag 执行 [`MACOS.md`](MACOS.md) 的 v16/v17 迁移、三类脚本结果、Finder 定位、删除确认、窗口/Dock 与 arm64 构建验收；通过后向同一 Release 追加 ZIP。 |
 | 跨平台约束 | **持续有效** | 修改平台代码前阅读 [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)，不得为一端编译而削弱另一端行为或安全边界。 |
 
 ## 当前交接文件

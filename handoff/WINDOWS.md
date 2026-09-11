@@ -1,16 +1,25 @@
 # Windows release validation handoff
 
-状态：**Windows x64 `v0.1.1` 已发布；`dev` 正在验证 `v0.1.2`。** `v0.1.2` 修复脚本管道中文输出、支持受控的两行结果展示，并以配置 v16 把可编辑模板迁移到用户脚本目录；不移动或覆盖既有 tag/Release。macOS 后续需从相同提交补跨平台构建回归。
+状态：**Windows x64 `v0.1.2` 候选已完成安装包与 SHA-256 构建，正在关闭独立复审，尚未创建 tag 或 GitHub Release；最新安装包的真实界面复测仍有待办。** `v0.1.2` 修复脚本管道中文输出、支持受控的多行/类型化结果，以配置 v16 把可编辑模板迁移到用户脚本目录，并以 v17 增加默认本地二维码命令。发布后 macOS 需从同一不可变 tag 补跨平台构建回归。
 
-## 0.1 `v0.1.2` 脚本输出修复（2026-09-09）
+## 0.1 `v0.1.2` 脚本输出与类型化结果（2026-09-09 至 2026-09-11）
 
 - [x] Python 子进程显式使用 UTF-8 stdout/stderr；普通文本严格 UTF-8 解码失败后，Windows 使用当前 ANSI 系统代码页回退，避免 CP936 中文被替换为 `�`。
 - [x] 纯文本仍去除首尾空白，但中间换行会原样进入结果标题与复制动作；启动器使用 `pre-line` 并限制为最多两行，普通单行结果保持不变。
-- [x] 新增 UTF-8 中文、多行、Python 输出环境、CP936 回退、`SearchResult.title`/`CopyText` 换行、模板不覆盖、v15 路径迁移和已知模板回退测试；115 项常规 Rust 测试、前端生产构建和 `cargo check --all-targets` 通过，独立复审无 Critical/Important。
-- [x] 已重新生成包含配置 v16 与用户脚本初始化的 x64 NSIS 安装包 `Suo_0.1.2_x64-setup.exe`（3,988,779 bytes）；Product/File Version 均为 `0.1.2`，PE 为 `8664` / x64，SHA-256 为 `36DA5D9BA9E7524A8CD35B0E11E920B1D5B0B6FD10150D69401355AA14F4F450`，当前仍未签名。
+- [x] v16 阶段新增 UTF-8 中文、多行、Python 输出环境、CP936 回退、`SearchResult.title`/`CopyText` 换行、模板不覆盖、v15 路径迁移、已知模板回退和 `SUO_RESULT:` 兼容过滤测试；当时的 116 项常规 Rust 测试、前端生产构建和 `cargo check --all-targets` 通过，最终结论以后续 v17 候选门禁与复审为准。
+- [x] 最终配置 v17 候选已通过前端生产构建、`cargo check --locked --all-targets` 与 125 项 Rust 测试（123 通过、2 项依赖本机应用目录而忽略）。
+- [x] 已重新生成包含用户脚本初始化、类型化结果、UTF-8 ECI 二维码、完整脚本协议模板、完整图片缩略图、Windows 文件定位修复、删除二次确认及严格时间戳参数校验的 x64 NSIS 安装包 `Suo_0.1.2_x64-setup.exe`（4,023,263 bytes）；Product/File Version 均为 `0.1.2`，PE 为 `8664` / x64，SHA-256 为 `88C4E797300B828821701483E8B83E72E99755895E910B51AA3E96FFEF0D0FB6`，当前仍未签名。对应 release 可执行文件 `suo.exe` 为 15,486,976 bytes，SHA-256 `291A729A2F5838E3619AE0413FA26DA2309A433E19AAF07E5D58AD5D911D402D`。
+- [ ] 独立复审关闭后创建不可变 `v0.1.2` tag 与同名 Pre-release，并上传 `Suo_0.1.2_x64-setup.exe` 与对应 `.sha256`；不得用不同源码覆盖同名资产。
 - [ ] 从新 `v0.1.2` NSIS 安装包重装后，以用户当前两行中文 `timestamp.py` 完成真实启动器肉眼验收；先确认旧脚本已经迁入 `%APPDATA%\io.github.dqgod.suo\scripts`，重装后内容与哈希必须保持。
 - [x] 本机旧安装目录脚本已在重装前复制到 `%APPDATA%\io.github.dqgod.suo\scripts\timestamp.py`，源/目标 SHA-256 均为 `F75C2C0604CFFE02FA0E268EC192CA70EAB4165BC07F448B05BD4918E3927EBE`；复制使用目标不存在门禁，未覆盖任何既有用户脚本。
-- [x] 最终 release 已真实启动完成首次初始化：缺失的 `open_path.py`、`script_template.py`、`README.md` 均创建成功，既有 `timestamp.py` 启动前后 SHA-256 保持 `F75C2C0604CFFE02FA0E268EC192CA70EAB4165BC07F448B05BD4918E3927EBE`；测试后已恢复原安装版后台进程。
+- [x] 当时的 v16 release 候选已真实启动并完成首次初始化：缺失的 `open_path.py`、`script_template.py`、`README.md` 均创建成功，既有 `timestamp.py` 启动前后 SHA-256 保持 `F75C2C0604CFFE02FA0E268EC192CA70EAB4165BC07F448B05BD4918E3927EBE`；测试后已恢复原安装版后台进程，最终结论以后续 v17 候选为准。
+- [x] 当前用户目录的 `script_template.py` 与增强版 `timestamp.py` 已在旧哈希门禁及备份后显式升级为 `emit_result()`；新版 no-bundle exe 已替换到安装目录并成功后台启动。原始 timestamp 备份仍保留在 `D:\ai_repo\suo-user-scripts\timestamp-2026-09-09.py`。
+- [ ] Windows“在文件夹中显示”已从不稳定的 `explorer.exe /select` 参数切换为初始化 COM 后调用 `SHOpenFolderAndSelectItems`；实现、内存释放和错误分支已复审并通过编译，待用户从设置页点击真实 `ts` 项确认 Explorer 打开用户脚本目录且选中 `timestamp.py`。
+- [x] `SUO_RESULT:text:` / `image:` / `qrcode:` 与旧 `SUO_RESULT:`、无前缀 stdout 的兼容回归通过；图片经 Rust 解码限制和 WebView data URL 白名单双重校验，图片/二维码不会进入结果 Shell 执行路径。
+- [x] 二维码最多接收 500 个 UTF-8 字节，在 Byte mode 前写入 ECI 26；后端原图的 500-byte 边界保持 Version 17 或以下、372 px 且含静区仍为 4 px/模块。启动器中的所有脚本图片采用最大 240 px、随可用窗口高度继续缩小的完整缩略图，避免覆盖说明和底栏。默认 `qr.py` 的 500/501-byte 和中文 emoji 示例通过。
+- [x] 脚本命令与网络搜索的删除按钮只打开应用内二次确认框；必须再次点击红色“确认删除”才变更草稿，取消、点击遮罩或 Esc 均不删除。手动保存模式仍须右上角保存，自动保存模式在确认后保存。
+- [x] `timestamp.py` 参数矩阵通过：空参数、10/13 位时间戳、日期时间、`+08:30` / `-0530` 均输出带类型前缀的正确结果；非法时区、短时间戳以及 `now` / `help` 后的多余参数均以退出码 2 返回可读 stderr，不出现 traceback。
+- [ ] 本机当前 `config.json.bak` 仍保留误删前的 `timestamp-example`，但不得用全局迁移自动复活用户明确删除的命令；安装候选后由用户确认是否从备份只恢复 `ts` 条目，再验证定位。当前运行中的旧安装版尚未被本轮构建替换。
 
 ## 0. `v0.1.0` 之后的 `dev` 验证（2026-08-30）
 

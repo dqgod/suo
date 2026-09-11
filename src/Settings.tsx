@@ -46,6 +46,12 @@ type EditorState =
       value: TranslationConfig;
     };
 
+type PendingRemoval = {
+  kind: "script" | "web";
+  id: string;
+  name: string;
+};
+
 const sectionCopy: Record<Section, { title: string; description: string }> = {
   general: { title: zhCN.general, description: t.generalDescription },
   search: { title: zhCN.searchAndIndex, description: t.searchDescription },
@@ -280,6 +286,7 @@ function Settings() {
   const [autoSaveNeedsRetry, setAutoSaveNeedsRetry] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(false);
   const [changingConfigLocation, setChangingConfigLocation] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
   const hotkeyButtonRef = useRef<HTMLButtonElement | null>(null);
   const draftRevisionRef = useRef(0);
   const draftRef = useRef<AppConfig | null>(null);
@@ -552,6 +559,11 @@ function Settings() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (saving) return;
+      if (pendingRemoval) {
+        event.preventDefault();
+        setPendingRemoval(null);
+        return;
+      }
       if (recordingHotkey) {
         event.preventDefault();
         void stopHotkeyRecording();
@@ -566,7 +578,7 @@ function Settings() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, editor, recordingHotkey, saving, stopHotkeyRecording]);
+  }, [close, editor, pendingRemoval, recordingHotkey, saving, stopHotkeyRecording]);
 
   const save = async () => {
     if (!draft) return;
@@ -829,21 +841,27 @@ function Settings() {
   };
 
   const removeScript = (command: ScriptCommandConfig) => {
-    if (!draft || !window.confirm((draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant).replace("{name}", command.name))) return;
-    setDraft({
-      ...draft,
-      scriptCommands: draft.scriptCommands.filter((item) => item.id !== command.id),
-    });
-    setEditor(null);
+    setPendingRemoval({ kind: "script", id: command.id, name: command.name || t.unnamed });
   };
 
   const removeWebSearch = (search: WebSearchConfig) => {
-    if (!draft || !window.confirm((draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant).replace("{name}", search.name))) return;
-    setDraft({
-      ...draft,
-      webSearches: draft.webSearches.filter((item) => item.id !== search.id),
-    });
+    setPendingRemoval({ kind: "web", id: search.id, name: search.name || t.unnamed });
+  };
+
+  const confirmRemoval = () => {
+    if (!draft || !pendingRemoval) return;
+    const next = pendingRemoval.kind === "script"
+      ? {
+          ...draft,
+          scriptCommands: draft.scriptCommands.filter((item) => item.id !== pendingRemoval.id),
+        }
+      : {
+          ...draft,
+          webSearches: draft.webSearches.filter((item) => item.id !== pendingRemoval.id),
+        };
+    setDraft(next);
     setEditor(null);
+    setPendingRemoval(null);
   };
 
   const changeSaveMode = async (saveSettingsManually: boolean) => {
@@ -1376,6 +1394,36 @@ function Settings() {
           {error && <div className="settings-error">{error}</div>}
         </section>
       </div>
+      {pendingRemoval && draft && (
+        <div
+          className="confirmation-backdrop"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.currentTarget === event.target) setPendingRemoval(null);
+          }}
+        >
+          <section
+            className="confirmation-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="remove-confirmation-title"
+            aria-describedby="remove-confirmation-description"
+          >
+            <div className="confirmation-icon" aria-hidden="true">!</div>
+            <div>
+              <h2 id="remove-confirmation-title">{t.confirmRemoveTitle}</h2>
+              <p id="remove-confirmation-description">
+                {(draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant)
+                  .replace("{name}", pendingRemoval.name)}
+              </p>
+            </div>
+            <div className="confirmation-actions">
+              <button className="secondary-button" type="button" autoFocus onClick={() => setPendingRemoval(null)}>{t.cancel}</button>
+              <button className="danger-button confirmation-delete" type="button" onClick={confirmRemoval}>{t.confirmDelete}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

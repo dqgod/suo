@@ -54,6 +54,7 @@
     "targets": "all",
     "resources": {
       "../examples/timestamp.py": "examples/timestamp.py",
+      "../examples/qr.py": "examples/qr.py",
       "../examples/open_path.py": "examples/open_path.py",
       "../examples/script_template.py": "examples/script_template.py",
       "../examples/README.md": "examples/README.md"

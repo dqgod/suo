@@ -44,6 +44,9 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v14：每条脚本新增 `resultAction`；v13 及更早必须迁移为 `copy`。`executeShell` 只能在结果二次激活后执行，macOS 走 Bash、Windows 走 PowerShell；原始命令不得作为 WebView action 参数传输。
 - v15：`launcher` 新增 `startAtLogin`；v14 及更早必须迁移为 `false`。Windows 使用当前用户启动项，macOS 使用 LaunchAgent；登录启动只建立后台常驻能力，不主动显示搜索窗口。
 - v16：只把内置 `timestamp-example` 的旧默认路径 `examples/timestamp.py` 迁移为 `scripts/timestamp.py`，其他自定义路径必须保持。`examples/` 是 bundle 中的只读初始化模板；缺失模板复制到平台默认应用配置目录的 `scripts/`，必须使用“不存在才创建”语义，升级与重装不得覆盖用户文件。该目录不跟随可迁移的 `config.json`。
+- v17：在 `qr` 关键字/别名和 `qr-example` ID 都未被占用、脚本数量未达上限时添加默认二维码命令；新增 `qr.py` 仍使用“不存在才创建”，不得覆盖用户同名文件。
+
+脚本单结果协议跨平台固定为区分大小写的行首：旧 `SUO_RESULT:` 与 `SUO_RESULT:text:` 返回文本，`SUO_RESULT:image:` 返回一张受限 PNG/JPEG/WebP data URL（raw Base64 按 PNG），`SUO_RESULT:qrcode:` 由共享 Rust 核心本地生成 QR PNG。二维码限 500 个 UTF-8 字节，必须在 byte mode 前声明 UTF-8 ECI 26，生成的 PNG 保持至少 4 px/模块；启动器把所有脚本图片等比例缩为最大 240 px、随窗口可用高度继续缩小的完整缩略图。出现标记时忽略普通 stdout，没有标记时兼容完整 stdout；仅用于成功脚本 stdout，错误 stderr 和二次结果 Shell 输出保持原样。不得混合文本和图片或返回多张图片；两端必须共享 512 KB、1024 px、有界解码和前端 data URL 白名单。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 

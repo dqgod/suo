@@ -48,6 +48,8 @@ pub struct SearchResult {
     pub kind: ResultKind,
     /// Optional validated local PNG/JPEG/WebP data URL for configured commands.
     pub icon_data_url: String,
+    /// Optional validated PNG/JPEG/WebP data URL returned as the script's main content.
+    pub result_image_data_url: String,
     pub badge: String,
     pub score: i32,
     pub action: ResultAction,
@@ -177,6 +179,7 @@ mod tests {
             subtitle: "https://example.com".into(),
             kind: ResultKind::Web,
             icon_data_url: "data:image/png;base64,AAAA".into(),
+            result_image_data_url: String::new(),
             badge: "网络".into(),
             score: 2_000,
             action: ResultAction::None,
@@ -185,6 +188,10 @@ mod tests {
         assert_eq!(
             result["iconDataUrl"],
             serde_json::Value::String("data:image/png;base64,AAAA".into())
+        );
+        assert_eq!(
+            result["resultImageDataUrl"],
+            serde_json::Value::String(String::new())
         );
     }
 }
