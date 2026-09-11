@@ -5,6 +5,7 @@
 ## 当前文档
 
 - [PRODUCT_REQUIREMENTS.md](./PRODUCT_REQUIREMENTS.md)：需求方案、技术架构、数据结构与验收标准。
+- [ROADMAP.md](./ROADMAP.md)：`dev` 当前状态、当前发布与平台验证状态，以及按优先级维护的 TODO / 迭代路线图。
 - [ui-appearance-management-proposal.html](./ui-appearance-management-proposal.html)：第四版外观设计交互稿。皮肤作用域、运行中皮肤、正在编辑的皮肤和设置保存策略分别表达；顶部下拉框是唯一的运行皮肤切换入口，皮肤卡片只选择编辑对象。
 - [ui-appearance-management-launcher.png](./ui-appearance-management-launcher.png)：第四版搜索界面皮肤编辑状态，展示“统一保存设置”开启、运行中皮肤与编辑对象不同，以及应用/文件夹/文件图标验收样例。
 - [ui-appearance-management-settings.png](./ui-appearance-management-settings.png)：第四版设置界面皮肤编辑状态，展示“统一保存设置”关闭后的即时写入模式。
