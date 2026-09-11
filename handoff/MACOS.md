@@ -86,7 +86,7 @@ file src-tauri/target/release/bundle/macos/Suo.app/Contents/MacOS/suo
 验证全部通过后，从 tag 构建出的真实 `.app` 创建 `Suo_0.1.3_macos_arm64.zip`：
 
 ```bash
-ditto --sequesterRsrc --keepParent \
+ditto -c -k --sequesterRsrc --keepParent \
   src-tauri/target/release/bundle/macos/Suo.app \
   Suo_0.1.3_macos_arm64.zip
 shasum -a 256 Suo_0.1.3_macos_arm64.zip
