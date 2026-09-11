@@ -647,8 +647,10 @@ fn load_platform_icon(_path: &Path) -> Option<NativeAppIcon> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
+    use std::path::Path;
     use std::{
-        path::{Path, PathBuf},
+        path::PathBuf,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Barrier,

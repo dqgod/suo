@@ -387,6 +387,7 @@ fn search_launcher_blocking(
             subtitle: i18n::SETTINGS_RESULT_SUBTITLE.into(),
             kind: ResultKind::Settings,
             icon_data_url: String::new(),
+            result_image_data_url: String::new(),
             badge: i18n::SETTINGS_BADGE.into(),
             score: 2_100,
             action: ResultAction::OpenSettings,
@@ -400,6 +401,7 @@ fn search_launcher_blocking(
             subtitle: query.clone(),
             kind: ResultKind::Calculator,
             icon_data_url: String::new(),
+            result_image_data_url: String::new(),
             badge: "计算".into(),
             score: 2_000,
             action: ResultAction::CopyText { text: value },
@@ -429,6 +431,7 @@ fn search_launcher_blocking(
                     subtitle: format!("{provider_name} · → {target} · {arguments}"),
                     kind: ResultKind::Translation,
                     icon_data_url: String::new(),
+                    result_image_data_url: String::new(),
                     badge: "翻译".into(),
                     score: 2_050,
                     action: ResultAction::CopyText { text: output },
@@ -443,6 +446,7 @@ fn search_launcher_blocking(
                     },
                     kind: ResultKind::Error,
                     icon_data_url: String::new(),
+                    result_image_data_url: String::new(),
                     badge: "翻译".into(),
                     score: 2_050,
                     action: if error.contains("尚未配置") {
@@ -497,6 +501,7 @@ fn search_launcher_blocking(
                 subtitle: script_action_subtitle(command, arguments),
                 kind: ResultKind::Script,
                 icon_data_url: command.icon_data_url.clone(),
+                result_image_data_url: String::new(),
                 badge: "按 Enter".into(),
                 score: 2_000,
                 action: ResultAction::RunScript {
@@ -1081,6 +1086,7 @@ where
                 subtitle,
                 kind: result_kind,
                 icon_data_url: String::new(),
+                result_image_data_url: String::new(),
                 badge: result_badge.into(),
                 score,
                 action,
@@ -1318,6 +1324,7 @@ fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchRe
             subtitle: url.clone(),
             kind: ResultKind::Web,
             icon_data_url: search.icon_data_url.clone(),
+            result_image_data_url: String::new(),
             badge: "网络".into(),
             score: 2_000,
             action: ResultAction::OpenUrl { url },
@@ -1336,53 +1343,81 @@ fn script_output_result(
     action_epoch: u64,
     command: &ScriptCommandConfig,
     arguments: &str,
-    output: String,
+    output: scripts::ScriptOutput,
 ) -> Result<SearchResult, String> {
-    let (action, badge, action_hint) = match command.result_action {
-        ScriptResultAction::Copy => (
-            ResultAction::CopyText {
-                text: output.clone(),
-            },
-            "复制",
-            "按 Enter 复制返回文本",
-        ),
-        ScriptResultAction::ExecuteShell => {
-            let shell_command = scripts::validate_result_shell_command(&output)?;
-            let action_id = state.register_script_output_action(
-                action_epoch,
-                command.id.clone(),
-                shell_command,
-            )?;
-            (
-                ResultAction::RunScriptOutput { action_id },
-                "执行",
-                if cfg!(target_os = "windows") {
-                    "按 Enter 通过 PowerShell 执行"
-                } else {
-                    "按 Enter 通过 Bash 执行"
-                },
-            )
-        }
-    };
     let source = if arguments.is_empty() {
         command.script_path.clone()
     } else {
         format!("{} {arguments}", command.script_path)
     };
-    Ok(SearchResult {
-        id: format!("script:{}:{arguments}:output", command.id),
-        title: if output.is_empty() {
-            "脚本执行完成（无输出）".into()
-        } else {
-            output.clone()
-        },
-        subtitle: format!("{source} · {action_hint}"),
-        kind: ResultKind::Script,
-        icon_data_url: command.icon_data_url.clone(),
-        badge: badge.into(),
-        score: 2_000,
-        action,
-    })
+
+    match output {
+        scripts::ScriptOutput::Text(output) => {
+            let (action, badge, action_hint) = match command.result_action {
+                ScriptResultAction::Copy => (
+                    ResultAction::CopyText {
+                        text: output.clone(),
+                    },
+                    "复制",
+                    "按 Enter 复制返回文本",
+                ),
+                ScriptResultAction::ExecuteShell => {
+                    let shell_command = scripts::validate_result_shell_command(&output)?;
+                    let action_id = state.register_script_output_action(
+                        action_epoch,
+                        command.id.clone(),
+                        shell_command,
+                    )?;
+                    (
+                        ResultAction::RunScriptOutput { action_id },
+                        "执行",
+                        if cfg!(target_os = "windows") {
+                            "按 Enter 通过 PowerShell 执行"
+                        } else {
+                            "按 Enter 通过 Bash 执行"
+                        },
+                    )
+                }
+            };
+            Ok(SearchResult {
+                id: format!("script:{}:{arguments}:output", command.id),
+                title: if output.is_empty() {
+                    "脚本执行完成（无输出）".into()
+                } else {
+                    output
+                },
+                subtitle: format!("{source} · {action_hint}"),
+                kind: ResultKind::Script,
+                icon_data_url: command.icon_data_url.clone(),
+                result_image_data_url: String::new(),
+                badge: badge.into(),
+                score: 2_000,
+                action,
+            })
+        }
+        scripts::ScriptOutput::Image {
+            data_url,
+            copy_text,
+        } => {
+            if command.result_action == ScriptResultAction::ExecuteShell {
+                return Err(
+                    "图片或二维码结果不能作为 Shell 命令执行，请将返回值动作改为“复制返回文本”"
+                        .into(),
+                );
+            }
+            Ok(SearchResult {
+                id: format!("script:{}:{arguments}:image-output", command.id),
+                title: format!("{} · 图片结果", command.name),
+                subtitle: format!("{source} · 按 Enter 复制原始内容"),
+                kind: ResultKind::Script,
+                icon_data_url: command.icon_data_url.clone(),
+                result_image_data_url: data_url,
+                badge: "复制".into(),
+                score: 2_000,
+                action: ResultAction::CopyText { text: copy_text },
+            })
+        }
+    }
 }
 
 fn script_action_subtitle(command: &ScriptCommandConfig, arguments: &str) -> String {
@@ -1409,6 +1444,7 @@ fn error_result_with_icon(
         subtitle: subtitle.into(),
         kind: ResultKind::Error,
         icon_data_url: icon_data_url.into(),
+        result_image_data_url: String::new(),
         badge: "错误".into(),
         score: 2_000,
         action: ResultAction::None,
@@ -1432,6 +1468,7 @@ fn hint_result_with_icon(title: &str, subtitle: &str, icon_data_url: &str) -> Se
         subtitle: subtitle.into(),
         kind: ResultKind::Hint,
         icon_data_url: icon_data_url.into(),
+        result_image_data_url: String::new(),
         badge: "提示".into(),
         score: 1,
         action: ResultAction::None,
@@ -1446,6 +1483,7 @@ mod tests {
         catalog::CatalogEntry,
         config::{AppConfig, ScriptResultAction, WebSearchConfig},
         models::{ResultAction, ResultKind},
+        scripts::ScriptOutput,
     };
 
     use super::{
@@ -1855,16 +1893,31 @@ mod tests {
         let epoch = state.begin_search(1);
         let mut command = AppConfig::default().script_commands.remove(0);
 
-        let copied = script_output_result(&state, epoch, &command, "", "value".into()).unwrap();
+        let multiline = "UTC+8 当前时间：2026-09-09\nUnix时间戳：1788958239819";
+        let copied = script_output_result(
+            &state,
+            epoch,
+            &command,
+            "",
+            ScriptOutput::Text(multiline.into()),
+        )
+        .unwrap();
         assert_eq!(copied.badge, "复制");
+        assert_eq!(copied.title, multiline);
         assert!(matches!(
             copied.action,
-            ResultAction::CopyText { ref text } if text == "value"
+            ResultAction::CopyText { ref text } if text == multiline
         ));
 
         command.result_action = ScriptResultAction::ExecuteShell;
-        let executable =
-            script_output_result(&state, epoch, &command, "~/", "open ~/".into()).unwrap();
+        let executable = script_output_result(
+            &state,
+            epoch,
+            &command,
+            "~/",
+            ScriptOutput::Text("open ~/".into()),
+        )
+        .unwrap();
         assert_eq!(executable.badge, "执行");
         let ResultAction::RunScriptOutput { action_id } = executable.action else {
             panic!("expected an opaque script output action");
@@ -1875,6 +1928,44 @@ mod tests {
         assert_eq!(pending.command_id, command.id);
         assert_eq!(pending.shell_command, "open ~/");
         assert!(state.begin_script_output_action(epoch, &action_id).is_err());
+    }
+
+    #[test]
+    fn image_script_outputs_reach_the_webview_and_cannot_execute_as_shell() {
+        let state = super::LauncherState::new();
+        let epoch = state.begin_search(1);
+        let mut command = AppConfig::default().script_commands.remove(0);
+        let data_url = "data:image/png;base64,validated-in-scripts".to_string();
+        let result = script_output_result(
+            &state,
+            epoch,
+            &command,
+            "www.google.com",
+            ScriptOutput::Image {
+                data_url: data_url.clone(),
+                copy_text: "www.google.com".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.result_image_data_url, data_url);
+        assert!(matches!(
+            result.action,
+            ResultAction::CopyText { ref text } if text == "www.google.com"
+        ));
+
+        command.result_action = ScriptResultAction::ExecuteShell;
+        assert!(script_output_result(
+            &state,
+            epoch,
+            &command,
+            "www.google.com",
+            ScriptOutput::Image {
+                data_url: "data:image/png;base64,validated-in-scripts".into(),
+                copy_text: "www.google.com".into(),
+            },
+        )
+        .unwrap_err()
+        .contains("不能作为 Shell"));
     }
 
     #[test]

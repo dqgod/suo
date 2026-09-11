@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 15;
+const CONFIG_VERSION: u32 = 17;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -35,6 +35,10 @@ const MAX_COMMAND_ICON_BYTES: usize = 256 * 1024;
 const MAX_COMMAND_ICON_DIMENSION: u32 = 512;
 const MAX_COMMAND_ICON_PIXELS: u64 = 512 * 512;
 const MAX_COMMAND_ICON_ALLOCATION_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SCRIPT_RESULT_IMAGE_BYTES: usize = 512 * 1024;
+const MAX_SCRIPT_RESULT_IMAGE_DIMENSION: u32 = 1_024;
+const MAX_SCRIPT_RESULT_IMAGE_PIXELS: u64 = 1_024 * 1_024;
+const MAX_SCRIPT_RESULT_IMAGE_ALLOCATION_BYTES: u64 = 16 * 1024 * 1024;
 const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
 const MIN_QUERY_DEBOUNCE_MS: u64 = 0;
 const MAX_QUERY_DEBOUNCE_MS: u64 = 60_000;
@@ -251,6 +255,25 @@ pub enum ScriptResultAction {
 
 const fn default_script_debounce_ms() -> u64 {
     50
+}
+
+fn default_qr_script_command() -> ScriptCommandConfig {
+    ScriptCommandConfig {
+        id: "qr-example".into(),
+        name: "二维码生成".into(),
+        keyword: "qr".into(),
+        description: "将输入的文字或网址生成二维码；例如 qr www.google.com。".into(),
+        icon_data_url: String::new(),
+        input_hint: "输入要生成二维码的文字或网址".into(),
+        aliases: Vec::new(),
+        enabled: true,
+        runtime: ScriptRuntime::Python,
+        script_path: "scripts/qr.py".into(),
+        result_action: ScriptResultAction::Copy,
+        immediate: true,
+        debounce_ms: 150,
+        timeout_ms: 3_000,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -716,22 +739,26 @@ impl Default for AppConfig {
                 default_target_language: "zh-Hans".into(),
                 chinese_target_language: "en".into(),
             },
-            script_commands: vec![ScriptCommandConfig {
-                id: "timestamp-example".into(),
-                name: "时间戳转换".into(),
-                keyword: "ts".into(),
-                description: "将毫秒时间戳转换为日期时间；第二个参数可传 +8 等时区偏移。".into(),
-                icon_data_url: String::new(),
-                input_hint: String::new(),
-                aliases: Vec::new(),
-                enabled: true,
-                runtime: ScriptRuntime::Python,
-                script_path: "examples/timestamp.py".into(),
-                result_action: ScriptResultAction::Copy,
-                immediate: true,
-                debounce_ms: default_script_debounce_ms(),
-                timeout_ms: 3_000,
-            }],
+            script_commands: vec![
+                ScriptCommandConfig {
+                    id: "timestamp-example".into(),
+                    name: "时间戳转换".into(),
+                    keyword: "ts".into(),
+                    description: "将毫秒时间戳转换为日期时间；第二个参数可传 +8 等时区偏移。"
+                        .into(),
+                    icon_data_url: String::new(),
+                    input_hint: String::new(),
+                    aliases: Vec::new(),
+                    enabled: true,
+                    runtime: ScriptRuntime::Python,
+                    script_path: "scripts/timestamp.py".into(),
+                    result_action: ScriptResultAction::Copy,
+                    immediate: true,
+                    debounce_ms: default_script_debounce_ms(),
+                    timeout_ms: 3_000,
+                },
+                default_qr_script_command(),
+            ],
             web_searches: vec![WebSearchConfig {
                 id: "google".into(),
                 name: "Google".into(),
@@ -1265,6 +1292,22 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         ));
     }
 
+    if config.version <= 15 {
+        for command in &mut config.script_commands {
+            if command.id == "timestamp-example"
+                && command.script_path.trim().replace('\\', "/") == "examples/timestamp.py"
+            {
+                command.script_path = "scripts/timestamp.py".into();
+            }
+        }
+    }
+    if config.version <= 16
+        && config.script_commands.len() < MAX_COMMANDS
+        && !config_uses_keyword_or_id(&config, "qr", "qr-example")
+    {
+        config.script_commands.push(default_qr_script_command());
+    }
+
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
         // v4 adds per-script debounce, v5 adds custom themes, v6 splits the
@@ -1277,16 +1320,36 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // and empty-argument hints, v13 lets the shared fy command select
         // Microsoft, Google, or Youdao as its translation provider, and v14
         // lets each script result either copy stdout or explicitly execute it
-        // through the platform shell after a second user activation, and v15
-        // adds cross-platform login startup, disabled by default for old files.
+        // through the platform shell after a second user activation, v15 adds
+        // cross-platform login startup, disabled by default for old files, and
+        // v16 moves the bundled timestamp example to a user-owned script copy,
+        // and v17 adds typed script results plus the dependency-free QR example.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 => {
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 => {
             config.version = CONFIG_VERSION
         }
-        15 => {}
+        17 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
+}
+
+fn config_uses_keyword_or_id(config: &AppConfig, keyword: &str, script_id: &str) -> bool {
+    let keyword_matches = |value: &str| value.trim().eq_ignore_ascii_case(keyword);
+    config.script_commands.iter().any(|command| {
+        command.id.trim().eq_ignore_ascii_case(script_id)
+            || keyword_matches(&command.keyword)
+            || command.aliases.iter().any(|alias| keyword_matches(alias))
+    }) || keyword_matches(&config.translation.keyword)
+        || config
+            .translation
+            .aliases
+            .iter()
+            .any(|alias| keyword_matches(alias))
+        || config.web_searches.iter().any(|search| {
+            keyword_matches(&search.keyword)
+                || search.aliases.iter().any(|alias| keyword_matches(alias))
+        })
 }
 
 fn validate_launcher(config: &LauncherConfig) -> Result<(), String> {
@@ -1936,6 +1999,21 @@ fn validate_command_icon_data_url(value: &str, owner: &str) -> Result<(), String
         MAX_COMMAND_ICON_DIMENSION,
         MAX_COMMAND_ICON_PIXELS,
         MAX_COMMAND_ICON_ALLOCATION_BYTES,
+    )
+}
+
+pub(crate) fn validate_script_result_image_data_url(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err("脚本返回的图片数据为空".into());
+    }
+    validate_image_data_url(
+        value,
+        "脚本返回图片",
+        MAX_SCRIPT_RESULT_IMAGE_BYTES,
+        "512 KB",
+        MAX_SCRIPT_RESULT_IMAGE_DIMENSION,
+        MAX_SCRIPT_RESULT_IMAGE_PIXELS,
+        MAX_SCRIPT_RESULT_IMAGE_ALLOCATION_BYTES,
     )
 }
 
@@ -3491,6 +3569,84 @@ mod tests {
     }
 
     #[test]
+    fn migrates_v15_timestamp_template_to_user_owned_script() {
+        let mut legacy = AppConfig::default();
+        legacy.version = 15;
+        legacy.script_commands[0].script_path = "examples\\timestamp.py".into();
+
+        let migrated = normalize_and_validate(legacy).expect("migrate v15 timestamp template");
+
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.script_commands[0].script_path,
+            "scripts/timestamp.py"
+        );
+
+        let mut custom = AppConfig::default();
+        custom.version = 15;
+        custom.script_commands[0].script_path = "/Users/example/custom-timestamp.py".into();
+        let migrated_custom =
+            normalize_and_validate(custom).expect("preserve custom timestamp path");
+        assert_eq!(
+            migrated_custom.script_commands[0].script_path,
+            "/Users/example/custom-timestamp.py"
+        );
+
+        let mut same_path_custom_command = AppConfig::default();
+        same_path_custom_command.version = 15;
+        same_path_custom_command.script_commands[0].id = "my-own-command".into();
+        same_path_custom_command.script_commands[0].script_path = "examples/timestamp.py".into();
+        let migrated_same_path_custom_command = normalize_and_validate(same_path_custom_command)
+            .expect("preserve matching path on a custom command");
+        assert_eq!(
+            migrated_same_path_custom_command.script_commands[0].script_path,
+            "examples/timestamp.py"
+        );
+
+        for custom_case_path in ["Examples/timestamp.py", "examples/TIMESTAMP.py"] {
+            let mut custom_case = AppConfig::default();
+            custom_case.version = 15;
+            custom_case.script_commands[0].script_path = custom_case_path.into();
+            let migrated_custom_case =
+                normalize_and_validate(custom_case).expect("preserve case-sensitive custom path");
+            assert_eq!(
+                migrated_custom_case.script_commands[0].script_path,
+                custom_case_path
+            );
+        }
+    }
+
+    #[test]
+    fn migrates_v16_with_qr_example_without_stealing_an_existing_keyword() {
+        let mut legacy = AppConfig::default();
+        legacy.version = 16;
+        legacy
+            .script_commands
+            .retain(|command| command.id != "qr-example");
+        let migrated = normalize_and_validate(legacy).expect("add v17 QR example");
+        let qr = migrated
+            .script_commands
+            .iter()
+            .find(|command| command.id == "qr-example")
+            .expect("QR example command");
+        assert_eq!(qr.keyword, "qr");
+        assert_eq!(qr.script_path, "scripts/qr.py");
+
+        let mut conflict = AppConfig::default();
+        conflict.version = 16;
+        conflict
+            .script_commands
+            .retain(|command| command.id != "qr-example");
+        conflict.web_searches[0].aliases.push("QR".into());
+        let migrated_conflict =
+            normalize_and_validate(conflict).expect("preserve existing QR keyword owner");
+        assert!(!migrated_conflict
+            .script_commands
+            .iter()
+            .any(|command| command.id == "qr-example"));
+    }
+
+    #[test]
     fn login_startup_preference_round_trips() {
         for enabled in [false, true] {
             let mut config = AppConfig::default();
@@ -3963,6 +4119,19 @@ mod tests {
         let mut hint_too_long = AppConfig::default();
         hint_too_long.web_searches[0].input_hint = "字".repeat(161);
         assert!(normalize_and_validate(hint_too_long).is_err());
+    }
+
+    #[test]
+    fn validates_bounded_script_result_images() {
+        let valid = wallpaper_data_url("image/png", &valid_png_bytes(73));
+        assert!(validate_script_result_image_data_url(&valid).is_ok());
+        assert!(validate_script_result_image_data_url("").is_err());
+        assert!(validate_script_result_image_data_url("https://example.com/result.png").is_err());
+        let oversized = wallpaper_data_url(
+            "image/png",
+            &valid_png_bytes(MAX_SCRIPT_RESULT_IMAGE_BYTES + 1),
+        );
+        assert!(validate_script_result_image_data_url(&oversized).is_err());
     }
 
     #[test]

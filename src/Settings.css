@@ -17,6 +17,7 @@
   --settings-shadow-opacity: 0.45;
   --settings-success: #65dca9;
   --settings-success-foreground: #ffffff;
+  --settings-danger: #e05f71;
   --settings-wallpaper-image: none;
   --settings-wallpaper-opacity: 0;
   --page: var(--settings-window-bg);
@@ -1097,6 +1098,68 @@ button:disabled {
   color: #ed9daa;
   background: rgba(153, 53, 70, 0.12);
   font-size: 10px;
+}
+
+.confirmation-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 7, 18, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.confirmation-dialog {
+  display: grid;
+  width: min(410px, 100%);
+  box-sizing: border-box;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--settings-danger) 48%, var(--line));
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--surface-strong);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.confirmation-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--settings-danger);
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.confirmation-dialog h2 {
+  margin: 2px 0 7px;
+  font-size: 16px;
+}
+
+.confirmation-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.confirmation-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 6px;
+}
+
+.confirmation-delete {
+  color: #fff;
+  background: var(--settings-danger);
 }
 
 @media (max-width: 720px) {

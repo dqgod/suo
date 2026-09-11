@@ -43,12 +43,18 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v13：唯一的 `fy` 翻译配置新增 `provider`；v12 及更早迁移为 `microsoft`，且必须继续使用原 `microsoft-translator-api-key` 凭据项名以保留旧密钥。
 - v14：每条脚本新增 `resultAction`；v13 及更早必须迁移为 `copy`。`executeShell` 只能在结果二次激活后执行，macOS 走 Bash、Windows 走 PowerShell；原始命令不得作为 WebView action 参数传输。
 - v15：`launcher` 新增 `startAtLogin`；v14 及更早必须迁移为 `false`。Windows 使用当前用户启动项，macOS 使用 LaunchAgent；登录启动只建立后台常驻能力，不主动显示搜索窗口。
+- v16：只把内置 `timestamp-example` 的旧默认路径 `examples/timestamp.py` 迁移为 `scripts/timestamp.py`，其他自定义路径必须保持。`examples/` 是 bundle 中的只读初始化模板；缺失模板复制到平台默认应用配置目录的 `scripts/`，必须使用“不存在才创建”语义，升级与重装不得覆盖用户文件。该目录不跟随可迁移的 `config.json`。
+- v17：在 `qr` 关键字/别名和 `qr-example` ID 都未被占用、脚本数量未达上限时添加默认二维码命令；新增 `qr.py` 仍使用“不存在才创建”，不得覆盖用户同名文件。
+
+脚本单结果协议跨平台固定为区分大小写的行首：旧 `SUO_RESULT:` 与 `SUO_RESULT:text:` 返回文本，`SUO_RESULT:image:` 返回一张受限 PNG/JPEG/WebP data URL（raw Base64 按 PNG），`SUO_RESULT:qrcode:` 由共享 Rust 核心本地生成 QR PNG。二维码限 500 个 UTF-8 字节，必须在 byte mode 前声明 UTF-8 ECI 26，生成的 PNG 保持至少 4 px/模块；启动器把所有脚本图片等比例缩为最大 240 px、随窗口可用高度继续缩小的完整缩略图。出现标记时忽略普通 stdout，没有标记时兼容完整 stdout；仅用于成功脚本 stdout，错误 stderr 和二次结果 Shell 输出保持原样。不得混合文本和图片或返回多张图片；两端必须共享 512 KB、1024 px、有界解码和前端 data URL 白名单。
 
 每次迁移都要测试：旧文件缺少新字段、默认值正确、所有旧字段保持、更新版本拒绝被旧程序覆盖、真实 `config.json`/`.bak` 可恢复。
 
 快捷键和开机自启变更必须与 JSON 持久化按同一运行时事务处理：先应用系统集成，再持久化；冲突、系统注册失败或保存失败时反向恢复全部旧状态。录制快捷键期间必须暂停全局唤起；Windows 临时注册 `Alt+Space` 只用于吞掉系统菜单，录制结束后立即移除，不能成为第二个启动器热键。
 
 macOS 的搜索窗口不能用普通 `NSWindow + set_focus()`：Tauri 的 macOS 聚焦实现会调用 `activateIgnoringOtherApps`，导致菜单栏切为 Suo、原应用输入光标消失，设置窗口可见时重复快捷键还可能把设置顶到前台。当前 `src-tauri/src/focus.rs` 只把 `main` 转换为带 `NonactivatingPanel` style 的 `NSPanel`，允许搜索框成为 key window 而不激活 Suo；显示后不得再调用 Tauri `set_focus()`，也不需要记录/恢复外部 frontmost application。`settings` 必须继续保持普通窗口并调用 `set_focus()`，因为用户显式打开设置时就应切换到 Suo。Windows 仍调用 `set_focus()` 让搜索框接收输入，随后只恢复原窗口的 taskbar presentation；不得编译或复制 AppKit 类型。
+
+macOS 原生全屏应用会占用独立 Space。启动器面板必须同时保留 `CanJoinAllSpaces` 与 `FullScreenAuxiliary` collection behavior，并清除与之冲突的 `MoveToActiveSpace`、`FullScreenPrimary` 和 `FullScreenNone`；否则快捷键虽然触发，窗口仍可能留在普通桌面而无法覆盖当前全屏应用。该策略只作用于 `main` 面板，不得套用到设置窗口，也不得把 AppKit collection behavior 泄漏到 Windows。多显示器的目标位置仍由共享几何逻辑按鼠标所在显示器计算。
 
 ## 5. 可移动配置仍需要固定引导位置
 

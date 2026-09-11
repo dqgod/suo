@@ -372,6 +372,8 @@ export const zhCN = {
     itemInstantHint: "完成编辑后立即校验并自动保存",
     configurationHint: "“完成编辑”更新页面草稿；右上角“保存设置”持久化配置。翻译凭据按钮会即时生效。",
     configurationHintInstant: "“完成编辑”后自动保存；右侧启用开关也会即时保存。翻译凭据按钮始终即时生效。",
+    confirmRemoveTitle: "再次确认删除",
+    confirmDelete: "确认删除",
     confirmRemove: "确定删除“{name}”吗？保存设置后将永久生效。",
     confirmRemoveInstant: "确定删除“{name}”吗？删除后将立即自动保存。",
     confirmClearCredentials: "确定删除系统凭据库中的 {provider} 凭据吗？",

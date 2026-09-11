@@ -1,45 +1,29 @@
-# macOS Apple Silicon release handoff
+# macOS Apple Silicon current handoff
 
-状态：**`v0.1.0` arm64 发布候选已完成，作为 GitHub Pre-release 分发；无 Developer ID 签名、未公证，不是正式稳定版。**
+状态：**`v0.1.3` macOS Apple Silicon 资产已发布到 [GitHub Pre-release](https://github.com/dqgod/suo/releases/tag/v0.1.3)。** 不可变 tag 指向 `b027d774a6aa9aa61fea3f325e221f34e3dc7735`；产品版本 0.1.3，配置协议 v17，支持 macOS 13+ arm64。完整构建、实机、配置恢复和资产哈希已经移入 [`archive/MACOS_V0.1.3_2026-09-11.md`](archive/MACOS_V0.1.3_2026-09-11.md)，当前文件只保留未完成项。
 
-## 发布范围
+## 当前待验证
 
-- 来源：`v0.1.0` tag（tag 创建前必须与最终发布提交一致）。
-- 产品版本：`0.1.0`；配置协议：v15。
-- 目标：Apple Silicon / `arm64`，macOS 13+。
-- 产物：`Suo_0.1.0_macos_arm64.zip` 与对应 `.sha256`。
-- 分发限制：当前只有链接器生成的 ad-hoc 签名，没有 Developer ID 签名、Apple notarization 或 DMG；首次打开可能触发 Gatekeeper 提示。不得宣称支持 Mac App Store，`app.macOSPrivateApi=true` 仍是透明无边框窗口所必需。
+- [ ] 连接第二块物理显示器，在 A/B 两屏分别准备普通窗口 Space 与原生全屏应用 Space；把鼠标移到目标屏幕后触发快捷键，确认搜索框始终出现在该屏当前 Space 的全屏应用上层。两屏缩放不同时还要确认位置、尺寸和工作区夹紧正确，关闭后不切换 Space、不退出全屏、不激活 Suo。
+- [ ] 用真实 v15、v16 配置副本完成一次 v17 迁移：只迁移内置 `timestamp-example` 路径，只在 `qr` 关键字/别名与 ID 均未占用时新增默认命令，用户脚本目录中的已有文件不得被覆盖；测试前后恢复真实配置并核对哈希。
+- [ ] 真实验证 `SUO_RESULT:text:`、`image:`、`qrcode:`：中文多行复制、完整图片缩略图、raw PNG Base64、非法/超限图片拒绝、二维码 UTF-8 扫码与 500/501-byte 边界；图片/二维码不得进入二次 Shell 执行。
+- [ ] 在设置页验证 `ts`、`qr` 的 Finder 定位，以及脚本/网络搜索删除确认在手动保存和自动保存两种模式下的持久化行为。
+- [ ] 真实验证 Dock 设置页显隐、菜单栏模板图标、失焦/Esc、单实例、`startAtLogin` LaunchAgent 创建、登录后台启动和关闭清理；不得使用 `sudo`。
+- [ ] Developer ID 签名、公证和 DMG 仍未提供；当前 ZIP 只有链接器 ad-hoc 签名，不得宣称可绕过 Gatekeeper 或支持 Mac App Store。
 
-## 本轮发布验证
-
-- [x] `uname -m`、Node `process.arch`、Rust host 和最终 Mach-O 均核对为原生 arm64。
-- [x] `pnpm install --frozen-lockfile`、`pnpm build`、全部 Rust 测试、`cargo check --locked --all-targets` 和 `.app` bundle 构建通过。
-- [x] macOS 编译不再保留 Windows-only `AppHandle` 未使用告警。
-- [x] 解包后的 `Info.plist` 明确声明 `LSMinimumSystemVersion=13.0`，与产品支持范围一致。
-- [x] ZIP 使用 `ditto --sequesterRsrc --keepParent` 从真实 `.app` bundle 创建，发布前重新解压并核对 bundle 主程序架构。
-- [x] `Suo_0.1.0_macos_arm64.zip` SHA-256：`12109c4678f0556e1c9b1d529d92587489d1ab3c41f26bb3353731125433d90c`；发布时同时上传 `.sha256`。
-- [x] 从最终 ZIP 重新解压后经 Finder/LaunchServices 冷启动，进程路径确认属于解包后的 `Suo.app`；再次打开可显示搜索框，输入无副作用查询 `release-smoke-xyz` 后稳定返回“没有匹配结果”。
-- [x] 对同一最终 bundle 快速替换输入为 `rapid-smoke-abcdef`，在 80 ms、260 ms 和 910 ms 三个观察点均未出现“正在加载/稳定状态”交替，输入框焦点持续保留。
-
-## 已知限制与后续人工项
-
-- `startAtLogin` 的 LaunchAgent 创建、后台登录启动和关闭清理仍需一次真实用户会话手测；默认关闭，Pre-release 不以此项已验收为前提。
-- 系统级全局快捷键无法由当前 Computer Use 注入。正式版前仍应做 20 轮冷启动/立即按键，并检查保存位置首帧、非激活菜单栏和原应用光标。
-- 菜单栏模板图标浅色/深色最终观感、多显示器不同缩放、三家翻译真实鉴权/限流仍是人工或凭据受限项目。
-- 输入普通字符时，状态区不应在“正在加载”和稳定结果之间逐键交替；250 ms 内完成的查询保留稳定帧，真正慢查询才显示延迟反馈。
-
-## 可重复构建
+## 不可变来源与复验命令
 
 ```bash
 git fetch origin --tags
-git switch --detach v0.1.0
+git switch --detach v0.1.3
+git rev-parse HEAD
+git rev-list -n 1 v0.1.3
 pnpm install --frozen-lockfile
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo check --manifest-path src-tauri/Cargo.toml --locked --all-targets
 pnpm tauri build --bundles app
-file src-tauri/target/release/suo
 file src-tauri/target/release/bundle/macos/Suo.app/Contents/MacOS/suo
 ```
 
-必须从 `.app` bundle 经 Finder/LaunchServices 启动；裸执行 `Contents/MacOS/suo` 不能替代窗口、Dock、菜单栏或 Keychain 验收。不要使用 `sudo` 运行 Suo。
+若复验需要代码修复，回到 `dev` 提交并发布更高版本，不能移动 `v0.1.3` tag 或覆盖现有资产。ZIP 必须使用 `ditto -c -k --sequesterRsrc --keepParent` 从真实 `.app` 创建，再解包并通过 LaunchServices 冷启动；不能用裸执行 `Contents/MacOS/suo` 代替窗口验收。

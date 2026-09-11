@@ -41,6 +41,7 @@ type SearchResult = {
   subtitle: string;
   kind: ResultKind;
   iconDataUrl: string;
+  resultImageDataUrl: string;
   badge: string;
   score: number;
   action: ResultAction;
@@ -148,6 +149,14 @@ const kindIcons: Partial<Record<ResultKind, string>> = {
 function configuredIconDataUrl(value: unknown) {
   return typeof value === "string"
     && value.length <= 350_000
+    && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
+    ? value
+    : null;
+}
+
+function configuredResultImageDataUrl(value: unknown) {
+  return typeof value === "string"
+    && value.length <= 700_000
     && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
     ? value
     : null;
@@ -734,7 +743,7 @@ function Launcher() {
             <div className="results" role="listbox" aria-label={zhCN.results}>
               {response.results.map((result, index) => (
                 <button
-                  className={`result ${index === selectedIndex ? "selected" : ""}`}
+                  className={`result ${index === selectedIndex ? "selected" : ""} ${configuredResultImageDataUrl(result.resultImageDataUrl) ? "with-result-image" : ""}`}
                   type="button"
                   key={result.id}
                   role="option"
@@ -745,6 +754,14 @@ function Launcher() {
                   <ResultIcon result={result} launcherVisible={launcherVisible} />
                   <span className="result-copy">
                     <strong>{result.title}</strong>
+                    {configuredResultImageDataUrl(result.resultImageDataUrl) && (
+                      <img
+                        className="script-result-image"
+                        src={result.resultImageDataUrl}
+                        alt={`${result.title}预览`}
+                        draggable={false}
+                      />
+                    )}
                     <small>{result.subtitle}</small>
                   </span>
                   <span className="result-badge">{result.badge}</span>

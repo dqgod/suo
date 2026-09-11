@@ -2898,6 +2898,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3742,8 +3751,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "suo"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
+ "base64 0.22.1",
  "dirs 6.0.0",
  "dispatch2",
  "file_icon_provider",
@@ -3755,6 +3765,7 @@ dependencies = [
  "open",
  "pinyin",
  "plist",
+ "qrcode",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

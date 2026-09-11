@@ -343,6 +343,18 @@ button {
   background: color-mix(in srgb, var(--launcher-result-bg) 82%, var(--launcher-selected-bg));
 }
 
+.result.with-result-image {
+  align-items: start;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.result.with-result-image > .result-icon,
+.result.with-result-image > .result-badge,
+.result.with-result-image > kbd {
+  margin-top: 2px;
+}
+
 .result-icon {
   display: grid;
   place-items: center;
@@ -391,16 +403,35 @@ button {
 .result-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.script-result-image {
+  display: block;
+  width: auto;
+  max-width: min(240px, 100%);
+  max-height: clamp(96px, calc(100vh - 232px), 240px);
+  margin: 5px 0 3px;
+  border: 1px solid color-mix(in srgb, var(--launcher-result-secondary) 24%, transparent);
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+  object-fit: contain;
 }
 
 .result-copy strong {
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   color: var(--launcher-result-primary);
   font-size: var(--launcher-result-primary-size);
   font-weight: 620;
+  line-height: 1.35;
 }
 
 .result-copy small {
+  white-space: nowrap;
   color: var(--launcher-result-secondary);
   font-size: var(--launcher-result-secondary-size);
 }
