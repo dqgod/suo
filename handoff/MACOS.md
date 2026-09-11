@@ -1,10 +1,10 @@
 # macOS Apple Silicon release handoff
 
-状态：**Windows 已形成 `v0.1.2` / 配置协议 v17 的 x64 发布候选，但 tag 与 GitHub Pre-release 尚待发布前复审完成后创建。macOS Apple Silicon 应等待发布完成，再从同一不可变 `v0.1.2` tag 构建与真实验证，并向同一个 Release 追加 arm64 资产。** 仍无 Developer ID 签名、未公证，不是正式稳定版。
+状态：**Windows 已把 `v0.1.2` / 配置协议 v17 的 x64 资产上传至[同名 GitHub Pre-release](https://github.com/dqgod/suo/releases/tag/v0.1.2)；macOS Apple Silicon 必须从同一不可变 `v0.1.2` tag 完成构建与真实验证后，才能向同一个 Release 追加 arm64 资产。** 仍无 Developer ID 签名、未公证，不是正式稳定版。
 
 ## `v0.1.2` 接手目标（2026-09-11）
 
-- 来源：先 `git fetch origin --tags`，确认 `v0.1.2` tag、GitHub Release 的目标 commit 与 Windows 交接记录一致。验证发布源码时使用 tag；若发现必须修改代码，回到 `dev` 提交修复并协调新版本，**不得移动或重建 `v0.1.2` tag**。
+- 来源：先 `git fetch origin --tags`，确认 `v0.1.2` tag 与 GitHub Release 均解析到提交 `74c27fa9279a4807c5704c0188f75096576e06de`。验证发布源码时使用 tag；若发现必须修改代码，回到 `dev` 提交修复并协调新版本，**不得移动或重建 `v0.1.2` tag**。
 - 产品版本：`0.1.2`；配置协议：v17；目标：Apple Silicon / `arm64`，macOS 13+。
 - 本轮共享能力：用户脚本目录与只创建不覆盖的模板、UTF-8/多行脚本输出、类型化文字/图片/二维码结果、默认 `qr` 命令、完整图片缩略图、脚本/网络搜索删除二次确认。
 - Windows-only 的 `SHOpenFolderAndSelectItems`、PIDL、COM 和路径分隔符修复不得进入 macOS 分支；macOS“在文件夹中显示”继续使用 `/usr/bin/open -R`。

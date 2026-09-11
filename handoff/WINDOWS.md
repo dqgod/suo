@@ -1,15 +1,15 @@
 # Windows release validation handoff
 
-状态：**Windows x64 `v0.1.2` 候选已完成安装包与 SHA-256 构建，正在关闭独立复审，尚未创建 tag 或 GitHub Release；最新安装包的真实界面复测仍有待办。** `v0.1.2` 修复脚本管道中文输出、支持受控的多行/类型化结果，以配置 v16 把可编辑模板迁移到用户脚本目录，并以 v17 增加默认本地二维码命令。发布后 macOS 需从同一不可变 tag 补跨平台构建回归。
+状态：**Windows x64 `v0.1.2` 安装包与 SHA-256 已发布到[同名 GitHub Pre-release](https://github.com/dqgod/suo/releases/tag/v0.1.2)；最新安装包的真实界面复测仍有待办。** `v0.1.2` 修复脚本管道中文输出、支持受控的多行/类型化结果，以配置 v16 把可编辑模板迁移到用户脚本目录，并以 v17 增加默认本地二维码命令。macOS 后续需从同一不可变 tag 补跨平台构建回归。
 
 ## 0.1 `v0.1.2` 脚本输出与类型化结果（2026-09-09 至 2026-09-11）
 
 - [x] Python 子进程显式使用 UTF-8 stdout/stderr；普通文本严格 UTF-8 解码失败后，Windows 使用当前 ANSI 系统代码页回退，避免 CP936 中文被替换为 `�`。
 - [x] 纯文本仍去除首尾空白，但中间换行会原样进入结果标题与复制动作；启动器使用 `pre-line` 并限制为最多两行，普通单行结果保持不变。
 - [x] v16 阶段新增 UTF-8 中文、多行、Python 输出环境、CP936 回退、`SearchResult.title`/`CopyText` 换行、模板不覆盖、v15 路径迁移、已知模板回退和 `SUO_RESULT:` 兼容过滤测试；当时的 116 项常规 Rust 测试、前端生产构建和 `cargo check --all-targets` 通过，最终结论以后续 v17 候选门禁与复审为准。
-- [x] 最终配置 v17 候选已通过前端生产构建、`cargo check --locked --all-targets` 与 125 项 Rust 测试（123 通过、2 项依赖本机应用目录而忽略）。
+- [x] 最终配置 v17 候选已通过前端生产构建、`cargo check --locked --all-targets` 与 125 项 Rust 测试（123 通过、2 项依赖本机应用目录而忽略）；发布前独立复审已关闭全部 Critical / Important / Minor。
 - [x] 已重新生成包含用户脚本初始化、类型化结果、UTF-8 ECI 二维码、完整脚本协议模板、完整图片缩略图、Windows 文件定位修复、删除二次确认及严格时间戳参数校验的 x64 NSIS 安装包 `Suo_0.1.2_x64-setup.exe`（4,023,263 bytes）；Product/File Version 均为 `0.1.2`，PE 为 `8664` / x64，SHA-256 为 `88C4E797300B828821701483E8B83E72E99755895E910B51AA3E96FFEF0D0FB6`，当前仍未签名。对应 release 可执行文件 `suo.exe` 为 15,486,976 bytes，SHA-256 `291A729A2F5838E3619AE0413FA26DA2309A433E19AAF07E5D58AD5D911D402D`。
-- [ ] 独立复审关闭后创建不可变 `v0.1.2` tag 与同名 Pre-release，并上传 `Suo_0.1.2_x64-setup.exe` 与对应 `.sha256`；不得用不同源码覆盖同名资产。
+- [x] 不可变 `v0.1.2` tag 指向提交 `74c27fa9279a4807c5704c0188f75096576e06de`；同名 Pre-release 已上传 `Suo_0.1.2_x64-setup.exe` 与对应 `.sha256`，GitHub 端安装包大小和 SHA-256 与本地一致。不得用不同源码覆盖同名资产。
 - [ ] 从新 `v0.1.2` NSIS 安装包重装后，以用户当前两行中文 `timestamp.py` 完成真实启动器肉眼验收；先确认旧脚本已经迁入 `%APPDATA%\io.github.dqgod.suo\scripts`，重装后内容与哈希必须保持。
 - [x] 本机旧安装目录脚本已在重装前复制到 `%APPDATA%\io.github.dqgod.suo\scripts\timestamp.py`，源/目标 SHA-256 均为 `F75C2C0604CFFE02FA0E268EC192CA70EAB4165BC07F448B05BD4918E3927EBE`；复制使用目标不存在门禁，未覆盖任何既有用户脚本。
 - [x] 当时的 v16 release 候选已真实启动并完成首次初始化：缺失的 `open_path.py`、`script_template.py`、`README.md` 均创建成功，既有 `timestamp.py` 启动前后 SHA-256 保持 `F75C2C0604CFFE02FA0E268EC192CA70EAB4165BC07F448B05BD4918E3927EBE`；测试后已恢复原安装版后台进程，最终结论以后续 v17 候选为准。
