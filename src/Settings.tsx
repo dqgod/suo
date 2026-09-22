@@ -12,6 +12,7 @@ import {
   ScriptCommandConfig,
   ScriptResultAction,
   ScriptRuntime,
+  TerminalCommandConfig,
   TranslationConfig,
   TranslationProvider,
   validateCommandIconImageDataUrl,
@@ -24,9 +25,15 @@ import "./Settings.css";
 
 const t = zhCN.settings;
 type Section = "general" | "search" | "configuration" | "appearance";
-type ConfigurationCategory = "scripts" | "web" | "services";
+type ConfigurationCategory = "builtins" | "scripts" | "web" | "services";
 
 type EditorState =
+  | {
+      kind: "terminal";
+      id: "terminal";
+      original: TerminalCommandConfig;
+      value: TerminalCommandConfig;
+    }
   | {
       kind: "script";
       id: string;
@@ -229,7 +236,17 @@ function cloneTranslation(translation: TranslationConfig): TranslationConfig {
   return { ...translation, aliases: [...translation.aliases] };
 }
 
+function cloneTerminal(terminal: TerminalCommandConfig): TerminalCommandConfig {
+  return { ...terminal };
+}
+
 function applyEditor(config: AppConfig, editor: EditorState): AppConfig {
+  if (editor.kind === "terminal") {
+    return {
+      ...config,
+      launcher: { ...config.launcher, terminal: cloneTerminal(editor.value) },
+    };
+  }
   if (editor.kind === "translation") {
     return { ...config, translation: cloneTranslation(editor.value) };
   }
@@ -272,7 +289,7 @@ function settleEditorForNavigation(config: AppConfig, editor: EditorState): AppC
 
 function Settings() {
   const [section, setSection] = useState<Section>("general");
-  const [category, setCategory] = useState<ConfigurationCategory>("scripts");
+  const [category, setCategory] = useState<ConfigurationCategory>("builtins");
   const [view, setView] = useState<AppConfigView | null>(null);
   const [draft, setDraftState] = useState<AppConfig | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -718,9 +735,9 @@ function Settings() {
   function cancelEditor() {
     if (!editor) return;
     if (editor.kind === "translation") resetTranslationCredentialDrafts();
-    if (editor.original === null) {
-      setDraft((current) => {
-        if (!current) return current;
+    setDraft((current) => {
+      if (!current) return current;
+      if (editor.original === null) {
         if (editor.kind === "script") {
           return {
             ...current,
@@ -734,8 +751,41 @@ function Settings() {
           };
         }
         return current;
-      });
-    }
+      }
+      // The enable switch is visible in the summary while an editor is open
+      // and mirrors into the page draft. Restore the captured item as well as
+      // discarding unsaved form fields when the user chooses Cancel.
+      if (editor.kind === "terminal") {
+        return {
+          ...current,
+          launcher: {
+            ...current.launcher,
+            terminal: cloneTerminal(editor.original),
+          },
+        };
+      }
+      if (editor.kind === "translation") {
+        return { ...current, translation: cloneTranslation(editor.original) };
+      }
+      if (editor.kind === "script") {
+        const original = editor.original;
+        if (!original) return current;
+        return {
+          ...current,
+          scriptCommands: current.scriptCommands.map((command) => (
+            command.id === editor.id ? cloneScript(original) : command
+          )),
+        };
+      }
+      const original = editor.original;
+      if (!original) return current;
+      return {
+        ...current,
+        webSearches: current.webSearches.map((search) => (
+          search.id === editor.id ? cloneWebSearch(original) : search
+        )),
+      };
+    });
     setEditor(null);
   }
 
@@ -794,6 +844,23 @@ function Settings() {
       id: "translation",
       original,
       value: cloneTranslation(original),
+    });
+  };
+
+  const openTerminal = () => {
+    if (!draft) return;
+    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
+    setDraft(nextDraft);
+    if (editor?.kind === "terminal") {
+      setEditor(null);
+      return;
+    }
+    const original = cloneTerminal(nextDraft.launcher.terminal);
+    setEditor({
+      kind: "terminal",
+      id: "terminal",
+      original,
+      value: cloneTerminal(original),
     });
   };
 
@@ -926,6 +993,19 @@ function Settings() {
       : current);
   };
 
+  const setTerminalEnabled = (enabled: boolean) => {
+    setDraft((current) => current ? {
+      ...current,
+      launcher: {
+        ...current.launcher,
+        terminal: { ...current.launcher.terminal, enabled },
+      },
+    } : current);
+    setEditor((current) => current?.kind === "terminal"
+      ? { ...current, value: { ...current.value, enabled } }
+      : current);
+  };
+
   const updateAppearanceThemes = async (themes: Pick<AppConfig, "launcherTheme" | "settingsTheme">) => {
     const current = draftRef.current;
     if (!current || view?.configReadOnly) return false;
@@ -960,7 +1040,9 @@ function Settings() {
     }
   };
 
-  const isMac = /Mac/i.test(navigator.platform);
+  const browserPlatform = `${navigator.platform} ${navigator.userAgent}`;
+  const isMac = /Mac/i.test(browserPlatform);
+  const isWindows = /Win/i.test(browserPlatform);
 
   return (
     <main className="settings-stage">
@@ -1208,6 +1290,7 @@ function Settings() {
                 <div className="configuration-section">
                   <div className="configuration-toolbar">
                     <div className="configuration-tabs" role="tablist" aria-label={t.commandsAndServices}>
+                      <button type="button" role="tab" aria-selected={category === "builtins"} className={category === "builtins" ? "active" : ""} onClick={() => changeCategory("builtins")}>{t.builtinsTab}</button>
                       <button type="button" role="tab" aria-selected={category === "scripts"} className={category === "scripts" ? "active" : ""} onClick={() => changeCategory("scripts")}>{t.scriptsTab}</button>
                       <button type="button" role="tab" aria-selected={category === "web"} className={category === "web" ? "active" : ""} onClick={() => changeCategory("web")}>{t.webTab}</button>
                       <button type="button" role="tab" aria-selected={category === "services"} className={category === "services" ? "active" : ""} onClick={() => changeCategory("services")}>{t.servicesTab}</button>
@@ -1217,6 +1300,55 @@ function Settings() {
                   </div>
 
                   <div className="configuration-list" role="tabpanel">
+                    {category === "builtins" && (() => {
+                      const activeEditor = editor?.kind === "terminal" ? editor : null;
+                      const summary = activeEditor?.value ?? draft.launcher.terminal;
+                      const target = isWindows
+                        ? summary.windowsShell === "powerShell" ? zhCN.windowsPowerShell : zhCN.windowsCommandPrompt
+                        : isMac ? summary.macosTerminalApplication || zhCN.macosTerminalApplication : "Bash";
+                      return (
+                        <ConfigurationItem
+                          panelId="terminal-command-editor"
+                          open={Boolean(activeEditor)}
+                          enabled={summary.enabled}
+                          name={zhCN.terminalCommand}
+                          keyword=">"
+                          description={zhCN.terminalCommandDescription}
+                          badges={[t.builtinBadge, target]}
+                          onToggle={openTerminal}
+                          onEnabledChange={setTerminalEnabled}
+                          readOnly={Boolean(view?.configReadOnly)}
+                        >
+                          {activeEditor && (
+                            <>
+                              <div className="configuration-editor-header">
+                                <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
+                              </div>
+                              <div className="form-grid">
+                                {isWindows && (
+                                  <Field label={zhCN.windowsTerminalShell} wide>
+                                    <select value={activeEditor.value.windowsShell} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, windowsShell: event.target.value as TerminalCommandConfig["windowsShell"] } })}>
+                                      <option value="powerShell">{zhCN.windowsPowerShell}</option>
+                                      <option value="commandPrompt">{zhCN.windowsCommandPrompt}</option>
+                                    </select>
+                                    <small className="form-help">{zhCN.windowsTerminalShellDescription}</small>
+                                  </Field>
+                                )}
+                                {isMac && (
+                                  <Field label={zhCN.macosTerminalApplication} wide>
+                                    <input type="text" maxLength={160} value={activeEditor.value.macosTerminalApplication} placeholder={zhCN.macosTerminalApplicationPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, macosTerminalApplication: event.target.value } })} />
+                                    <small className="form-help">{zhCN.macosTerminalApplicationDescription}</small>
+                                  </Field>
+                                )}
+                                <Field label={t.executionSafety} wide><small className="form-help shell-result-warning">{t.terminalCommandWarning}</small></Field>
+                              </div>
+                              <EditorActions onCancel={cancelEditor} onDone={commitEditor} />
+                            </>
+                          )}
+                        </ConfigurationItem>
+                      );
+                    })()}
+
                     {category === "scripts" && (
                       <>
                         {draft.scriptCommands.length === 0 && <div className="configuration-empty">{t.emptyScripts}</div>}

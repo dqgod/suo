@@ -20,6 +20,7 @@ type ResultAction =
   | { type: "copyText"; text: string }
   | { type: "runScript"; commandId: string; args: string[] }
   | { type: "runScriptOutput"; actionId: string }
+  | { type: "runTerminalCommand"; actionId: string }
   | { type: "openSettings" }
   | { type: "none" };
 
@@ -28,6 +29,7 @@ type ResultKind =
   | "file"
   | "directory"
   | "calculator"
+  | "terminal"
   | "script"
   | "web"
   | "translation"
@@ -138,6 +140,7 @@ function queryDebounceMs(
 const kindIcons: Partial<Record<ResultKind, string>> = {
   app: "◆",
   calculator: "=",
+  terminal: ">_",
   script: ">_",
   web: "↗",
   translation: "译",

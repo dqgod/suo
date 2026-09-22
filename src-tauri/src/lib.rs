@@ -18,6 +18,7 @@ mod scripts;
 #[cfg(target_os = "macos")]
 mod spotlight;
 mod taskbar;
+mod terminal;
 mod translator;
 mod tray;
 mod user_scripts;

@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 17;
+const CONFIG_VERSION: u32 = 18;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -72,7 +72,7 @@ struct AppConfigWire {
     version: u32,
     #[serde(default)]
     save_settings_manually: Option<bool>,
-    launcher: LauncherConfig,
+    launcher: serde_json::Value,
     translation: TranslationConfig,
     script_commands: Vec<ScriptCommandConfig>,
     web_searches: Vec<WebSearchConfig>,
@@ -93,6 +93,22 @@ impl<'de> Deserialize<'de> for AppConfig {
         D: Deserializer<'de>,
     {
         let wire = AppConfigWire::deserialize(deserializer)?;
+        if wire.version >= 18 {
+            let complete_terminal = wire
+                .launcher
+                .get("terminal")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|terminal| {
+                    ["enabled", "windowsShell", "macosTerminalApplication"]
+                        .into_iter()
+                        .all(|field| terminal.contains_key(field))
+                });
+            if !complete_terminal {
+                return Err(D::Error::custom("v18 配置必须包含完整的 launcher.terminal"));
+            }
+        }
+        let launcher =
+            serde_json::from_value::<LauncherConfig>(wire.launcher).map_err(D::Error::custom)?;
         let (mut launcher_theme, mut settings_theme) =
             match (wire.launcher_theme, wire.settings_theme) {
                 (Some(launcher_theme), Some(settings_theme)) => (launcher_theme, settings_theme),
@@ -129,7 +145,7 @@ impl<'de> Deserialize<'de> for AppConfig {
         Ok(Self {
             version: wire.version,
             save_settings_manually,
-            launcher: wire.launcher,
+            launcher,
             translation: wire.translation,
             script_commands: wire.script_commands,
             web_searches: wire.web_searches,
@@ -166,6 +182,8 @@ pub struct LauncherConfig {
     pub horizontal_offset_px: i32,
     #[serde(default)]
     pub vertical_offset_px: i32,
+    #[serde(default)]
+    pub terminal: TerminalCommandConfig,
 }
 
 const fn default_empty_query_debounce_ms() -> u64 {
@@ -182,6 +200,52 @@ const fn default_non_empty_query_debounce_ms() -> u64 {
 
 const fn default_launcher_height_px() -> u32 {
     520
+}
+
+fn default_macos_terminal_application() -> String {
+    "Terminal".into()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalCommandConfig {
+    #[serde(default = "default_terminal_command_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub windows_shell: WindowsTerminalShell,
+    #[serde(default = "default_macos_terminal_application")]
+    pub macos_terminal_application: String,
+}
+
+impl Default for TerminalCommandConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            windows_shell: WindowsTerminalShell::PowerShell,
+            macos_terminal_application: default_macos_terminal_application(),
+        }
+    }
+}
+
+const fn default_terminal_command_enabled() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowsTerminalShell {
+    #[default]
+    PowerShell,
+    CommandPrompt,
+}
+
+impl WindowsTerminalShell {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::PowerShell => "PowerShell",
+            Self::CommandPrompt => "命令提示符",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -728,6 +792,7 @@ impl Default for AppConfig {
                 window_height_px: default_launcher_height_px(),
                 horizontal_offset_px: 0,
                 vertical_offset_px: 0,
+                terminal: TerminalCommandConfig::default(),
             },
             translation: TranslationConfig {
                 enabled: true,
@@ -1269,6 +1334,20 @@ fn normalize_and_validate(config: AppConfig) -> Result<AppConfig, String> {
     }
 
     config.launcher.global_hotkey = hotkey::normalize_shortcut(&config.launcher.global_hotkey)?;
+    config.launcher.terminal.macos_terminal_application = required_trimmed(
+        &config.launcher.terminal.macos_terminal_application,
+        "macOS 终端应用",
+        160,
+    )?;
+    if config
+        .launcher
+        .terminal
+        .macos_terminal_application
+        .chars()
+        .any(char::is_control)
+    {
+        return Err("macOS 终端应用不能包含控制字符".into());
+    }
     validate_launcher(&config.launcher)?;
     normalize_translation(&mut config.translation)?;
     for command in &mut config.script_commands {
@@ -1307,6 +1386,13 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
     {
         config.script_commands.push(default_qr_script_command());
     }
+    // `>` becomes a reserved built-in prefix in v18. Preserve any existing
+    // user command that already owns it by migrating with the built-in
+    // terminal command disabled; the user can rename the conflict and enable
+    // the built-in explicitly later.
+    if config.version <= 17 && config_uses_keyword(&config, ">") {
+        config.launcher.terminal.enabled = false;
+    }
 
     match config.version {
         // v2 adds optional descriptions, v3 adds the empty-query compact mode,
@@ -1323,12 +1409,14 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // through the platform shell after a second user activation, v15 adds
         // cross-platform login startup, disabled by default for old files, and
         // v16 moves the bundled timestamp example to a user-owned script copy,
-        // and v17 adds typed script results plus the dependency-free QR example.
+        // v17 adds typed script results plus the dependency-free QR example,
+        // and v18 adds the opt-out built-in terminal command and its terminal
+        // target preferences.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 => {
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 => {
             config.version = CONFIG_VERSION
         }
-        17 => {}
+        18 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -1346,6 +1434,24 @@ fn config_uses_keyword_or_id(config: &AppConfig, keyword: &str, script_id: &str)
             .aliases
             .iter()
             .any(|alias| keyword_matches(alias))
+        || config.web_searches.iter().any(|search| {
+            keyword_matches(&search.keyword)
+                || search.aliases.iter().any(|alias| keyword_matches(alias))
+        })
+}
+
+fn config_uses_keyword(config: &AppConfig, keyword: &str) -> bool {
+    let keyword_matches = |value: &str| value.trim().eq_ignore_ascii_case(keyword);
+    keyword_matches(&config.translation.keyword)
+        || config
+            .translation
+            .aliases
+            .iter()
+            .any(|alias| keyword_matches(alias))
+        || config.script_commands.iter().any(|command| {
+            keyword_matches(&command.keyword)
+                || command.aliases.iter().any(|alias| keyword_matches(alias))
+        })
         || config.web_searches.iter().any(|search| {
             keyword_matches(&search.keyword)
                 || search.aliases.iter().any(|alias| keyword_matches(alias))
@@ -2503,6 +2609,9 @@ fn validate_keyword_namespace(config: &AppConfig) -> Result<(), String> {
     for reserved in ["f", "setting", "settings", "设置"] {
         seen.insert(reserved.into(), "系统命令".into());
     }
+    if config.launcher.terminal.enabled {
+        seen.insert(">".into(), "内置终端命令".into());
+    }
     register_keywords(
         &mut seen,
         "翻译命令",
@@ -2757,6 +2866,7 @@ fn provider_settings_changed(previous: &AppConfig, next: &AppConfig) -> bool {
     previous.translation != next.translation
         || previous.script_commands != next.script_commands
         || previous.web_searches != next.web_searches
+        || previous.launcher.terminal != next.launcher.terminal
 }
 
 #[tauri::command]
@@ -2936,6 +3046,7 @@ mod tests {
         launcher.remove("windowHeightPx");
         launcher.remove("horizontalOffsetPx");
         launcher.remove("verticalOffsetPx");
+        launcher.remove("terminal");
         config["translation"]
             .as_object_mut()
             .expect("translation object")
@@ -3173,6 +3284,15 @@ mod tests {
         );
         assert_eq!(config.launcher.horizontal_offset_px, 0);
         assert_eq!(config.launcher.vertical_offset_px, 0);
+        assert!(config.launcher.terminal.enabled);
+        assert_eq!(
+            config.launcher.terminal.windows_shell,
+            WindowsTerminalShell::PowerShell
+        );
+        assert_eq!(
+            config.launcher.terminal.macos_terminal_application,
+            "Terminal"
+        );
         assert_eq!(config.translation.provider, TranslationProvider::Microsoft);
         assert_eq!(
             config.script_commands[0].result_action,
@@ -3219,6 +3339,94 @@ mod tests {
     }
 
     #[test]
+    fn migrates_v17_terminal_preferences_without_stealing_the_prefix() {
+        let mut previous = serde_json::to_value(AppConfig::default()).expect("serialize v17");
+        previous["version"] = serde_json::json!(17);
+        let launcher = previous["launcher"]
+            .as_object_mut()
+            .expect("launcher object");
+        launcher.remove("terminal");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous.clone()).expect("deserialize v17"),
+        )
+        .expect("migrate v17 terminal defaults");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert!(migrated.launcher.terminal.enabled);
+        assert_eq!(
+            migrated.launcher.terminal.windows_shell,
+            WindowsTerminalShell::PowerShell
+        );
+        assert_eq!(
+            migrated.launcher.terminal.macos_terminal_application,
+            "Terminal"
+        );
+
+        for collision_kind in [
+            "translation-keyword",
+            "translation-alias",
+            "script-keyword",
+            "script-alias",
+            "web-keyword",
+            "web-alias",
+        ] {
+            let mut collision_value = previous.clone();
+            match collision_kind {
+                "translation-keyword" => {
+                    collision_value["translation"]["keyword"] = serde_json::json!(">")
+                }
+                "translation-alias" => {
+                    collision_value["translation"]["aliases"] = serde_json::json!([">"])
+                }
+                "script-keyword" => {
+                    collision_value["scriptCommands"][0]["keyword"] = serde_json::json!(">")
+                }
+                "script-alias" => {
+                    collision_value["scriptCommands"][0]["aliases"] = serde_json::json!([">"])
+                }
+                "web-keyword" => {
+                    collision_value["webSearches"][0]["keyword"] = serde_json::json!(">")
+                }
+                "web-alias" => {
+                    collision_value["webSearches"][0]["aliases"] = serde_json::json!([">"])
+                }
+                _ => unreachable!(),
+            }
+            let conflict = normalize_and_validate(
+                serde_json::from_value::<AppConfig>(collision_value).expect("deserialize conflict"),
+            )
+            .expect("preserve existing greater-than command");
+            assert!(
+                !conflict.launcher.terminal.enabled,
+                "built-in terminal stole {collision_kind}"
+            );
+            assert!(config_uses_keyword(&conflict, ">"));
+        }
+    }
+
+    #[test]
+    fn rejects_incomplete_v18_terminal_config_instead_of_silently_defaulting() {
+        let complete = serde_json::to_value(AppConfig::default()).expect("serialize v18");
+
+        let mut missing_terminal = complete.clone();
+        missing_terminal["launcher"]
+            .as_object_mut()
+            .expect("launcher object")
+            .remove("terminal");
+        let error = serde_json::from_value::<AppConfig>(missing_terminal)
+            .expect_err("v18 terminal object is required")
+            .to_string();
+        assert!(error.contains("launcher.terminal"));
+
+        let mut missing_target = complete;
+        missing_target["launcher"]["terminal"]
+            .as_object_mut()
+            .expect("terminal object")
+            .remove("windowsShell");
+        assert!(serde_json::from_value::<AppConfig>(missing_target).is_err());
+    }
+
+    #[test]
     fn validates_general_query_debounce_range() {
         let mut maximum = AppConfig::default();
         maximum.launcher.empty_query_debounce_ms = MAX_QUERY_DEBOUNCE_MS;
@@ -3248,6 +3456,31 @@ mod tests {
         let mut unsupported_key = AppConfig::default();
         unsupported_key.launcher.global_hotkey = "Ctrl+Unidentified".into();
         assert!(normalize_and_validate(unsupported_key).is_err());
+    }
+
+    #[test]
+    fn validates_terminal_preferences_and_reserved_prefix() {
+        let mut trimmed = AppConfig::default();
+        trimmed.launcher.terminal.macos_terminal_application = "  iTerm  ".into();
+        let trimmed = normalize_and_validate(trimmed).expect("valid terminal application");
+        assert_eq!(
+            trimmed.launcher.terminal.macos_terminal_application,
+            "iTerm"
+        );
+
+        let mut empty = AppConfig::default();
+        empty.launcher.terminal.macos_terminal_application = "   ".into();
+        assert!(normalize_and_validate(empty).is_err());
+
+        let mut control = AppConfig::default();
+        control.launcher.terminal.macos_terminal_application = "Terminal\nOther".into();
+        assert!(normalize_and_validate(control).is_err());
+
+        let mut conflict = AppConfig::default();
+        conflict.script_commands[0].keyword = ">".into();
+        assert!(normalize_and_validate(conflict.clone()).is_err());
+        conflict.launcher.terminal.enabled = false;
+        assert!(normalize_and_validate(conflict).is_ok());
     }
 
     #[test]
@@ -3287,6 +3520,10 @@ mod tests {
         launcher_change.launcher.compact_when_empty = true;
         launcher_change.launcher.non_empty_query_debounce_ms = 80;
         assert!(!provider_settings_changed(&original, &launcher_change));
+
+        let mut terminal_change = original.clone();
+        terminal_change.launcher.terminal.windows_shell = WindowsTerminalShell::CommandPrompt;
+        assert!(provider_settings_changed(&original, &terminal_change));
 
         let mut provider_change = original.clone();
         provider_change.web_searches[0].description = "更新后的说明".into();

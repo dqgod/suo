@@ -13,14 +13,14 @@ use crate::{
     arguments,
     catalog::{self, CatalogEntry},
     config::{
-        AppConfig, ConfigState, ScriptCommandConfig, ScriptResultAction, TranslationConfig,
-        WebSearchConfig,
+        AppConfig, ConfigState, ScriptCommandConfig, ScriptResultAction, TerminalCommandConfig,
+        TranslationConfig, WebSearchConfig,
     },
     dock,
     file_search::{self, FileSearchOutcome},
     focus, hotkey, i18n,
     models::{CancelStatus, IndexStatus, ResultAction, ResultKind, SearchResponse, SearchResult},
-    scripts, translator, web_search,
+    scripts, terminal, translator, web_search,
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
@@ -32,6 +32,21 @@ const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
 struct PendingScriptOutputAction {
     command_id: String,
     shell_command: String,
+}
+
+#[derive(Debug)]
+struct PendingTerminalAction {
+    command_text: String,
+    terminal_config: TerminalCommandConfig,
+}
+
+impl PendingTerminalAction {
+    fn into_command(self, current_config: &TerminalCommandConfig) -> Result<String, String> {
+        if &self.terminal_config != current_config {
+            return Err("终端命令配置已改变，请重新输入命令".into());
+        }
+        Ok(self.command_text)
+    }
 }
 
 pub struct LauncherState {
@@ -46,6 +61,7 @@ pub struct LauncherState {
     action_epoch: AtomicU64,
     action_gate: Mutex<()>,
     pending_script_output_actions: Mutex<HashMap<String, PendingScriptOutputAction>>,
+    pending_terminal_actions: Mutex<HashMap<String, PendingTerminalAction>>,
     keep_visible_on_blur: AtomicBool,
     close_on_blur: AtomicBool,
     keep_last_input: AtomicBool,
@@ -79,6 +95,7 @@ impl LauncherState {
             action_epoch: AtomicU64::new(0),
             action_gate: Mutex::new(()),
             pending_script_output_actions: Mutex::new(HashMap::new()),
+            pending_terminal_actions: Mutex::new(HashMap::new()),
             keep_visible_on_blur: AtomicBool::new(false),
             close_on_blur: AtomicBool::new(true),
             keep_last_input: AtomicBool::new(false),
@@ -248,6 +265,57 @@ impl LauncherState {
         Ok((generation, pending))
     }
 
+    fn register_terminal_action(
+        &self,
+        expected_epoch: u64,
+        terminal_config: TerminalCommandConfig,
+        command_text: String,
+    ) -> Result<String, String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "操作授权锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("终端命令结果已失效，请重新输入".into());
+        }
+        let action_id = uuid::Uuid::new_v4().to_string();
+        let mut actions = self
+            .pending_terminal_actions
+            .lock()
+            .map_err(|_| "终端命令授权暂时不可用".to_string())?;
+        // A `>` query produces one result. Repeated refreshes in the same
+        // search generation replace its token instead of accumulating stale
+        // executable strings.
+        actions.clear();
+        actions.insert(
+            action_id.clone(),
+            PendingTerminalAction {
+                command_text,
+                terminal_config,
+            },
+        );
+        Ok(action_id)
+    }
+
+    fn take_terminal_action(
+        &self,
+        expected_epoch: u64,
+        action_id: &str,
+    ) -> Result<PendingTerminalAction, String> {
+        let _gate = self
+            .action_gate
+            .lock()
+            .map_err(|_| "操作授权锁暂时不可用".to_string())?;
+        if self.action_epoch.load(Ordering::SeqCst) != expected_epoch {
+            return Err("终端命令结果已失效，请重新输入".into());
+        }
+        self.pending_terminal_actions
+            .lock()
+            .map_err(|_| "终端命令授权暂时不可用".to_string())?
+            .remove(action_id)
+            .ok_or_else(|| "终端命令已经执行或失效，请重新输入".to_string())
+    }
+
     fn ensure_action_epoch(&self, expected_epoch: u64) -> Result<(), String> {
         let _gate = self
             .action_gate
@@ -266,6 +334,9 @@ impl LauncherState {
     fn invalidate_actions_locked(&self) {
         self.cancel_actions();
         if let Ok(mut actions) = self.pending_script_output_actions.lock() {
+            actions.clear();
+        }
+        if let Ok(mut actions) = self.pending_terminal_actions.lock() {
             actions.clear();
         }
         self.action_epoch.fetch_add(1, Ordering::SeqCst);
@@ -392,6 +463,11 @@ fn search_launcher_blocking(
             score: 2_100,
             action: ResultAction::OpenSettings,
         }]
+    } else if config.launcher.terminal.enabled && query.starts_with('>') {
+        provider = "内置终端命令".into();
+        let target = terminal::target_label(&config.launcher.terminal);
+        provider_detail = format!("仅按 Enter 后执行 · 在 {target} 中以当前用户权限运行");
+        terminal_command_results(&state, action_epoch, &config.launcher.terminal, &query)
     } else if let Some(value) = calculate(&query) {
         provider = "计算器".into();
         provider_detail = "本地计算，不访问网络".into();
@@ -657,6 +733,7 @@ pub async fn activate_result(
             | ResultAction::LaunchApplication { .. }
             | ResultAction::OpenUrl { .. }
             | ResultAction::RunScriptOutput { .. }
+            | ResultAction::RunTerminalCommand { .. }
             | ResultAction::OpenSettings
     );
     state.keep_visible_on_next_blur(keep_open && may_move_focus);
@@ -755,6 +832,21 @@ pub async fn activate_result(
             })
             .await
             .map_err(|error| format!("Shell 任务异常结束：{error}"))??;
+            Ok(None)
+        }
+        ResultAction::RunTerminalCommand { action_id } => {
+            let pending = state.take_terminal_action(action_epoch, &action_id)?;
+            let terminal_config = config.snapshot().launcher.terminal;
+            let command_text = pending.into_command(&terminal_config)?;
+            if !terminal_config.enabled {
+                return Err("内置终端命令已被关闭".into());
+            }
+            let terminal_app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                terminal::launch(&terminal_app, &terminal_config, &command_text)
+            })
+            .await
+            .map_err(|error| format!("终端启动任务异常结束：{error}"))??;
             Ok(None)
         }
         ResultAction::OpenSettings => {
@@ -1338,6 +1430,61 @@ fn web_search_results(search: &WebSearchConfig, arguments: &str) -> Vec<SearchRe
     }
 }
 
+fn terminal_command(query: &str) -> Option<&str> {
+    query.strip_prefix('>').map(str::trim_start)
+}
+
+fn terminal_command_results(
+    state: &LauncherState,
+    action_epoch: u64,
+    terminal_config: &TerminalCommandConfig,
+    query: &str,
+) -> Vec<SearchResult> {
+    let Some(command_text) = terminal_command(query) else {
+        return Vec::new();
+    };
+    if command_text.is_empty() {
+        return vec![hint_result(
+            "> <命令>",
+            "例如：> ls；命令只会在按 Enter 后打开终端执行",
+        )];
+    }
+    let command_text = match terminal::validate_command(command_text) {
+        Ok(value) => value,
+        Err(error) => {
+            return vec![error_result_with_icon(
+                "terminal:invalid".into(),
+                error,
+                "请缩短命令或移除无效字符",
+                "",
+            )]
+        }
+    };
+    vec![match state.register_terminal_action(
+        action_epoch,
+        terminal_config.clone(),
+        command_text.clone(),
+    ) {
+        Ok(action_id) => SearchResult {
+            id: format!("terminal:{action_id}"),
+            title: format!("在 {} 中执行", terminal::target_label(terminal_config)),
+            subtitle: command_text,
+            kind: ResultKind::Terminal,
+            icon_data_url: String::new(),
+            result_image_data_url: String::new(),
+            badge: "执行".into(),
+            score: 2_200,
+            action: ResultAction::RunTerminalCommand { action_id },
+        },
+        Err(error) => error_result_with_icon(
+            "terminal:authorization-error".into(),
+            error,
+            "请重新输入终端命令",
+            "",
+        ),
+    }]
+}
+
 fn script_output_result(
     state: &LauncherState,
     action_epoch: u64,
@@ -1489,8 +1636,8 @@ mod tests {
     use super::{
         calculate, catalog_results, command_arguments, configured_launcher_size, is_settings_query,
         launcher_position, match_score, script_action_subtitle, script_command,
-        script_output_result, translation_command, web_search_command, web_search_results,
-        LauncherState,
+        script_output_result, terminal_command, terminal_command_results, translation_command,
+        web_search_command, web_search_results, LauncherState,
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -1981,6 +2128,77 @@ mod tests {
         assert!(state
             .begin_script_output_action(next_epoch, &action_id)
             .is_err());
+    }
+
+    #[test]
+    fn terminal_prefix_requires_an_explicit_enter_action() {
+        assert_eq!(terminal_command("> ls"), Some("ls"));
+        assert_eq!(terminal_command(">Get-Date"), Some("Get-Date"));
+        assert_eq!(terminal_command(">   "), Some(""));
+        assert_eq!(terminal_command("google codex"), None);
+
+        let state = LauncherState::new();
+        let epoch = state.begin_search(1);
+        let terminal_config = AppConfig::default().launcher.terminal;
+        let hint = terminal_command_results(&state, epoch, &terminal_config, ">");
+        assert_eq!(hint.len(), 1);
+        assert_eq!(hint[0].kind, ResultKind::Hint);
+        assert!(matches!(hint[0].action, ResultAction::None));
+
+        let result = terminal_command_results(&state, epoch, &terminal_config, "> echo hello")
+            .pop()
+            .expect("terminal result");
+        assert_eq!(result.kind, ResultKind::Terminal);
+        assert_eq!(result.subtitle, "echo hello");
+        let serialized = serde_json::to_string(&result.action).unwrap();
+        assert!(!serialized.contains("echo hello"));
+        let ResultAction::RunTerminalCommand { action_id } = result.action else {
+            panic!("terminal result must use an opaque action");
+        };
+        let pending = state.take_terminal_action(epoch, &action_id).unwrap();
+        assert_eq!(pending.command_text, "echo hello");
+        assert_eq!(pending.terminal_config, terminal_config);
+        assert!(state.take_terminal_action(epoch, &action_id).is_err());
+    }
+
+    #[test]
+    fn a_new_search_invalidates_pending_terminal_actions() {
+        let state = LauncherState::new();
+        let epoch = state.begin_search(1);
+        let action_id = state
+            .register_terminal_action(
+                epoch,
+                AppConfig::default().launcher.terminal,
+                "echo hello".into(),
+            )
+            .unwrap();
+
+        let next_epoch = state.begin_search(2);
+        assert_ne!(epoch, next_epoch);
+        assert!(state.take_terminal_action(next_epoch, &action_id).is_err());
+    }
+
+    #[test]
+    fn terminal_action_is_bound_to_the_configuration_that_created_it() {
+        use crate::config::WindowsTerminalShell;
+
+        let terminal_config = AppConfig::default().launcher.terminal;
+        let pending = super::PendingTerminalAction {
+            command_text: "echo hello".into(),
+            terminal_config: terminal_config.clone(),
+        };
+        assert_eq!(
+            pending.into_command(&terminal_config).unwrap(),
+            "echo hello"
+        );
+
+        let mut changed = terminal_config.clone();
+        changed.windows_shell = WindowsTerminalShell::CommandPrompt;
+        let stale = super::PendingTerminalAction {
+            command_text: "echo hello".into(),
+            terminal_config,
+        };
+        assert!(stale.into_command(&changed).is_err());
     }
 
     #[test]

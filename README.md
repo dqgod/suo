@@ -9,6 +9,7 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - macOS 使用 Spotlight；
 - 计算器、可切换的 Microsoft / Google / 有道翻译、自定义 HTTP/HTTPS 搜索；
 - Python、PowerShell、Bash 和可执行文件命令；
+- 需要显式回车确认的 `>` 内置终端命令；
 - 当前支持带类型前缀的文本、图片与二维码单结果脚本输出；`suo-json-v1` 多结果协议仍在后续计划中；
 - 搜索界面与设置界面各自独立的三套内置皮肤，以及可导入、导出、实时预览的自定义皮肤。
 
@@ -22,6 +23,14 @@ Suo 是一个面向 Windows 与 macOS 的轻量快捷启动器。按下全局快
 - 网络搜索 `{query}` 表示关键词后的完整文本，因此 `google test codex` 无需引号即可得到一个 `test codex` 值；
 - `{query0}`、`{query1}`…表示位置参数。同一输入配合 `?q={query0}&v={query1}` 会分别填入 `test`、`codex`；只有单个位置参数本身包含空格时才需要引号。
 - URL 不含占位符时作为固定直达链接，例如将 `mydoc` 配置为 `https://bytedance.feishu.cn/drive/home/` 后，只输入 `mydoc` 并回车即可打开。
+
+### `>` 内置终端命令
+
+输入 `> <命令>` 会先生成一条待执行结果，只有选中结果并按 `Enter` 或点击后，Suo 才会打开可见终端并以当前用户权限执行。例如，Windows 可输入 `> Get-Date` 或 `> ls`，macOS 可输入 `> ls`。继续输入、只查看结果或切换选中项都不会执行命令；结果授权只能使用一次，并会在查询或相关配置变化后失效。
+
+在“设置 → 命令与服务 → 内置命令”中可以关闭该能力或选择终端目标：Windows 支持 PowerShell（默认）和命令提示符（CMD）；macOS 默认使用 Terminal，也可填写能够打开 `.command` 文件的终端应用名称或绝对 `.app` 路径。Windows 命令完成后保留终端窗口，macOS 使用 `/bin/bash` 执行并进入登录 Bash 以保留窗口；命令的工作目录默认是当前用户主目录，输出留在新终端中，不会回传搜索结果或上传。
+
+这是执行任意本机命令的高风险入口。Suo 不判断命令是否安全，不请求管理员/root 权限；如果 Suo 自身正以管理员或 root 身份运行，会拒绝执行。当前正式目标平台仅为 Windows 和 macOS，Linux 仍不在本项目 MVP 范围内。
 
 ### 脚本返回值动作
 
@@ -77,7 +86,7 @@ Suo 自带的 [`examples/`](examples/) 仅作为安装包中的只读模板。�
 - macOS：`~/Library/Application Support/io.github.dqgod.suo/scripts`
 - Windows：`%APPDATA%\io.github.dqgod.suo\scripts`
 
-默认 `ts` 命令使用 `scripts/timestamp.py`，默认 `qr` 命令使用 `scripts/qr.py`。Suo 仅创建不存在的模板文件，升级、重装和后续启动都不会覆盖同名用户脚本；即使把 `config.json` 迁移到其他目录，用户脚本目录也保持上述固定位置。旧版默认 `examples/timestamp.py` 配置会自动迁移，用户自行配置的绝对路径或其他相对路径保持不变；v16 升级到 v17 时，仅在 `qr` 关键字/别名和 `qr-example` ID 均未被占用时添加二维码示例。
+默认 `ts` 命令使用 `scripts/timestamp.py`，默认 `qr` 命令使用 `scripts/qr.py`。Suo 仅创建不存在的模板文件，升级、重装和后续启动都不会覆盖同名用户脚本；即使把 `config.json` 迁移到其他目录，用户脚本目录也保持上述固定位置。旧版默认 `examples/timestamp.py` 配置会自动迁移，用户自行配置的绝对路径或其他相对路径保持不变；v16 升级到 v17 时，仅在 `qr` 关键字/别名和 `qr-example` ID 均未被占用时添加二维码示例。v17 升级到 v18 时会加入内置 `>` 配置；若现有关键词或别名已占用 `>`，Suo 保留用户配置并让内置命令保持关闭。
 
 ## 开发环境
 
