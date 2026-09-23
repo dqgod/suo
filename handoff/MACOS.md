@@ -6,6 +6,8 @@
 
 Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets check，但 `cfg(target_os = "macos")` 的 `/usr/bin/open`、文件权限、清理行为和真实终端兼容性仍必须在 macOS 编译并实测，不能用 Windows 通过替代。
 
+本机后台验证（2026-09-23，起点 `dev` `1917ea0`）：Node 与 Rust host 均为 arm64；前端构建、Rust 测试（127 通过、1 项本机 Bundle 集成测试跳过）、all-targets check 和 macOS `.app` 构建通过，产物为 arm64。新增真实文件系统测试确认过期 `suo-terminal-*` 文件清理不会删除近期文件或无关文件。Tauri 生成的 `.app` 原始 ad-hoc 签名未通过严格校验，本机重新签名后通过 `codesign --verify --deep --strict`；这不代表公网下载可通过 Gatekeeper。用户要求暂停前台操作，本轮没有完成 `>`、设置页和终端的图形实测；真实 v17 配置及 `.bak` 哈希保持不变。
+
 - [ ] 在普通用户权限启动 `dev` arm64 构建，输入 `>` 确认只有无动作提示；输入 `> pwd`、`> printf '你好\n'` 但不回车时不得打开终端，按 Enter 后应通过默认 Terminal 以 `/bin/bash` 执行，工作目录为 `$HOME`，完成后窗口保持可见。
 - [ ] 在“设置 → 命令与服务 → 内置命令”填写至少一个机器上已安装且支持打开 `.command` 的其他终端应用名称或绝对 `.app` 路径并实测；无效应用要给出明确错误并清理临时文件。关闭/开启、手动统一保存和自动保存都要重启复核。
 - [ ] 验证应用缓存 `terminal-commands` 权限为 `0700`，载荷 `.sh` 为 `0600`、包装 `.command` 为 `0700`；执行成功、`open` 失败后均无本轮残留。人为准备仅属于 `suo-terminal-*` 且超过 24 小时的隔离测试文件，确认只清理过期自有文件；不得使用 `sudo` 或触碰真实无关文件。

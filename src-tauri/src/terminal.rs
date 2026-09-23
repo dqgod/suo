@@ -295,6 +295,48 @@ mod tests {
         assert!(validate_command(&"x".repeat(MAX_TERMINAL_COMMAND_BYTES + 1)).is_err());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stale_cleanup_preserves_recent_and_unrelated_files() {
+        use std::{
+            fs,
+            time::{Duration, SystemTime},
+        };
+
+        let directory = std::env::temp_dir().join(format!(
+            "suo-terminal-cleanup-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let stale = SystemTime::now() - Duration::from_secs(2 * 86_400);
+        let old_owned = directory.join("suo-terminal-old.sh");
+        let recent_owned = directory.join("suo-terminal-recent.command");
+        let old_unrelated = directory.join("other-terminal-old.sh");
+        let old_wrong_extension = directory.join("suo-terminal-old.txt");
+        for path in [
+            &old_owned,
+            &recent_owned,
+            &old_unrelated,
+            &old_wrong_extension,
+        ] {
+            fs::write(path, b"test").unwrap();
+        }
+        for path in [&old_owned, &old_unrelated, &old_wrong_extension] {
+            fs::File::open(path).unwrap().set_modified(stale).unwrap();
+        }
+
+        super::cleanup_stale_command_files(
+            &directory,
+            SystemTime::now(),
+            Duration::from_secs(86_400),
+        );
+        assert!(!old_owned.exists());
+        assert!(recent_owned.exists());
+        assert!(old_unrelated.exists());
+        assert!(old_wrong_extension.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_terminal_command_uses_the_selected_visible_shell() {

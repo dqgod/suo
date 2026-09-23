@@ -239,6 +239,7 @@ pub enum WindowsTerminalShell {
     CommandPrompt,
 }
 
+#[cfg(target_os = "windows")]
 impl WindowsTerminalShell {
     pub const fn display_name(self) -> &'static str {
         match self {
