@@ -9,7 +9,7 @@ export const zhCN = {
   results: "搜索结果",
   indexing: "正在建立限定目录索引",
   noResults: "没有匹配结果",
-  tryCommands: "试试 11+1、> ls、ts 1786082576069、f report 或 google codex",
+  tryCommands: "试试 11+1、应用名、文件名，或已启用命令的关键词",
   select: "选择",
   open: "打开",
   keepOpen: "保持窗口",
