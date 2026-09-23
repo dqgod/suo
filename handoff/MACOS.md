@@ -2,7 +2,7 @@
 
 ## `dev` 0.1.4 / 配置 v18 待验证
 
-本轮新增可关闭的 `>` 内置终端命令，以及由设置皮肤基础字号派生的命令摘要/外观编辑器组件字号。发布基线仍是下文不可变的 `v0.1.3`；这些改动只能在 `dev` 验证，不能覆盖旧 tag。
+本轮新增可关闭的 `>` 内置终端命令，以及由设置皮肤基础字号派生的命令摘要/外观编辑器组件字号。历史代码基线是下文不可变的 `v0.1.3` tag；这些改动只在 `dev`，不能覆盖旧 tag。
 
 Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets check，但 `cfg(target_os = "macos")` 的 `/usr/bin/open`、文件权限、清理行为和真实终端兼容性仍必须在 macOS 编译并实测，不能用 Windows 通过替代。
 
@@ -10,8 +10,16 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 
 - [x] `>` 只显示提示；`> pwd` 和写入 `/tmp` 的命令在 Enter 前不执行，Enter 后由默认 Terminal 执行，`pwd` 结果为 `$HOME`；缓存目录为 `0700` 且执行后无残留。由于图形控制工具禁止读取 Terminal 窗口，仍需人工确认结束后窗口保持可见。
 - [x] 使用 `/Users/bytedance/Applications/iTerm.app` 绝对路径成功执行 `.command`；无效名称 `iTerm2` 显示明确错误，未产生输出文件或缓存残留。自动保存的关闭操作立即写入配置且 `>` 不再生成结果；统一保存模式下的开启操作先保持磁盘旧值，点击“保存设置”才写入，重启后仍启用。
-- [x] 用真实 v17 配置迁移到 v18 后默认启用 Terminal；测试结束时恢复原 v17 `config.json` 与 `.bak` 的原始哈希，并重新启动 `/Applications/Suo.app`。停用 `>` 后空结果仍建议 `> ls` 的文案问题已修复并在 macOS UI 复核。
+- [x] 用真实 v17 配置迁移到 v18 后默认启用 Terminal；定向测试结束时曾恢复原 v17 `config.json` 与 `.bak` 的原始哈希。停用 `>` 后空结果仍建议 `> ls` 的文案问题已修复并在 macOS UI 复核。当前正式本机安装后的配置状态见下一节。
 - [x] 设置字号 12 px 的内置命令摘要和 20 px 的脚本、网络搜索、服务、内置命令摘要已目视验证。20 px 时外观编辑器步骤卡片曾与说明重叠，布局修复后重启复核不再重叠；搜索皮肤预览仍显示自身独立字号。
+
+## 0.1.4 本地可用包与安装
+
+- 来源：`dev` 提交 `28612254e1b0687d7c5d82ddc7672b5817c3fa7d`，产品版本 0.1.4、配置协议 v18、Mach-O arm64。前端构建、Rust 测试（127 通过、1 忽略）、all-targets check 和正式 `.app` 构建通过。
+- 本地包：`~/Downloads/Suo_0.1.4_macos_arm64_local.zip`，5.7 MB，SHA-256 `99592559c7f9fe9305155ea4897f574b0f1fd56044827c6b3cc5b4792a637fa2`。使用 `ditto -c -k --sequesterRsrc --keepParent` 打包；解包后的 `.app` 通过 `codesign --verify --deep --strict`。
+- 已安装 `/Applications/Suo.app`：从 LaunchServices 冷启动后，进程路径确认为该安装包，版本 0.1.4、arm64，严格签名校验通过，Command + Space 唤出搜索框，`>` 只显示待执行提示。安装包和本地 ZIP 均无 quarantine 标记。
+- 安装后真实配置已从 v17 写成 v18；对照安装前副本，只有 `version` 和新增 `launcher.terminal` 变化，原有字段保持。旧版 0.1.3 应用及原 v17 `config.json`、`.bak` 保存在 `~/Library/Application Support/io.github.dqgod.suo-install-backup-20260923/`（目录权限 `0700`），用于本机回退。
+- 该 `.app` 经完整 ad-hoc 重签，只供本机使用。`spctl --assess --type execute` 返回 Code Signing 子系统内部错误；没有 Developer ID 签名、公证或 stapling，不能把该 ZIP 宣称为可通过公网下载 Gatekeeper 的发行包。
 
 ## `dev` 0.1.4 仍待验证
 
@@ -22,7 +30,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 - [ ] 用 v17 配置副本迁移到 v18：无冲突时默认启用 Terminal；脚本、网络搜索、翻译关键词或别名已使用 `>` 时必须原样保留用户项并关闭内置命令；新版本配置仍保持旧版本只读保护。
 - [ ] 补查 12 px 外观编辑器步骤、说明与脚本/网络搜索/服务摘要；确认默认 14 px 时说明文字不小于 12 px，并在更窄窗口下复核 20 px 布局。
 
-状态：**`v0.1.3` macOS Apple Silicon 资产已发布到 [GitHub Pre-release](https://github.com/dqgod/suo/releases/tag/v0.1.3)。** 不可变 tag 指向 `b027d774a6aa9aa61fea3f325e221f34e3dc7735`；产品版本 0.1.3，配置协议 v17，支持 macOS 13+ arm64。完整构建、实机、配置恢复和资产哈希已经移入 [`archive/MACOS_V0.1.3_2026-09-11.md`](archive/MACOS_V0.1.3_2026-09-11.md)，当前文件只保留未完成项。
+状态：**`v0.1.3` tag 仍在，但 2026-09-23 的 GitHub Release 查询返回 `release not found`。** 不可变 tag 指向 `b027d774a6aa9aa61fea3f325e221f34e3dc7735`；产品版本 0.1.3，配置协议 v17，支持 macOS 13+ arm64。历史构建、实机、配置恢复和资产哈希留在 [`archive/MACOS_V0.1.3_2026-09-11.md`](archive/MACOS_V0.1.3_2026-09-11.md)；当前本机使用上面的 0.1.4 本地包。
 
 ## 当前待验证
 
@@ -31,7 +39,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 - [ ] 真实验证 `SUO_RESULT:text:`、`image:`、`qrcode:`：中文多行复制、完整图片缩略图、raw PNG Base64、非法/超限图片拒绝、二维码 UTF-8 扫码与 500/501-byte 边界；图片/二维码不得进入二次 Shell 执行。
 - [ ] 在设置页验证 `ts`、`qr` 的 Finder 定位，以及脚本/网络搜索删除确认在手动保存和自动保存两种模式下的持久化行为。
 - [ ] 真实验证 Dock 设置页显隐、菜单栏模板图标、失焦/Esc、单实例、`startAtLogin` LaunchAgent 创建、登录后台启动和关闭清理；不得使用 `sudo`。
-- [ ] Developer ID 签名、公证和 DMG 仍未提供；当前 ZIP 只有链接器 ad-hoc 签名，不得宣称可绕过 Gatekeeper 或支持 Mac App Store。
+- [ ] Developer ID 签名、公证和 DMG 仍未提供；0.1.4 本地 ZIP 为完整 ad-hoc 签名，不得宣称可绕过公网下载的 Gatekeeper 或支持 Mac App Store。
 
 ## 不可变来源与复验命令
 
@@ -48,4 +56,4 @@ pnpm tauri build --bundles app
 file src-tauri/target/release/bundle/macos/Suo.app/Contents/MacOS/suo
 ```
 
-若复验需要代码修复，回到 `dev` 提交并发布更高版本，不能移动 `v0.1.3` tag 或覆盖现有资产。ZIP 必须使用 `ditto -c -k --sequesterRsrc --keepParent` 从真实 `.app` 创建，再解包并通过 LaunchServices 冷启动；不能用裸执行 `Contents/MacOS/suo` 代替窗口验收。
+若复验需要代码修复，回到 `dev` 提交并发布更高版本，不能移动 `v0.1.3` tag。ZIP 必须使用 `ditto -c -k --sequesterRsrc --keepParent` 从真实 `.app` 创建，再解包并通过 LaunchServices 冷启动；不能用裸执行 `Contents/MacOS/suo` 代替窗口验收。
