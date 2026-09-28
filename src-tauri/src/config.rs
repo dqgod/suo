@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 18;
+const CONFIG_VERSION: u32 = 19;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -42,14 +42,14 @@ const MAX_SCRIPT_RESULT_IMAGE_ALLOCATION_BYTES: u64 = 16 * 1024 * 1024;
 const MISSING_CUSTOM_ACCENT_COLOR: &str = "\u{0}missing-custom-accent";
 const MIN_QUERY_DEBOUNCE_MS: u64 = 0;
 const MAX_QUERY_DEBOUNCE_MS: u64 = 60_000;
-const MIN_LAUNCHER_WIDTH_PX: u32 = 560;
-const MAX_LAUNCHER_WIDTH_PX: u32 = 1_200;
-const MIN_LAUNCHER_HEIGHT_PX: u32 = 320;
-const MAX_LAUNCHER_HEIGHT_PX: u32 = 720;
-const MIN_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = -400;
-const MAX_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = 400;
-const MIN_LAUNCHER_VERTICAL_OFFSET_PX: i32 = -240;
-const MAX_LAUNCHER_VERTICAL_OFFSET_PX: i32 = 240;
+const MIN_LAUNCHER_WIDTH_PX: u32 = 256;
+const MAX_LAUNCHER_WIDTH_PX: u32 = 2_560;
+const MIN_LAUNCHER_HEIGHT_PX: u32 = 160;
+const MAX_LAUNCHER_HEIGHT_PX: u32 = 2_160;
+const MIN_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = -8_192;
+const MAX_LAUNCHER_HORIZONTAL_OFFSET_PX: i32 = 8_192;
+const MIN_LAUNCHER_VERTICAL_OFFSET_PX: i32 = -8_192;
+const MAX_LAUNCHER_VERTICAL_OFFSET_PX: i32 = 8_192;
 const MIN_SCRIPT_DEBOUNCE_MS: u64 = 20;
 const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 
@@ -58,6 +58,7 @@ const MAX_SCRIPT_DEBOUNCE_MS: u64 = 60_000;
 pub struct AppConfig {
     pub version: u32,
     pub save_settings_manually: bool,
+    pub settings_icon_style: SettingsIconStyle,
     pub launcher: LauncherConfig,
     pub translation: TranslationConfig,
     pub script_commands: Vec<ScriptCommandConfig>,
@@ -72,6 +73,8 @@ struct AppConfigWire {
     version: u32,
     #[serde(default)]
     save_settings_manually: Option<bool>,
+    #[serde(default)]
+    settings_icon_style: Option<SettingsIconStyle>,
     launcher: serde_json::Value,
     translation: TranslationConfig,
     script_commands: Vec<ScriptCommandConfig>,
@@ -142,9 +145,15 @@ impl<'de> Deserialize<'de> for AppConfig {
                 return Err(D::Error::custom("v7 配置必须包含 saveSettingsManually"));
             }
         };
+        let settings_icon_style = match wire.settings_icon_style {
+            Some(style) => style,
+            None if wire.version <= 18 => SettingsIconStyle::default(),
+            None => return Err(D::Error::custom("v19 配置必须包含 settingsIconStyle")),
+        };
         Ok(Self {
             version: wire.version,
             save_settings_manually,
+            settings_icon_style,
             launcher,
             translation: wire.translation,
             script_commands: wire.script_commands,
@@ -153,6 +162,16 @@ impl<'de> Deserialize<'de> for AppConfig {
             settings_theme,
         })
     }
+}
+
+/// Branding inside the launcher and Settings windows; native tray/Dock icons are separate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SettingsIconStyle {
+    #[default]
+    TransparentColor,
+    Monochrome,
+    Original,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -401,7 +420,7 @@ pub struct LauncherCustomThemeConfig {
     pub normal_secondary_color: String,
     pub normal_primary_font_size_px: u8,
     pub normal_secondary_font_size_px: u8,
-    pub normal_row_height_px: u8,
+    pub normal_row_height_px: u16,
     pub selected_row_background: String,
     pub selected_primary_color: String,
     pub selected_secondary_color: String,
@@ -412,6 +431,10 @@ pub struct LauncherCustomThemeConfig {
     pub show_logo: bool,
     #[serde(default = "default_show_source_badge")]
     pub show_source_badge: bool,
+    #[serde(default = "default_show_provider_status")]
+    pub show_provider_status: bool,
+    #[serde(default = "default_show_footer_hints")]
+    pub show_footer_hints: bool,
     pub max_results: u8,
     #[serde(flatten)]
     pub background: ThemeBackgroundConfig,
@@ -541,6 +564,14 @@ const fn default_show_source_badge() -> bool {
     true
 }
 
+const fn default_show_provider_status() -> bool {
+    true
+}
+
+const fn default_show_footer_hints() -> bool {
+    true
+}
+
 fn default_builtin_theme() -> String {
     "midnight".into()
 }
@@ -566,8 +597,8 @@ impl Default for LauncherThemeConfig {
 impl Default for SettingsThemeConfig {
     fn default() -> Self {
         Self {
-            theme: default_builtin_theme(),
-            accent_color: default_accent_color(),
+            theme: "forest".into(),
+            accent_color: "#236749".into(),
             custom_themes: Vec::new(),
         }
     }
@@ -703,6 +734,8 @@ impl LauncherCustomThemeConfig {
             // Preserve it during migration; users may hide it in the new skin.
             show_logo: true,
             show_source_badge: theme.show_source_badge,
+            show_provider_status: true,
+            show_footer_hints: true,
             max_results: theme.max_results,
             background: ThemeBackgroundConfig::from_legacy(theme),
         }
@@ -780,6 +813,7 @@ impl Default for AppConfig {
         Self {
             version: CONFIG_VERSION,
             save_settings_manually: true,
+            settings_icon_style: SettingsIconStyle::default(),
             launcher: LauncherConfig {
                 global_hotkey: hotkey::default_shortcut(),
                 start_at_login: false,
@@ -1411,13 +1445,13 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // cross-platform login startup, disabled by default for old files, and
         // v16 moves the bundled timestamp example to a user-owned script copy,
         // v17 adds typed script results plus the dependency-free QR example,
-        // and v18 adds the opt-out built-in terminal command and its terminal
-        // target preferences.
+        // v18 adds the opt-out built-in terminal command and its terminal
+        // target preferences; v19 adds window UI branding preference.
         // Older versions preserve their former behavior through serde defaults.
-        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 => {
+        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 => {
             config.version = CONFIG_VERSION
         }
-        18 => {}
+        19 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -1663,7 +1697,7 @@ where
         validate_theme(custom_theme)?;
     }
 
-    if !matches!(theme.as_str(), "midnight" | "paper" | "forest") {
+    if !matches!(theme.as_str(), "midnight" | "paper" | "forest" | "black") {
         let selected = theme
             .strip_prefix("custom:")
             .ok_or_else(|| format!("{scope_label}主题必须是内置主题或 custom:<id>"))?;
@@ -1721,13 +1755,13 @@ fn validate_launcher_custom_theme(theme: &LauncherCustomThemeConfig) -> Result<(
         &theme.name,
         "窗口边框宽度",
     )?;
-    if !(620..=900).contains(&theme.window_width_px) {
+    if !(256..=2_560).contains(&theme.window_width_px) {
         return Err(format!(
-            "搜索皮肤 {} 的窗口宽度必须在 620–900 px 之间",
+            "搜索皮肤 {} 的窗口宽度必须在 256–2560 px 之间",
             theme.name
         ));
     }
-    validate_range(theme.window_radius_px, 0, 28, &theme.name, "窗口圆角")?;
+    validate_range(theme.window_radius_px, 0, 255, &theme.name, "窗口圆角")?;
     validate_range(
         theme.search_border_width_px,
         0,
@@ -1741,57 +1775,57 @@ fn validate_launcher_custom_theme(theme: &LauncherCustomThemeConfig) -> Result<(
     ) {
         return Err(format!("搜索皮肤 {} 的搜索框边框样式无效", theme.name));
     }
-    if !(320..=900).contains(&theme.search_width_px)
+    if !(128..=2_560).contains(&theme.search_width_px)
         || theme.search_width_px > theme.window_width_px
     {
         return Err(format!(
-            "搜索皮肤 {} 的搜索框宽度必须在 320–窗口宽度 px 之间",
+            "搜索皮肤 {} 的搜索框宽度必须在 128–窗口宽度 px 之间",
             theme.name
         ));
     }
     validate_range(
         theme.search_font_size_px,
-        12,
-        24,
+        1,
+        255,
         &theme.name,
         "搜索文字大小",
     )?;
     validate_range(
         theme.normal_primary_font_size_px,
-        12,
-        20,
+        1,
+        255,
         &theme.name,
         "普通主文字大小",
     )?;
     validate_range(
         theme.normal_secondary_font_size_px,
-        10,
-        18,
+        1,
+        255,
         &theme.name,
         "普通次文字大小",
     )?;
     validate_range(
         theme.normal_row_height_px,
-        44,
-        84,
+        1,
+        1_024,
         &theme.name,
         "普通结果行高",
     )?;
     validate_range(
         theme.selected_primary_font_size_px,
-        12,
-        20,
+        1,
+        255,
         &theme.name,
         "选中主文字大小",
     )?;
     validate_range(
         theme.selected_secondary_font_size_px,
-        10,
-        18,
+        1,
+        255,
         &theme.name,
         "选中次文字大小",
     )?;
-    validate_range(theme.icon_size_px, 16, 64, &theme.name, "图标尺寸")?;
+    validate_range(theme.icon_size_px, 1, 255, &theme.name, "图标尺寸")?;
     if !matches!(theme.max_results, 6 | 8 | 10 | 12) {
         return Err(format!(
             "搜索皮肤 {} 最多只能显示 6、8、10 或 12 项结果",
@@ -1817,18 +1851,20 @@ fn validate_settings_custom_theme(theme: &SettingsCustomThemeConfig) -> Result<(
     ] {
         validate_hex_color(value, &format!("设置皮肤 {} 的{label}", theme.name))?;
     }
-    validate_range(theme.base_font_size_px, 12, 20, &theme.name, "基础字体大小")?;
-    validate_range(theme.radius_px, 0, 28, &theme.name, "圆角")?;
+    validate_range(theme.base_font_size_px, 1, 255, &theme.name, "基础字体大小")?;
+    validate_range(theme.radius_px, 0, 255, &theme.name, "圆角")?;
     validate_background(&theme.background, &theme.name)
 }
 
 #[allow(dead_code)]
-const LAUNCHER_THEME_BUNDLE_SCHEMA: &str = "suo-launcher-theme-v1";
+const LAUNCHER_THEME_BUNDLE_SCHEMA_V1: &str = "suo-launcher-theme-v1";
+#[allow(dead_code)]
+const LAUNCHER_THEME_BUNDLE_SCHEMA_V2: &str = "suo-launcher-theme-v2";
 #[allow(dead_code)]
 const SETTINGS_THEME_BUNDLE_SCHEMA: &str = "suo-settings-theme-v1";
 
 #[allow(dead_code)]
-const LAUNCHER_THEME_BUNDLE_FIELDS: &[&str] = &[
+const LAUNCHER_THEME_BUNDLE_FIELDS_V1: &[&str] = &[
     "name",
     "accentColor",
     "windowBackground",
@@ -1904,11 +1940,29 @@ const PLATFORM_OVERRIDE_FIELDS: &[&str] = &[
 /// the retired `suo-theme-v1` schema or a settings bundle.
 #[allow(dead_code)]
 pub fn parse_launcher_theme_bundle(value: &str) -> Result<LauncherCustomThemeConfig, String> {
-    let mut payload = parse_theme_bundle_payload(
-        value,
-        LAUNCHER_THEME_BUNDLE_SCHEMA,
-        LAUNCHER_THEME_BUNDLE_FIELDS,
-    )?;
+    let legacy_v1 = serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .is_some_and(|root| {
+            root.get("schema").and_then(serde_json::Value::as_str)
+                == Some(LAUNCHER_THEME_BUNDLE_SCHEMA_V1)
+                && root.get("version").and_then(serde_json::Value::as_u64) == Some(1)
+        });
+    let mut v2_fields = LAUNCHER_THEME_BUNDLE_FIELDS_V1.to_vec();
+    v2_fields.extend(["showProviderStatus", "showFooterHints"]);
+    let mut payload = if legacy_v1 {
+        parse_theme_bundle_payload(
+            value,
+            LAUNCHER_THEME_BUNDLE_SCHEMA_V1,
+            1,
+            LAUNCHER_THEME_BUNDLE_FIELDS_V1,
+        )?
+    } else {
+        parse_theme_bundle_payload(value, LAUNCHER_THEME_BUNDLE_SCHEMA_V2, 2, &v2_fields)?
+    };
+    if legacy_v1 {
+        payload.insert("showProviderStatus".into(), serde_json::Value::Bool(true));
+        payload.insert("showFooterHints".into(), serde_json::Value::Bool(true));
+    }
     payload.insert(
         "id".into(),
         serde_json::Value::String("imported-launcher-theme".into()),
@@ -1927,6 +1981,7 @@ pub fn parse_settings_theme_bundle(value: &str) -> Result<SettingsCustomThemeCon
     let mut payload = parse_theme_bundle_payload(
         value,
         SETTINGS_THEME_BUNDLE_SCHEMA,
+        1,
         SETTINGS_THEME_BUNDLE_FIELDS,
     )?;
     payload.insert(
@@ -1945,7 +2000,7 @@ pub fn build_launcher_theme_bundle(
     theme: &LauncherCustomThemeConfig,
 ) -> Result<serde_json::Value, String> {
     validate_launcher_custom_theme(theme)?;
-    build_theme_bundle(LAUNCHER_THEME_BUNDLE_SCHEMA, theme)
+    build_theme_bundle(LAUNCHER_THEME_BUNDLE_SCHEMA_V2, 2, theme)
 }
 
 #[allow(dead_code)]
@@ -1953,13 +2008,14 @@ pub fn build_settings_theme_bundle(
     theme: &SettingsCustomThemeConfig,
 ) -> Result<serde_json::Value, String> {
     validate_settings_custom_theme(theme)?;
-    build_theme_bundle(SETTINGS_THEME_BUNDLE_SCHEMA, theme)
+    build_theme_bundle(SETTINGS_THEME_BUNDLE_SCHEMA, 1, theme)
 }
 
 #[allow(dead_code)]
 fn parse_theme_bundle_payload(
     value: &str,
     expected_schema: &str,
+    expected_version: u64,
     expected_theme_fields: &[&str],
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let value = serde_json::from_str::<serde_json::Value>(value)
@@ -1971,8 +2027,8 @@ fn parse_theme_bundle_payload(
     if root.get("schema").and_then(serde_json::Value::as_str) != Some(expected_schema) {
         return Err(format!("皮肤导入 scope 不匹配；只接受 {expected_schema}"));
     }
-    if root.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
-        return Err("皮肤导入版本必须是 v1".into());
+    if root.get("version").and_then(serde_json::Value::as_u64) != Some(expected_version) {
+        return Err(format!("皮肤导入版本必须是 v{expected_version}"));
     }
     let theme = root
         .get("theme")
@@ -2009,7 +2065,11 @@ fn validate_exact_object_fields(
 }
 
 #[allow(dead_code)]
-fn build_theme_bundle<T: Serialize>(schema: &str, theme: &T) -> Result<serde_json::Value, String> {
+fn build_theme_bundle<T: Serialize>(
+    schema: &str,
+    version: u64,
+    theme: &T,
+) -> Result<serde_json::Value, String> {
     let mut theme = serde_json::to_value(theme)
         .map_err(|error| format!("无法序列化皮肤：{error}"))?
         .as_object()
@@ -2018,7 +2078,7 @@ fn build_theme_bundle<T: Serialize>(schema: &str, theme: &T) -> Result<serde_jso
     theme.remove("id");
     Ok(serde_json::json!({
         "schema": schema,
-        "version": 1,
+        "version": version,
         "theme": theme,
     }))
 }
@@ -2750,6 +2810,13 @@ pub fn get_app_config(state: State<'_, Arc<ConfigState>>) -> AppConfigView {
     state.view()
 }
 
+/// Check an edited draft through the same rules as saving, without changing
+/// the live config, filesystem, or platform integrations.
+#[tauri::command]
+pub fn validate_app_config(config: AppConfig) -> Result<(), String> {
+    normalize_and_validate(config).map(|_| ())
+}
+
 #[tauri::command]
 pub fn open_config_directory(state: State<'_, Arc<ConfigState>>) -> Result<(), String> {
     let path = state.config_path()?;
@@ -2997,6 +3064,8 @@ mod tests {
             show_search_icon: true,
             show_logo: false,
             show_source_badge: true,
+            show_provider_status: true,
+            show_footer_hints: true,
             max_results: 8,
             background: theme_background(),
         }
@@ -3092,6 +3161,26 @@ mod tests {
                 "macosOpacity": 94,
             },
         })
+    }
+
+    #[test]
+    fn minimal_black_builtin_round_trips_in_both_independent_scopes() {
+        let mut config = AppConfig::default();
+        config.launcher_theme.theme = "black".into();
+        config.launcher_theme.accent_color = "#707070".into();
+        let normalized = normalize_and_validate(config).expect("black launcher is supported");
+        assert_eq!(normalized.launcher_theme.theme, "black");
+        assert_eq!(normalized.settings_theme.theme, "forest");
+        let mut config = normalized;
+        config.settings_theme.theme = "black".into();
+        config.settings_theme.accent_color = "#707070".into();
+        let serialized = serde_json::to_string(&config).unwrap();
+        let loaded: AppConfig = serde_json::from_str(&serialized).unwrap();
+        let loaded = normalize_and_validate(loaded).expect("black settings are supported");
+        assert_eq!(loaded.launcher_theme.theme, "black");
+        assert_eq!(loaded.settings_theme.theme, "black");
+        assert!(loaded.launcher_theme.custom_themes.is_empty());
+        assert!(loaded.settings_theme.custom_themes.is_empty());
     }
 
     fn base64_encode(bytes: &[u8]) -> String {
@@ -3264,6 +3353,13 @@ mod tests {
         let config =
             normalize_and_validate(AppConfig::default()).expect("default config should be valid");
         assert!(config.save_settings_manually);
+        assert_eq!(config.version, 19);
+        assert_eq!(
+            config.settings_icon_style,
+            SettingsIconStyle::TransparentColor
+        );
+        assert_eq!(config.settings_theme.theme, "forest");
+        assert_eq!(config.settings_theme.accent_color, "#236749");
         assert_eq!(
             config.launcher.global_hotkey,
             hotkey::normalize_shortcut(&hotkey::default_shortcut()).unwrap()
@@ -3299,6 +3395,92 @@ mod tests {
             config.script_commands[0].result_action,
             ScriptResultAction::Copy
         );
+    }
+
+    #[test]
+    fn migrates_v18_branding_without_changing_existing_preferences() {
+        let mut existing = AppConfig::default();
+        let old_custom_theme = settings_custom_theme("old-custom");
+        existing
+            .launcher_theme
+            .custom_themes
+            .push(launcher_custom_theme("old-launcher"));
+        existing
+            .settings_theme
+            .custom_themes
+            .push(old_custom_theme.clone());
+        let mut previous = serde_json::to_value(existing).expect("serialize current");
+        previous["version"] = serde_json::json!(18);
+        previous["settingsTheme"]["theme"] = serde_json::json!("midnight");
+        previous["settingsTheme"]["accentColor"] = serde_json::json!("#8a78ff");
+        previous["launcher"]["terminal"]["enabled"] = serde_json::json!(false);
+        previous["launcher"]["windowWidthPx"] = serde_json::json!(1_700);
+        previous
+            .as_object_mut()
+            .unwrap()
+            .remove("settingsIconStyle");
+        previous["launcherTheme"]["customThemes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("showProviderStatus");
+        previous["launcherTheme"]["customThemes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("showFooterHints");
+
+        let mut selected_custom = previous.clone();
+        selected_custom["settingsTheme"]["theme"] = serde_json::json!("custom:old-custom");
+        let selected_custom = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(selected_custom).expect("deserialize custom v18"),
+        )
+        .expect("migrate selected custom theme");
+        assert_eq!(selected_custom.settings_theme.theme, "custom:old-custom");
+
+        let migrated = normalize_and_validate(
+            serde_json::from_value::<AppConfig>(previous).expect("deserialize v18"),
+        )
+        .expect("migrate v18");
+        assert_eq!(migrated.version, CONFIG_VERSION);
+        assert_eq!(
+            migrated.settings_icon_style,
+            SettingsIconStyle::TransparentColor
+        );
+        assert_eq!(migrated.settings_theme.theme, "midnight");
+        assert_eq!(migrated.settings_theme.accent_color, "#8a78ff");
+        assert_eq!(
+            migrated.settings_theme.custom_themes,
+            vec![old_custom_theme]
+        );
+        assert!(migrated.launcher_theme.custom_themes[0].show_provider_status);
+        assert!(migrated.launcher_theme.custom_themes[0].show_footer_hints);
+        assert!(!migrated.launcher.terminal.enabled);
+        assert_eq!(migrated.launcher.window_width_px, Some(1_700));
+        assert_eq!(migrated.script_commands.len(), 2);
+        assert_eq!(migrated.web_searches.len(), 1);
+    }
+
+    #[test]
+    fn branding_style_roundtrips_and_rejects_invalid_current_values() {
+        for (style, encoded_style) in [
+            (SettingsIconStyle::TransparentColor, "transparentColor"),
+            (SettingsIconStyle::Monochrome, "monochrome"),
+            (SettingsIconStyle::Original, "original"),
+        ] {
+            let mut config = AppConfig::default();
+            config.settings_icon_style = style;
+            let encoded = serde_json::to_value(&config).expect("serialize style");
+            assert_eq!(encoded["settingsIconStyle"], encoded_style);
+            let decoded = serde_json::from_value::<AppConfig>(encoded).expect("deserialize style");
+            assert_eq!(decoded.settings_icon_style, style);
+        }
+
+        let mut missing = serde_json::to_value(AppConfig::default()).expect("serialize current");
+        missing.as_object_mut().unwrap().remove("settingsIconStyle");
+        assert!(serde_json::from_value::<AppConfig>(missing).is_err());
+
+        let mut unknown = serde_json::to_value(AppConfig::default()).expect("serialize current");
+        unknown["settingsIconStyle"] = serde_json::json!("remoteIcon");
+        assert!(serde_json::from_value::<AppConfig>(unknown).is_err());
     }
 
     #[test]
@@ -4079,7 +4261,7 @@ mod tests {
 
         let mut invalid_width = AppConfig::default();
         let mut theme = launcher_custom_theme("bad-width");
-        theme.window_width_px = 901;
+        theme.window_width_px = 2_561;
         invalid_width.launcher_theme.custom_themes.push(theme);
         assert!(normalize_and_validate(invalid_width).is_err());
 
@@ -4090,14 +4272,56 @@ mod tests {
         borderless.launcher_theme.custom_themes.push(theme);
         assert!(normalize_and_validate(borderless).is_ok());
 
-        let mut oversized_search_text = AppConfig::default();
-        let mut theme = launcher_custom_theme("oversized-search-text");
-        theme.search_font_size_px = 25;
-        oversized_search_text
-            .launcher_theme
-            .custom_themes
-            .push(theme);
-        assert!(normalize_and_validate(oversized_search_text).is_err());
+        let mut zero_search_text = AppConfig::default();
+        let mut theme = launcher_custom_theme("zero-search-text");
+        theme.search_font_size_px = 0;
+        zero_search_text.launcher_theme.custom_themes.push(theme);
+        assert!(normalize_and_validate(zero_search_text).is_err());
+
+        let mut smallest = AppConfig::default();
+        let mut theme = launcher_custom_theme("smallest");
+        theme.window_width_px = 256;
+        theme.search_width_px = 128;
+        theme.normal_row_height_px = 1;
+        smallest.launcher_theme.custom_themes.push(theme);
+        assert!(normalize_and_validate(smallest).is_ok());
+
+        for font_size in [1, 8, 32, 255] {
+            let mut legal = AppConfig::default();
+            let mut theme = launcher_custom_theme("wide-range");
+            theme.search_font_size_px = font_size;
+            theme.normal_primary_font_size_px = font_size;
+            theme.normal_secondary_font_size_px = font_size;
+            theme.selected_primary_font_size_px = font_size;
+            theme.selected_secondary_font_size_px = font_size;
+            theme.icon_size_px = font_size;
+            theme.window_radius_px = font_size;
+            theme.window_width_px = 2_560;
+            theme.search_width_px = 2_560;
+            theme.normal_row_height_px = 1_024;
+            legal.launcher_theme.custom_themes.push(theme);
+            let mut settings = settings_custom_theme("wide-range");
+            settings.base_font_size_px = font_size;
+            settings.radius_px = font_size;
+            legal.settings_theme.custom_themes.push(settings);
+            assert!(
+                normalize_and_validate(legal).is_ok(),
+                "legal font/icon size {font_size}"
+            );
+        }
+
+        let mut oversized_row = AppConfig::default();
+        let mut theme = launcher_custom_theme("oversized-row");
+        theme.normal_row_height_px = 1_025;
+        oversized_row.launcher_theme.custom_themes.push(theme);
+        assert!(normalize_and_validate(oversized_row).is_err());
+
+        let mut too_wide_search = AppConfig::default();
+        let mut theme = launcher_custom_theme("too-wide-search");
+        theme.window_width_px = 256;
+        theme.search_width_px = 257;
+        too_wide_search.launcher_theme.custom_themes.push(theme);
+        assert!(normalize_and_validate(too_wide_search).is_err());
 
         let mut remote_wallpaper = AppConfig::default();
         let mut theme = settings_custom_theme("bad-wallpaper");
@@ -4124,14 +4348,55 @@ mod tests {
 
     #[test]
     fn rejects_wrong_scope_and_illegal_theme_bundle_tokens() {
-        let launcher = launcher_custom_theme("bundle");
+        let mut launcher = launcher_custom_theme("bundle");
+        launcher.show_provider_status = false;
+        launcher.show_footer_hints = false;
         let launcher_bundle =
             build_launcher_theme_bundle(&launcher).expect("build launcher bundle");
+        assert_eq!(launcher_bundle["schema"], "suo-launcher-theme-v2");
+        assert_eq!(launcher_bundle["version"], 2);
         assert_eq!(launcher_bundle["theme"]["accentColor"], "#8a78ff");
         let serialized =
             serde_json::to_string(&launcher_bundle).expect("serialize launcher bundle");
-        assert!(parse_launcher_theme_bundle(&serialized).is_ok());
+        let parsed = parse_launcher_theme_bundle(&serialized).expect("parse v2 launcher bundle");
+        assert!(!parsed.show_provider_status);
+        assert!(!parsed.show_footer_hints);
         assert!(parse_settings_theme_bundle(&serialized).is_err());
+
+        let mut legacy_launcher = launcher_bundle.clone();
+        legacy_launcher["schema"] = serde_json::json!("suo-launcher-theme-v1");
+        legacy_launcher["version"] = serde_json::json!(1);
+        legacy_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("showProviderStatus");
+        legacy_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("showFooterHints");
+        let parsed_legacy = parse_launcher_theme_bundle(&legacy_launcher.to_string())
+            .expect("parse complete v1 launcher bundle");
+        assert!(parsed_legacy.show_provider_status);
+        assert!(parsed_legacy.show_footer_hints);
+
+        let mut old_with_v2_field = legacy_launcher.clone();
+        old_with_v2_field["theme"]["showProviderStatus"] = serde_json::json!(false);
+        assert!(parse_launcher_theme_bundle(&old_with_v2_field.to_string()).is_err());
+
+        let mut missing_visibility = launcher_bundle.clone();
+        missing_visibility["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("showFooterHints");
+        assert!(parse_launcher_theme_bundle(&missing_visibility.to_string()).is_err());
+
+        let mut wrong_visibility = launcher_bundle.clone();
+        wrong_visibility["theme"]["showProviderStatus"] = serde_json::json!("false");
+        assert!(parse_launcher_theme_bundle(&wrong_visibility.to_string()).is_err());
+
+        let mut unsupported_version = launcher_bundle.clone();
+        unsupported_version["version"] = serde_json::json!(3);
+        assert!(parse_launcher_theme_bundle(&unsupported_version.to_string()).is_err());
 
         let settings_bundle = build_settings_theme_bundle(&settings_custom_theme("bundle"))
             .expect("build settings bundle");

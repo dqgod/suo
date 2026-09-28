@@ -114,14 +114,14 @@ button {
 .launcher {
   position: relative;
   display: grid;
-  grid-template-rows: 74px 42px minmax(0, 1fr) 44px;
+  grid-template-rows: minmax(74px, max-content) var(--launcher-provider-row-size, minmax(42px, max-content)) minmax(0, 1fr) var(--launcher-footer-row-size, minmax(44px, max-content));
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: hidden auto;
   border: var(--launcher-window-border-width) solid var(--launcher-window-border);
   border-radius: var(--launcher-window-radius);
   background: color-mix(in srgb, var(--launcher-window-bg) var(--launcher-window-opacity), transparent);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--launcher-window-shadow-opacity)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, var(--launcher-window-shadow-opacity)), inset 0 1px 0 rgba(255, 255, 255, calc(var(--launcher-window-shadow-opacity) * 0.11));
   backdrop-filter: blur(var(--launcher-window-blur));
   isolation: isolate;
 }
@@ -152,7 +152,7 @@ button {
 }
 
 .launcher.compact-empty {
-  grid-template-rows: 74px;
+  grid-template-rows: minmax(74px, max-content);
 }
 
 .search-box {
@@ -186,14 +186,16 @@ button {
 
 .search-box input {
   width: 100%;
-  height: 100%;
+  min-height: 38px;
   min-width: 0;
+  padding: 4px 0;
   border: 0;
   outline: 0;
   color: var(--launcher-search-text);
   background: transparent;
   font-size: var(--launcher-search-font-size);
   font-weight: 460;
+  line-height: 1.15;
 }
 
 .search-box input::placeholder {
@@ -243,6 +245,7 @@ button {
   display: block;
   width: 34px;
   height: 34px;
+  color: var(--launcher-accent);
   pointer-events: none;
 }
 
@@ -308,7 +311,7 @@ button {
 }
 
 .results {
-  min-height: 0;
+  min-height: min(120px, 35vh);
   overflow: hidden auto;
   padding: 7px 10px;
   scrollbar-width: thin;
@@ -360,6 +363,7 @@ button {
   place-items: center;
   width: var(--launcher-icon-size);
   height: var(--launcher-icon-size);
+  max-width: 100%;
   border-radius: min(9px, calc(var(--launcher-window-radius) * 0.55));
   color: #ecedff;
   background: linear-gradient(145deg, #7463eb, #5649c5);
@@ -381,7 +385,7 @@ button {
   object-fit: contain;
 }
 
-.path-result-icon { width: 21px; height: 21px; }
+.path-result-icon { width: 70%; height: 70%; }
 .result-icon.directory,
 .result-icon.folder { color: #f6c45f; background: color-mix(in srgb, #d99a2c 16%, var(--launcher-search-bg)); }
 .result-icon.file { color: color-mix(in srgb, var(--launcher-result-secondary) 88%, white); background: color-mix(in srgb, var(--launcher-search-bg) 90%, var(--launcher-window-bg)); }
@@ -499,12 +503,13 @@ kbd {
   font-size: 10px;
 }
 
-footer {
+.launcher > footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 14px;
-  padding: 0 16px;
+  padding: 8px 16px;
   border-top: 1px solid rgba(132, 145, 182, 0.12);
   color: #687590;
   font-size: 9px;
@@ -518,7 +523,38 @@ footer {
 }
 
 .key-help {
+  flex-wrap: wrap;
   gap: 12px;
+}
+
+@media (max-width: 620px) {
+  .launcher .result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .launcher .result-icon {
+    flex: 0 1 auto;
+    width: min(var(--launcher-icon-size), 100%);
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  .launcher .result-copy {
+    flex: 1 1 100%;
+    order: 2;
+  }
+
+  .launcher .result-badge {
+    margin: 0 0 0 auto;
+    order: 1;
+  }
+
+  .launcher .result > kbd {
+    order: 1;
+  }
 }
 
 .key-help span {
@@ -594,13 +630,13 @@ body,
 .search-box svg,
 .provider-copy > span:last-child,
 .index-button,
-footer,
+.launcher > footer,
 .hotkey {
   color: var(--launcher-result-secondary);
 }
 
 .provider-row,
-footer {
+.launcher > footer {
   border-color: color-mix(in srgb, var(--launcher-window-border) 72%, transparent);
 }
 
@@ -621,3 +657,27 @@ kbd {
   border-color: color-mix(in srgb, var(--launcher-selected-primary) 34%, transparent);
   background: var(--launcher-selected-bg);
 }
+
+/* Neutral palettes retain native application artwork but remove coloured
+   decoration from Suo-owned result glyphs and status indicators. */
+:root[data-launcher-neutral-chrome="true"] .launcher .result-icon:not(.native-icon):not(.error) {
+  color:var(--launcher-result-primary);
+  background:var(--launcher-selected-bg);
+  box-shadow:none;
+}
+:root[data-launcher-neutral-chrome="true"] .launcher .status-dot {
+  background:var(--launcher-result-secondary);
+  box-shadow:none;
+}
+
+/* These are skin capabilities, shared by every built-in and custom skin. */
+:root[data-launcher-show-provider-status="false"] .launcher { --launcher-provider-row-size:0px; }
+:root[data-launcher-show-footer-hints="false"] .launcher { --launcher-footer-row-size:0px; }
+.launcher > .search-box { grid-row:1; }
+.launcher > .provider-row { grid-row:2; }
+.launcher > .results { grid-row:3; }
+.launcher > footer { grid-row:4; }
+:root[data-launcher-show-provider-status="false"] .launcher > .provider-row,
+:root[data-launcher-show-footer-hints="false"] .launcher > footer { display:none; }
+:root[data-launcher-search-border-enabled="false"] .search-box,
+:root[data-launcher-search-border-enabled="false"] .search-box:focus-within { box-shadow:none; }

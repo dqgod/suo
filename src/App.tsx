@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./Settings";
-import { SuoIcon } from "./SuoIcon";
+import { SuoIcon, type SettingsIconStyle } from "./SuoIcon";
 import {
   AppConfig,
   applyLauncherAppearance,
@@ -342,9 +342,11 @@ function Launcher() {
   const [composing, setComposing] = useState(false);
   const [launcherVisible, setLauncherVisible] = useState(false);
   const [compactWhenEmpty, setCompactWhenEmpty] = useState(false);
+  const [settingsIconStyle, setSettingsIconStyle] = useState<SettingsIconStyle>("transparentColor");
   const [configReady, setConfigReady] = useState(false);
   const [appearanceLayoutRevision, setAppearanceLayoutRevision] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectedResultRef = useRef<HTMLButtonElement>(null);
   const requestId = useRef(0);
   const queryRef = useRef("");
   const completedRequestIdRef = useRef(-1);
@@ -429,6 +431,7 @@ function Launcher() {
       keepLastInputRef.current = config.launcher.keepLastInput;
       scriptCommandsRef.current = config.scriptCommands;
       setCompactWhenEmpty(config.launcher.compactWhenEmpty);
+      setSettingsIconStyle(config.settingsIconStyle);
       emptyQueryDebounceMsRef.current = config.launcher.emptyQueryDebounceMs;
       nonEmptyQueryDebounceMsRef.current = config.launcher.nonEmptyQueryDebounceMs;
       applyLauncherAppearance(config.launcherTheme, config.launcher);
@@ -501,6 +504,12 @@ function Launcher() {
   }, [composing, configReady, query, search]);
 
   const compactEmpty = compactWhenEmpty && query.length === 0;
+
+  useEffect(() => {
+    if (launcherVisible && !compactEmpty) {
+      selectedResultRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [compactEmpty, launcherVisible, response.results, selectedIndex]);
 
   useEffect(() => {
     const requested = compactEmpty;
@@ -726,7 +735,7 @@ function Launcher() {
             aria-label={zhCN.openSettings}
             onClick={() => void openSettings()}
           >
-            <SuoIcon className="brand-button-icon" />
+            <SuoIcon className="brand-button-icon" iconStyle={settingsIconStyle} />
           </button>
         </div>
 
@@ -749,6 +758,7 @@ function Launcher() {
                   className={`result ${index === selectedIndex ? "selected" : ""} ${configuredResultImageDataUrl(result.resultImageDataUrl) ? "with-result-image" : ""}`}
                   type="button"
                   key={result.id}
+                  ref={index === selectedIndex ? selectedResultRef : undefined}
                   role="option"
                   aria-selected={index === selectedIndex}
                   onMouseEnter={() => setSelectedIndex(index)}

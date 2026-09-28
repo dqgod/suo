@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import SettingsDialog from "./SettingsDialog";
+import { settingsRedesign as ui } from "./i18n/settings-redesign";
 import {
   aliasesFromText,
   AppConfig,
@@ -9,6 +12,7 @@ import {
   applySettingsAppearance,
   loadAppConfig,
   resolveLauncherTheme,
+  resolveSettingsTheme,
   ScriptCommandConfig,
   ScriptResultAction,
   ScriptRuntime,
@@ -17,6 +21,8 @@ import {
   TranslationProvider,
   validateCommandIconImageDataUrl,
   WebSearchConfig,
+  SettingsIconStyle,
+  visualBounds,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
 import { SuoIcon } from "./SuoIcon";
@@ -24,6 +30,13 @@ import AppearanceEditor from "./AppearanceEditor";
 import "./Settings.css";
 
 const t = zhCN.settings;
+function validateVisibleFields(form: HTMLFormElement | null) {
+  if (!form) return false;
+  for (const field of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input, select, textarea")) {
+    if (field.getClientRects().length && !field.disabled && !field.reportValidity()) return false;
+  }
+  return true;
+}
 type Section = "general" | "search" | "configuration" | "appearance";
 type ConfigurationCategory = "builtins" | "scripts" | "web" | "services";
 
@@ -147,32 +160,33 @@ function queryDebounceFromInput(value: string) {
   return Math.min(maximumQueryDebounceMs, Math.max(0, Math.trunc(parsed)));
 }
 
-function boundedIntegerFromInput(value: string, current: number, minimum: number, maximum: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return current;
-  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
-}
-
 type PixelRangeControlProps = {
   value: number;
   minimum: number;
   maximum: number;
+  legalMinimum: number;
+  legalMaximum: number;
+  label: string;
   disabled: boolean;
   onChange: (value: number) => void;
 };
 
-function PixelRangeControl({ value, minimum, maximum, disabled, onChange }: PixelRangeControlProps) {
+function PixelRangeControl({ value, minimum, maximum, legalMinimum, legalMaximum, label, disabled, onChange }: PixelRangeControlProps) {
   const [numberDraft, setNumberDraft] = useState(String(value));
-  useEffect(() => setNumberDraft(String(value)), [value]);
+  useEffect(() => { setNumberDraft(String(value)); numberRef.current?.setCustomValidity(""); }, [value]);
+  const numberRef = useRef<HTMLInputElement>(null);
   const commitNumberDraft = () => {
-    const next = boundedIntegerFromInput(numberDraft, value, minimum, maximum);
-    setNumberDraft(String(next));
-    if (next !== value) onChange(next);
+    const next = Number(numberDraft);
+    const valid = numberDraft.trim() !== "" && Number.isInteger(next) && next >= legalMinimum && next <= legalMaximum;
+    numberRef.current?.setCustomValidity(valid ? "" : ui.numberRange.replace("{min}", String(legalMinimum)).replace("{max}", String(legalMaximum)));
+    if (valid && next !== value) onChange(next);
   };
   return (
     <span className="pixel-range-control">
       <input
         type="range"
+        aria-label={label}
+        title={ui.comfortableRange}
         min={minimum}
         max={maximum}
         step={1}
@@ -181,24 +195,28 @@ function PixelRangeControl({ value, minimum, maximum, disabled, onChange }: Pixe
         onChange={(event) => {
           const next = Number(event.target.value);
           setNumberDraft(String(next));
+          numberRef.current?.setCustomValidity("");
           onChange(next);
         }}
       />
       <span className="pixel-number-input">
         <input
+          ref={numberRef}
+          aria-label={`${label} (${zhCN.pixels})`}
           type="number"
-          min={minimum}
-          max={maximum}
+          min={legalMinimum}
+          max={legalMaximum}
           step={1}
           disabled={disabled}
           value={numberDraft}
-          onChange={(event) => setNumberDraft(event.target.value)}
+          onChange={(event) => { setNumberDraft(event.target.value); event.target.setCustomValidity(""); }}
           onBlur={commitNumberDraft}
           onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
             if (event.key === "Escape") {
+              event.stopPropagation();
               setNumberDraft(String(value));
-              event.currentTarget.blur();
+              event.currentTarget.setCustomValidity("");
             }
           }}
         />
@@ -270,23 +288,6 @@ function applyEditor(config: AppConfig, editor: EditorState): AppConfig {
   };
 }
 
-function settleEditorForNavigation(config: AppConfig, editor: EditorState): AppConfig {
-  if (editor.original !== null) return applyEditor(config, editor);
-  if (editor.kind === "script") {
-    return {
-      ...config,
-      scriptCommands: config.scriptCommands.filter((command) => command.id !== editor.id),
-    };
-  }
-  if (editor.kind === "web") {
-    return {
-      ...config,
-      webSearches: config.webSearches.filter((search) => search.id !== editor.id),
-    };
-  }
-  return config;
-}
-
 function Settings() {
   const [section, setSection] = useState<Section>("general");
   const [category, setCategory] = useState<ConfigurationCategory>("builtins");
@@ -304,6 +305,12 @@ function Settings() {
   const [recordingHotkey, setRecordingHotkey] = useState(false);
   const [changingConfigLocation, setChangingConfigLocation] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
+  const [appearanceDirty, setAppearanceDirty] = useState(false);
+  const [appearanceResetToken, setAppearanceResetToken] = useState(0);
+  const [detailTarget, setDetailTarget] = useState<HTMLDivElement | null>(null);
+  const [commandFilter, setCommandFilter] = useState("");
+  const [pendingAction, setPendingAction] = useState<{ kind: "switch" | "close" | "discard"; run: () => void } | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const hotkeyButtonRef = useRef<HTMLButtonElement | null>(null);
   const draftRevisionRef = useRef(0);
   const draftRef = useRef<AppConfig | null>(null);
@@ -316,6 +323,11 @@ function Settings() {
   const hotkeyOperationRef = useRef<Promise<void>>(Promise.resolve());
   const hotkeyCleanupErrorRef = useRef(false);
   const hotkeyCapturePendingRef = useRef(false);
+
+  const editorDirty = Boolean(editor && (editor.original === null || JSON.stringify(editor.value) !== JSON.stringify(editor.original)));
+  const configDirty = Boolean(draft && JSON.stringify(draft) !== persistedSignatureRef.current);
+  const credentialsDirty = Boolean(apiKey || youdaoAppKey || youdaoAppSecret);
+  const hasUnsaved = configDirty || editorDirty || appearanceDirty || credentialsDirty;
 
   const setDraft = useCallback((update: AppConfig | null | ((current: AppConfig | null) => AppConfig | null)) => {
     const next = typeof update === "function" ? update(draftRef.current) : update;
@@ -385,13 +397,44 @@ function Settings() {
     })();
   }, [setDraft, stopHotkeyRecording]);
 
-  const close = useCallback(async () => {
+  const hideWindow = useCallback(async () => {
     try {
       await invoke("hide_settings");
     } catch (closeError) {
       setError(String(closeError));
     }
   }, []);
+
+  const discardDrafts = useCallback(() => {
+    autoSaveDesiredRef.current = null;
+    autoSaveBlockedRef.current = true;
+    setAutoSaveNeedsRetry(false);
+    if (view) { setDraft(view.config); applySettingsAppearance(view.config.settingsTheme); }
+    setEditor(null);
+    setApiKey(""); setYoudaoAppKey(""); setYoudaoAppSecret("");
+    setAppearanceResetToken((token) => token + 1);
+    setAppearanceDirty(false);
+    setError("");
+  }, [view, setDraft]);
+
+  const close = useCallback(async () => {
+    if (saving || autoSaving || changingConfigLocation) return;
+    if (hasUnsaved) {
+      setPendingAction({ kind: "close", run: () => { discardDrafts(); void hideWindow(); } });
+    } else await hideWindow();
+  }, [hasUnsaved, saving, autoSaving, changingConfigLocation, discardDrafts, hideWindow]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen("settings-close-requested", () => void close()).then((off) => { if (disposed) off(); else unlisten = off; });
+    return () => { disposed = true; unlisten?.(); };
+  }, [close]);
+
+  const guardEditorChange = (run: () => void) => {
+    if (editorDirty || credentialsDirty) setPendingAction({ kind: "switch", run });
+    else run();
+  };
 
   const queueAutoSave = useCallback((config: AppConfig) => {
     const request = {
@@ -528,7 +571,6 @@ function Settings() {
     if (
       !draft
       || draft.saveSettingsManually
-      || editor
       || saving
       || view?.configReadOnly
       || JSON.stringify(draft) === persistedSignatureRef.current
@@ -574,8 +616,8 @@ function Settings() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (saving) return;
+      if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      if (saving || autoSaving) return;
       if (pendingRemoval) {
         event.preventDefault();
         setPendingRemoval(null);
@@ -588,17 +630,19 @@ function Settings() {
       }
       if (editor) {
         event.preventDefault();
-        cancelEditor();
+        guardEditorChange(cancelEditor);
       } else {
         void close();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [close, editor, pendingRemoval, recordingHotkey, saving, stopHotkeyRecording]);
+  }, [close, editor, editorDirty, credentialsDirty, pendingRemoval, recordingHotkey, saving, autoSaving, stopHotkeyRecording]);
 
   const save = async () => {
-    if (!draft) return;
+    if (!draft || saving || autoSaving || view?.configReadOnly) return;
+    if (credentialsDirty) { setError(ui.credentialsUnsaved); return; }
+    if (!validateVisibleFields(formRef.current)) return;
     const config = editor ? applyEditor(draft, editor) : draft;
     const startedAtRevision = draftRevisionRef.current;
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -628,6 +672,8 @@ function Settings() {
   };
 
   const saveTranslationCredentials = async (provider: TranslationProvider) => {
+    if (saving || autoSaving || view?.configReadOnly) return;
+    setSaving(true);
     setError("");
     try {
       const next = await invoke<AppConfigView>("set_translation_credentials", {
@@ -643,11 +689,13 @@ function Settings() {
       showStatus(t.credentialsSaved);
     } catch (saveError) {
       setError(String(saveError));
-    }
+    } finally { setSaving(false); }
   };
 
   const clearTranslationCredentials = async (provider: TranslationProvider) => {
+    if (saving || autoSaving || view?.configReadOnly) return;
     if (!window.confirm(t.confirmClearCredentials.replace("{provider}", translationProviderLabels[provider]))) return;
+    setSaving(true);
     setError("");
     try {
       const next = await invoke<AppConfigView>("clear_translation_credentials", { provider });
@@ -658,7 +706,7 @@ function Settings() {
       showStatus(t.credentialsCleared);
     } catch (clearError) {
       setError(String(clearError));
-    }
+    } finally { setSaving(false); }
   };
 
   const rebuildIndex = async () => {
@@ -725,148 +773,54 @@ function Settings() {
     setYoudaoAppSecret("");
   };
 
-  const commitEditor = () => {
-    if (!draft || !editor) return;
-    setDraft(applyEditor(draft, editor));
-    if (editor.kind === "translation") resetTranslationCredentialDrafts();
-    setEditor(null);
+  const commitEditor = async () => {
+    if (!draft || !editor || saving || autoSaving || view?.configReadOnly) return;
+    if (!validateVisibleFields(formRef.current)) return;
+    if (credentialsDirty) { setError(ui.credentialsUnsaved); return; }
+    const config = applyEditor(draft, editor);
+    setSaving(true); setError("");
+    try {
+      await invoke("validate_app_config", { config });
+      if (draft.saveSettingsManually) { setDraft(config); showStatus(ui.editorDraft); }
+      else {
+        const next = await invoke<AppConfigView>("save_app_config", { config });
+        persistedSignatureRef.current = JSON.stringify(next.config);
+        autoSaveDesiredRef.current = null; autoSaveBlockedRef.current = false;
+        setAutoSaveNeedsRetry(false); setView(next); setDraft(next.config);
+        applySettingsAppearance(next.config.settingsTheme); showStatus(ui.editorSaved);
+      }
+      setEditor(null);
+    } catch (saveError) { setError(String(saveError)); }
+    finally { setSaving(false); }
   };
 
   function cancelEditor() {
-    if (!editor) return;
-    if (editor.kind === "translation") resetTranslationCredentialDrafts();
-    setDraft((current) => {
-      if (!current) return current;
-      if (editor.original === null) {
-        if (editor.kind === "script") {
-          return {
-            ...current,
-            scriptCommands: current.scriptCommands.filter((command) => command.id !== editor.id),
-          };
-        }
-        if (editor.kind === "web") {
-          return {
-            ...current,
-            webSearches: current.webSearches.filter((search) => search.id !== editor.id),
-          };
-        }
-        return current;
-      }
-      // The enable switch is visible in the summary while an editor is open
-      // and mirrors into the page draft. Restore the captured item as well as
-      // discarding unsaved form fields when the user chooses Cancel.
-      if (editor.kind === "terminal") {
-        return {
-          ...current,
-          launcher: {
-            ...current.launcher,
-            terminal: cloneTerminal(editor.original),
-          },
-        };
-      }
-      if (editor.kind === "translation") {
-        return { ...current, translation: cloneTranslation(editor.original) };
-      }
-      if (editor.kind === "script") {
-        const original = editor.original;
-        if (!original) return current;
-        return {
-          ...current,
-          scriptCommands: current.scriptCommands.map((command) => (
-            command.id === editor.id ? cloneScript(original) : command
-          )),
-        };
-      }
-      const original = editor.original;
-      if (!original) return current;
-      return {
-        ...current,
-        webSearches: current.webSearches.map((search) => (
-          search.id === editor.id ? cloneWebSearch(original) : search
-        )),
-      };
-    });
+    resetTranslationCredentialDrafts();
     setEditor(null);
   }
 
-  const changeSection = (next: Section) => {
-    if (editor?.kind === "translation") resetTranslationCredentialDrafts();
-    if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
-    setEditor(null);
-    setSection(next);
-  };
-
-  const changeCategory = (next: ConfigurationCategory) => {
-    if (editor?.kind === "translation") resetTranslationCredentialDrafts();
-    if (draft && editor) setDraft(settleEditorForNavigation(draft, editor));
-    setEditor(null);
-    setCategory(next);
-  };
-
+  const changeSection = (next: Section) => { setSection(next); setCommandFilter(""); };
+  const changeCategory = (next: ConfigurationCategory) => { setSection("configuration"); setCategory(next); setCommandFilter(""); };
   const openScript = (command: ScriptCommandConfig) => {
-    if (!draft) return;
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
-    setDraft(nextDraft);
-    if (editor?.kind === "script" && editor.id === command.id) {
-      setEditor(null);
-      return;
-    }
-    const next = nextDraft.scriptCommands.find((item) => item.id === command.id) ?? command;
-    const original = cloneScript(next);
-    setEditor({ kind: "script", id: command.id, original, value: cloneScript(next) });
+    if (editor?.kind === "script" && editor.id === command.id) return;
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setEditor({ kind: "script", id: command.id, original: cloneScript(command), value: cloneScript(command) }); });
   };
-
   const openWebSearch = (search: WebSearchConfig) => {
-    if (!draft) return;
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
-    setDraft(nextDraft);
-    if (editor?.kind === "web" && editor.id === search.id) {
-      setEditor(null);
-      return;
-    }
-    const next = nextDraft.webSearches.find((item) => item.id === search.id) ?? search;
-    const original = cloneWebSearch(next);
-    setEditor({ kind: "web", id: search.id, original, value: cloneWebSearch(next) });
+    if (editor?.kind === "web" && editor.id === search.id) return;
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setEditor({ kind: "web", id: search.id, original: cloneWebSearch(search), value: cloneWebSearch(search) }); });
   };
-
   const openTranslation = () => {
-    if (!draft) return;
-    resetTranslationCredentialDrafts();
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
-    setDraft(nextDraft);
-    if (editor?.kind === "translation") {
-      setEditor(null);
-      return;
-    }
-    const original = cloneTranslation(nextDraft.translation);
-    setEditor({
-      kind: "translation",
-      id: "translation",
-      original,
-      value: cloneTranslation(original),
-    });
+    if (!draft || editor?.kind === "translation") return;
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setEditor({ kind: "translation", id: "translation", original: cloneTranslation(draft.translation), value: cloneTranslation(draft.translation) }); });
   };
-
   const openTerminal = () => {
-    if (!draft) return;
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
-    setDraft(nextDraft);
-    if (editor?.kind === "terminal") {
-      setEditor(null);
-      return;
-    }
-    const original = cloneTerminal(nextDraft.launcher.terminal);
-    setEditor({
-      kind: "terminal",
-      id: "terminal",
-      original,
-      value: cloneTerminal(original),
-    });
+    if (!draft || editor?.kind === "terminal") return;
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setEditor({ kind: "terminal", id: "terminal", original: cloneTerminal(draft.launcher.terminal), value: cloneTerminal(draft.launcher.terminal) }); });
   };
 
   const addScript = () => {
     if (!draft) return;
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
+    const nextDraft = draft;
     const command: ScriptCommandConfig = {
       id: createId("script"),
       name: t.newScript,
@@ -883,14 +837,12 @@ function Settings() {
       debounceMs: 50,
       timeoutMs: 3000,
     };
-    setDraft({ ...nextDraft, scriptCommands: [...nextDraft.scriptCommands, command] });
-    setCategory("scripts");
-    setEditor({ kind: "script", id: command.id, original: null, value: cloneScript(command) });
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setCategory("scripts"); setCommandFilter(""); setEditor({ kind: "script", id: command.id, original: null, value: cloneScript(command) }); });
   };
 
   const addWebSearch = () => {
     if (!draft) return;
-    const nextDraft = editor ? settleEditorForNavigation(draft, editor) : draft;
+    const nextDraft = draft;
     const search: WebSearchConfig = {
       id: createId("web"),
       name: t.newWebSearch,
@@ -902,9 +854,7 @@ function Settings() {
       enabled: true,
       urlTemplate: "https://example.com/search?q={query}",
     };
-    setDraft({ ...nextDraft, webSearches: [...nextDraft.webSearches, search] });
-    setCategory("web");
-    setEditor({ kind: "web", id: search.id, original: null, value: cloneWebSearch(search) });
+    guardEditorChange(() => { resetTranslationCredentialDrafts(); setCategory("web"); setCommandFilter(""); setEditor({ kind: "web", id: search.id, original: null, value: cloneWebSearch(search) }); });
   };
 
   const removeScript = (command: ScriptCommandConfig) => {
@@ -932,7 +882,8 @@ function Settings() {
   };
 
   const changeSaveMode = async (saveSettingsManually: boolean) => {
-    if (!draft || editor || saving || autoSaving || view?.configReadOnly) return;
+    if (!draft || saving || autoSaving || view?.configReadOnly) return;
+    if (hasUnsaved) { setError(ui.saveModeDirty); return; }
     const previous = draft;
     const next = { ...draft, saveSettingsManually };
     draftRef.current = next;
@@ -960,50 +911,28 @@ function Settings() {
   };
 
   const setScriptEnabled = (id: string, enabled: boolean) => {
-    setDraft((current) => current ? {
-      ...current,
-      scriptCommands: current.scriptCommands.map((command) => (
-        command.id === id ? { ...command, enabled } : command
-      )),
-    } : current);
-    setEditor((current) => current?.kind === "script" && current.id === id
-      ? { ...current, value: { ...current.value, enabled } }
-      : current);
+    if (editor?.kind === "script" && editor.id === id) {
+      setEditor({ ...editor, value: { ...editor.value, enabled } }); return;
+    }
+    setDraft((current) => current ? { ...current, scriptCommands: current.scriptCommands.map((item) => item.id === id ? { ...item, enabled } : item) } : current);
   };
-
   const setWebSearchEnabled = (id: string, enabled: boolean) => {
-    setDraft((current) => current ? {
-      ...current,
-      webSearches: current.webSearches.map((search) => (
-        search.id === id ? { ...search, enabled } : search
-      )),
-    } : current);
-    setEditor((current) => current?.kind === "web" && current.id === id
-      ? { ...current, value: { ...current.value, enabled } }
-      : current);
+    if (editor?.kind === "web" && editor.id === id) {
+      setEditor({ ...editor, value: { ...editor.value, enabled } }); return;
+    }
+    setDraft((current) => current ? { ...current, webSearches: current.webSearches.map((item) => item.id === id ? { ...item, enabled } : item) } : current);
   };
-
   const setTranslationEnabled = (enabled: boolean) => {
-    setDraft((current) => current ? {
-      ...current,
-      translation: { ...current.translation, enabled },
-    } : current);
-    setEditor((current) => current?.kind === "translation"
-      ? { ...current, value: { ...current.value, enabled } }
-      : current);
+    if (editor?.kind === "translation") {
+      setEditor({ ...editor, value: { ...editor.value, enabled } }); return;
+    }
+    setDraft((current) => current ? { ...current, translation: { ...current.translation, enabled } } : current);
   };
-
   const setTerminalEnabled = (enabled: boolean) => {
-    setDraft((current) => current ? {
-      ...current,
-      launcher: {
-        ...current.launcher,
-        terminal: { ...current.launcher.terminal, enabled },
-      },
-    } : current);
-    setEditor((current) => current?.kind === "terminal"
-      ? { ...current, value: { ...current.value, enabled } }
-      : current);
+    if (editor?.kind === "terminal") {
+      setEditor({ ...editor, value: { ...editor.value, enabled } }); return;
+    }
+    setDraft((current) => current ? { ...current, launcher: { ...current.launcher, terminal: { ...current.launcher.terminal, enabled } } } : current);
   };
 
   const updateAppearanceThemes = async (themes: Pick<AppConfig, "launcherTheme" | "settingsTheme">) => {
@@ -1041,14 +970,24 @@ function Settings() {
   };
 
   const browserPlatform = `${navigator.platform} ${navigator.userAgent}`;
+  const categoryCopy = {
+    builtins: { title: t.builtinsTab, description: ui.builtinDescription },
+    scripts: { title: t.scriptsTab, description: ui.scriptDescription },
+    web: { title: t.webTab, description: ui.webDescription },
+    services: { title: t.translation, description: ui.serviceDescription },
+  };
+  const matchesFilter = (item: { name: string; keyword: string; description: string; id: string }) => editor?.id === item.id || `${item.name} ${item.keyword} ${item.description}`.toLocaleLowerCase().includes(commandFilter.toLocaleLowerCase());
+  const scriptItems = [...(draft?.scriptCommands ?? []), ...(editor?.kind === "script" && editor.original === null ? [editor.value] : [])].filter(matchesFilter);
+  const webItems = [...(draft?.webSearches ?? []), ...(editor?.kind === "web" && editor.original === null ? [editor.value] : [])].filter(matchesFilter);
+  const visibleEditor = editor && ((category === "scripts" && editor.kind === "script") || (category === "web" && editor.kind === "web") || (category === "services" && editor.kind === "translation") || (category === "builtins" && editor.kind === "terminal"));
   const isMac = /Mac/i.test(browserPlatform);
   const isWindows = /Win/i.test(browserPlatform);
 
   return (
-    <main className="settings-stage">
+    <main className="settings-stage" data-large-text={Boolean(view && resolveSettingsTheme(view.config.settingsTheme).baseFontSizePx > 20)}>
       <header className="settings-titlebar" data-tauri-drag-region>
         <div className="settings-brand" data-tauri-drag-region>
-          <SuoIcon className="settings-brand-icon" />
+          <SuoIcon className="settings-brand-icon" iconStyle={draft?.settingsIconStyle} />
           <strong data-tauri-drag-region>{zhCN.settingsTitle}</strong>
         </div>
         <button type="button" onClick={() => void close()} aria-label={zhCN.closeSettings}>×</button>
@@ -1063,59 +1002,41 @@ function Settings() {
           }
         }}
       >
-        <aside>
-          {(Object.keys(sectionCopy) as Section[]).map((key) => (
-            <button
-              type="button"
-              key={key}
-              className={section === key ? "settings-nav-active" : ""}
-              onClick={() => changeSection(key)}
-            >
-              {sectionCopy[key].title}
-            </button>
-          ))}
+        <aside className="settings-sidebar">
+          <div className="workspace-brand"><SuoIcon className="workspace-logo" iconStyle={draft?.settingsIconStyle} /><div><strong>Suo</strong><small>{ui.tagline}</small></div></div>
+          <nav aria-label={zhCN.settingsTitle}>
+            <span className="nav-group-label">{ui.preferences}</span>
+            {(["general", "search"] as Section[]).map((key) => <button type="button" key={key} aria-current={section === key ? "page" : undefined} className={section === key ? "settings-nav-active" : ""} onClick={() => changeSection(key)}><NavIcon name={key} />{sectionCopy[key].title}</button>)}
+            <span className="nav-group-label">{ui.capabilities}</span>
+            {(["builtins", "scripts", "web", "services"] as ConfigurationCategory[]).map((key) => <button type="button" key={key} aria-current={section === "configuration" && category === key ? "page" : undefined} className={section === "configuration" && category === key ? "settings-nav-active" : ""} onClick={() => changeCategory(key)}><NavIcon name={key} />{categoryCopy[key].title}</button>)}
+            <span className="nav-group-label">{ui.personalization}</span>
+            <button type="button" aria-current={section === "appearance" ? "page" : undefined} className={section === "appearance" ? "settings-nav-active" : ""} onClick={() => changeSection("appearance")}><NavIcon name="appearance" />{zhCN.appearance}</button>
+          </nav>
+          <small className="sidebar-bottom">{ui.localFirst}</small>
         </aside>
 
-        <section className="settings-content" aria-busy={saving}>
+        <form ref={formRef} className="settings-content" aria-busy={saving} onSubmit={(event) => event.preventDefault()}>
           <div className="settings-heading">
             <div>
-              <h1>{sectionCopy[section].title}</h1>
-              <p>{sectionCopy[section].description}</p>
+              <h1>{(section === "configuration" ? categoryCopy[category] : sectionCopy[section]).title}</h1>
+              <p>{(section === "configuration" ? categoryCopy[category] : sectionCopy[section]).description}</p>
             </div>
-            <div className="settings-actions">
-              {(status || autoSaving) && <span className="saved-indicator visible">{autoSaving ? t.savingAutomatically : status}</span>}
-              {draft && (
-                <label className="settings-save-mode">
-                  <span><strong>{t.unifiedSave}</strong><small>{draft.saveSettingsManually ? t.unifiedSaveManual : t.unifiedSaveInstant}</small></span>
-                  <input
-                    className="switch"
-                    type="checkbox"
-                    checked={draft.saveSettingsManually}
-                    disabled={saving || autoSaving || Boolean(editor) || view?.configReadOnly}
-                    aria-label={t.unifiedSave}
-                    onChange={(event) => void changeSaveMode(event.target.checked)}
-                  />
-                </label>
-              )}
-              {draft?.saveSettingsManually && (
-                <button className="primary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly} onClick={() => void save()}>
-                  {saving ? t.saving : t.save}
-                </button>
-              )}
-              {draft && !draft.saveSettingsManually && autoSaveNeedsRetry && (
-                <button className="secondary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly} onClick={() => queueAutoSave(draft)}>
-                  {t.retrySave}
-                </button>
-              )}
-            </div>
+
           </div>
 
+          <div className={`settings-scroll ${section === "configuration" ? "command-page" : ""}`}>
           {!draft ? (
             <div className="settings-note">{t.loading}</div>
           ) : (
             <>
               {section === "general" && (
                 <div className="settings-card">
+                  <div className="setting-row icon-style-row">
+                    <div><strong>{ui.iconStyle}</strong><small>{ui.iconStyleDescription}</small></div>
+                    <div className="brand-style-options" role="group" aria-label={ui.iconStyle}>
+                      {(["transparentColor", "monochrome", "original"] as SettingsIconStyle[]).map((style) => <button type="button" key={style} aria-pressed={draft.settingsIconStyle === style} disabled={Boolean(view?.configReadOnly)} onClick={() => setDraft({ ...draft, settingsIconStyle: style })}><SuoIcon iconStyle={style} /><span>{ui[style]}</span></button>)}
+                    </div>
+                  </div>
                   <div className="setting-row">
                     <div><strong>{zhCN.globalHotkey}</strong><small>{zhCN.globalHotkeyDescription}</small></div>
                     <button
@@ -1157,6 +1078,9 @@ function Settings() {
                     <div><strong>{zhCN.launcherWindowWidth}</strong><small>{zhCN.launcherWindowWidthDescription}</small></div>
                     <PixelRangeControl
                       value={draft.launcher.windowWidthPx ?? resolveLauncherTheme(draft.launcherTheme).windowWidthPx}
+                      label={zhCN.launcherWindowWidth}
+                      legalMinimum={visualBounds.launcher.windowWidthPx.min}
+                      legalMaximum={visualBounds.launcher.windowWidthPx.max}
                       minimum={launcherWidthBounds.minimum}
                       maximum={launcherWidthBounds.maximum}
                       disabled={saving || Boolean(view?.configReadOnly)}
@@ -1167,6 +1091,9 @@ function Settings() {
                     <div><strong>{zhCN.launcherWindowHeight}</strong><small>{zhCN.launcherWindowHeightDescription}</small></div>
                     <PixelRangeControl
                       value={draft.launcher.windowHeightPx}
+                      label={zhCN.launcherWindowHeight}
+                      legalMinimum={visualBounds.launcher.windowHeightPx.min}
+                      legalMaximum={visualBounds.launcher.windowHeightPx.max}
                       minimum={launcherHeightBounds.minimum}
                       maximum={launcherHeightBounds.maximum}
                       disabled={saving || Boolean(view?.configReadOnly)}
@@ -1177,6 +1104,9 @@ function Settings() {
                     <div><strong>{zhCN.launcherHorizontalOffset}</strong><small>{zhCN.launcherHorizontalOffsetDescription}</small></div>
                     <PixelRangeControl
                       value={draft.launcher.horizontalOffsetPx}
+                      label={zhCN.launcherHorizontalOffset}
+                      legalMinimum={visualBounds.launcher.horizontalOffsetPx.min}
+                      legalMaximum={visualBounds.launcher.horizontalOffsetPx.max}
                       minimum={launcherHorizontalOffsetBounds.minimum}
                       maximum={launcherHorizontalOffsetBounds.maximum}
                       disabled={saving || Boolean(view?.configReadOnly)}
@@ -1187,6 +1117,9 @@ function Settings() {
                     <div><strong>{zhCN.launcherVerticalOffset}</strong><small>{zhCN.launcherVerticalOffsetDescription}</small></div>
                     <PixelRangeControl
                       value={draft.launcher.verticalOffsetPx}
+                      label={zhCN.launcherVerticalOffset}
+                      legalMinimum={visualBounds.launcher.verticalOffsetPx.min}
+                      legalMaximum={visualBounds.launcher.verticalOffsetPx.max}
                       minimum={launcherVerticalOffsetBounds.minimum}
                       maximum={launcherVerticalOffsetBounds.maximum}
                       disabled={saving || Boolean(view?.configReadOnly)}
@@ -1251,7 +1184,7 @@ function Settings() {
                           <button
                             className="secondary-button"
                             type="button"
-                            disabled={saving || autoSaving || changingConfigLocation || Boolean(editor) || view.configReadOnly}
+                            disabled={saving || autoSaving || changingConfigLocation || hasUnsaved || view.configReadOnly}
                             onClick={() => void chooseConfigDirectory()}
                           >
                             {changingConfigLocation ? t.changingConfigLocation : t.changeConfigLocation}
@@ -1260,7 +1193,7 @@ function Settings() {
                             <button
                               className="secondary-button"
                               type="button"
-                              disabled={saving || autoSaving || changingConfigLocation || Boolean(editor) || view.configReadOnly}
+                              disabled={saving || autoSaving || changingConfigLocation || hasUnsaved || view.configReadOnly}
                               onClick={() => void relocateConfig(view.defaultConfigDirectory)}
                             >
                               {t.restoreDefaultConfigLocation}
@@ -1289,17 +1222,13 @@ function Settings() {
               {section === "configuration" && (
                 <div className="configuration-section">
                   <div className="configuration-toolbar">
-                    <div className="configuration-tabs" role="tablist" aria-label={t.commandsAndServices}>
-                      <button type="button" role="tab" aria-selected={category === "builtins"} className={category === "builtins" ? "active" : ""} onClick={() => changeCategory("builtins")}>{t.builtinsTab}</button>
-                      <button type="button" role="tab" aria-selected={category === "scripts"} className={category === "scripts" ? "active" : ""} onClick={() => changeCategory("scripts")}>{t.scriptsTab}</button>
-                      <button type="button" role="tab" aria-selected={category === "web"} className={category === "web" ? "active" : ""} onClick={() => changeCategory("web")}>{t.webTab}</button>
-                      <button type="button" role="tab" aria-selected={category === "services"} className={category === "services" ? "active" : ""} onClick={() => changeCategory("services")}>{t.servicesTab}</button>
-                    </div>
-                    {category === "scripts" && <button className="add-button" type="button" onClick={addScript}>＋ {t.addScript}</button>}
-                    {category === "web" && <button className="add-button" type="button" onClick={addWebSearch}>＋ {t.addWeb}</button>}
+                    {(category === "scripts" || category === "web") && <input type="search" className="command-filter" aria-label={ui.filterCommands} placeholder={ui.filterCommands} value={commandFilter} onChange={(event) => setCommandFilter(event.target.value)} />}
+                    {category === "scripts" && <button className="add-button" type="button" disabled={Boolean(view?.configReadOnly)} onClick={addScript}>＋ {t.addScript}</button>}
+                    {category === "web" && <button className="add-button" type="button" disabled={Boolean(view?.configReadOnly)} onClick={addWebSearch}>＋ {t.addWeb}</button>}
                   </div>
 
-                  <div className="configuration-list" role="tabpanel">
+                  <div className="configuration-workspace">
+                  <div className="configuration-list" aria-label={categoryCopy[category].title}>
                     {category === "builtins" && (() => {
                       const activeEditor = editor?.kind === "terminal" ? editor : null;
                       const summary = activeEditor?.value ?? draft.launcher.terminal;
@@ -1308,6 +1237,7 @@ function Settings() {
                         : isMac ? summary.macosTerminalApplication || zhCN.macosTerminalApplication : "Bash";
                       return (
                         <ConfigurationItem
+                              detailTarget={detailTarget}
                           panelId="terminal-command-editor"
                           open={Boolean(activeEditor)}
                           enabled={summary.enabled}
@@ -1351,12 +1281,13 @@ function Settings() {
 
                     {category === "scripts" && (
                       <>
-                        {draft.scriptCommands.length === 0 && <div className="configuration-empty">{t.emptyScripts}</div>}
-                        {draft.scriptCommands.map((command) => {
+                        {scriptItems.length === 0 && <div className="configuration-empty">{commandFilter ? ui.noMatches : t.emptyScripts}</div>}
+                        {scriptItems.map((command) => {
                           const activeEditor = editor?.kind === "script" && editor.id === command.id ? editor : null;
                           const summary = activeEditor?.value ?? command;
                           return (
                             <ConfigurationItem
+                              detailTarget={detailTarget}
                               key={command.id}
                               panelId={`script-editor-${command.id}`}
                               open={Boolean(activeEditor)}
@@ -1375,20 +1306,22 @@ function Settings() {
                                     <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                                   </div>
                                   <div className="form-grid">
-                                    <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
-                                    <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                    <Field label={t.name}><input required maxLength={80} value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
+                                    <Field label={t.keyword}><input required value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
                                     <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
-                                    <CommandIconField key={`script-icon-${activeEditor.id}`} value={activeEditor.value.iconDataUrl} disabled={Boolean(view?.configReadOnly)} onChange={(iconDataUrl) => setEditor({ ...activeEditor, value: { ...activeEditor.value, iconDataUrl } })} />
-                                    <Field label={t.inputHint} wide><input maxLength={160} value={activeEditor.value.inputHint} placeholder={t.scriptInputHintPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, inputHint: event.target.value } })} /></Field>
                                     <Field label={t.aliases}><AliasesInput key={`script-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
                                     <Field label={t.runtime}><select value={activeEditor.value.runtime} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, runtime: event.target.value as ScriptRuntime } })}><option value="python">Python</option><option value="powerShell">PowerShell</option><option value="bash">Bash</option><option value="executable">Executable</option></select></Field>
                                     <div className="form-field wide">
                                       <span id={`script-path-label-${activeEditor.id}`}>{t.scriptPath}</span>
                                       <div className="script-path-row">
-                                        <input aria-labelledby={`script-path-label-${activeEditor.id}`} value={activeEditor.value.scriptPath} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, scriptPath: event.target.value } })} placeholder="D:\\scripts\\tool.py" />
+                                        <input required aria-labelledby={`script-path-label-${activeEditor.id}`} value={activeEditor.value.scriptPath} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, scriptPath: event.target.value } })} placeholder={ui.scriptPathPlaceholder} />
                                         <button className="secondary-button reveal-script-button" type="button" disabled={!activeEditor.value.scriptPath.trim()} onClick={() => void revealScript(activeEditor.value.scriptPath)}>{t.revealScript}</button>
                                       </div>
                                     </div>
+                                  </div>
+                                  <details className="script-advanced" open key={activeEditor.id}><summary>{ui.advanced}</summary><div className="form-grid">
+                                    <CommandIconField key={`script-icon-${activeEditor.id}`} value={activeEditor.value.iconDataUrl} disabled={Boolean(view?.configReadOnly)} onChange={(iconDataUrl) => setEditor({ ...activeEditor, value: { ...activeEditor.value, iconDataUrl } })} />
+                                    <Field label={t.inputHint} wide><input maxLength={160} value={activeEditor.value.inputHint} placeholder={t.scriptInputHintPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, inputHint: event.target.value } })} /></Field>
                                     <Field label={t.scriptResultAction} wide>
                                       <select value={activeEditor.value.resultAction} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, resultAction: event.target.value as ScriptResultAction } })}>
                                         <option value="copy">{t.copyScriptResult}</option>
@@ -1399,7 +1332,7 @@ function Settings() {
                                     <Field label={t.timeout}><input type="number" min={100} max={60000} value={activeEditor.value.timeoutMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, timeoutMs: Number(event.target.value) } })} /></Field>
                                     <Field label={t.executionMode}><select value={activeEditor.value.immediate ? "immediate" : "enter"} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, immediate: event.target.value === "immediate" } })}><option value="enter">{t.enterMode}</option><option value="immediate">{t.immediateMode}</option></select></Field>
                                     {activeEditor.value.immediate && <Field label={t.debounce}><input type="number" min={20} max={60000} value={activeEditor.value.debounceMs} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, debounceMs: Number(event.target.value) } })} /></Field>}
-                                  </div>
+                                  </div></details>
                                   <EditorActions onRemove={() => removeScript(activeEditor.value)} onCancel={cancelEditor} onDone={commitEditor} />
                                 </>
                               )}
@@ -1411,12 +1344,13 @@ function Settings() {
 
                     {category === "web" && (
                       <>
-                        {draft.webSearches.length === 0 && <div className="configuration-empty">{t.emptyWebSearches}</div>}
-                        {draft.webSearches.map((search) => {
+                        {webItems.length === 0 && <div className="configuration-empty">{commandFilter ? ui.noMatches : t.emptyWebSearches}</div>}
+                        {webItems.map((search) => {
                           const activeEditor = editor?.kind === "web" && editor.id === search.id ? editor : null;
                           const summary = activeEditor?.value ?? search;
                           return (
                             <ConfigurationItem
+                              detailTarget={detailTarget}
                               key={search.id}
                               panelId={`web-editor-${search.id}`}
                               open={Boolean(activeEditor)}
@@ -1435,13 +1369,13 @@ function Settings() {
                                     <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                                   </div>
                                   <div className="form-grid">
-                                    <Field label={t.name}><input value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
-                                    <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                    <Field label={t.name}><input required maxLength={80} value={activeEditor.value.name} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, name: event.target.value } })} /></Field>
+                                    <Field label={t.keyword}><input required value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
                                     <Field label={t.description} wide><textarea maxLength={200} value={activeEditor.value.description} placeholder={t.descriptionPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, description: event.target.value } })} /></Field>
                                     <CommandIconField key={`web-icon-${activeEditor.id}`} value={activeEditor.value.iconDataUrl} disabled={Boolean(view?.configReadOnly)} onChange={(iconDataUrl) => setEditor({ ...activeEditor, value: { ...activeEditor.value, iconDataUrl } })} />
                                     <Field label={t.inputHint} wide><input maxLength={160} value={activeEditor.value.inputHint} placeholder={t.webInputHintPlaceholder} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, inputHint: event.target.value } })} /></Field>
                                     <Field label={t.aliases}><AliasesInput key={`web-aliases-${activeEditor.id}`} value={activeEditor.value.aliases} onChange={(aliases) => setEditor({ ...activeEditor, value: { ...activeEditor.value, aliases } })} /></Field>
-                                    <Field label={t.urlTemplate} wide><input value={activeEditor.value.urlTemplate} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, urlTemplate: event.target.value } })} /></Field>
+                                    <Field label={t.urlTemplate} wide><input required value={activeEditor.value.urlTemplate} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, urlTemplate: event.target.value } })} /></Field>
                                   </div>
                                   <EditorActions onRemove={() => removeWebSearch(activeEditor.value)} onCancel={cancelEditor} onDone={commitEditor} />
                                 </>
@@ -1459,6 +1393,7 @@ function Settings() {
                       const credentialConfigured = view?.translationCredentialStatus[summary.provider] ?? false;
                       return (
                         <ConfigurationItem
+                              detailTarget={detailTarget}
                           panelId="translation-editor"
                           open={Boolean(activeEditor)}
                           enabled={summary.enabled}
@@ -1476,7 +1411,7 @@ function Settings() {
                                 <span>{draft.saveSettingsManually ? t.pageDraftHint : t.itemInstantHint}</span>
                               </div>
                               <div className="form-grid">
-                                <Field label={t.keyword}><input value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
+                                <Field label={t.keyword}><input required value={activeEditor.value.keyword} onChange={(event) => setEditor({ ...activeEditor, value: { ...activeEditor.value, keyword: event.target.value } })} /></Field>
                                 <Field label={t.translationProvider}><select value={activeEditor.value.provider} onChange={(event) => {
                                   const provider = event.target.value as TranslationProvider;
                                   resetTranslationCredentialDrafts();
@@ -1505,12 +1440,18 @@ function Settings() {
                       );
                     })()}
                   </div>
+                  <div className="configuration-detail" ref={setDetailTarget}>
+                    {!visibleEditor && <div className="editor-placeholder"><NavIcon name={category} /><p>{ui.selectCommand}</p></div>}
+                  </div>
+                  </div>
                   <p className="configuration-hint">{draft.saveSettingsManually ? t.configurationHint : t.configurationHintInstant}</p>
                 </div>
               )}
 
-              {section === "appearance" && (
+              <div hidden={section !== "appearance"}>
                 <AppearanceEditor
+                  onDirtyChange={setAppearanceDirty}
+                  resetToken={appearanceResetToken}
                   launcherTheme={draft.launcherTheme}
                   settingsTheme={draft.settingsTheme}
                   onChange={updateAppearanceThemes}
@@ -1518,49 +1459,75 @@ function Settings() {
                   readOnly={Boolean(view?.configReadOnly)}
                   saving={saving || autoSaving}
                 />
-              )}
+              </div>
             </>
           )}
 
+          </div>
+          <div className="settings-notices" aria-live="polite">
           {view?.credentialStoreError && <div className="settings-error">{t.credentialWarning}：{view.credentialStoreError}</div>}
-          {error && <div className="settings-error">{error}</div>}
-        </section>
+          {error && <div role="alert" className="settings-error">{error}</div>}
+          </div>
+          <footer className="settings-footer">
+            {appearanceDirty && section !== "appearance" && <button type="button" className="draft-return" onClick={() => changeSection("appearance")}>{ui.returnToAppearance}</button>}
+            {editorDirty && editor && (section !== "configuration" || !visibleEditor) && <button type="button" className="draft-return" onClick={() => changeCategory(editor.kind === "script" ? "scripts" : editor.kind === "web" ? "web" : editor.kind === "terminal" ? "builtins" : "services")}>{ui.returnToEditor.replace("{name}", editor.kind === "script" || editor.kind === "web" ? editor.value.name || t.unnamed : editor.kind === "terminal" ? zhCN.terminalCommand : t.translation)}</button>}
+            <span className="settings-save-state" role="status">{view?.configReadOnly ? ui.readOnly : appearanceDirty ? ui.appearanceUnsaved : credentialsDirty ? ui.credentialsUnsaved : editorDirty ? ui.editorUnsaved : configDirty ? ui.unsaved : ui.saved}</span>
+            <div className="settings-actions">
+              {(status || autoSaving) && <span className="saved-indicator visible">{autoSaving ? t.savingAutomatically : status}</span>}
+              {draft && (
+                <label className="settings-save-mode">
+                  <span><strong>{t.unifiedSave}</strong><small>{draft.saveSettingsManually ? t.unifiedSaveManual : t.unifiedSaveInstant}</small></span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={draft.saveSettingsManually}
+                    disabled={saving || autoSaving || hasUnsaved || view?.configReadOnly}
+                    title={hasUnsaved ? ui.saveModeDirty : undefined}
+                    aria-label={t.unifiedSave}
+                    onChange={(event) => void changeSaveMode(event.target.checked)}
+                  />
+                </label>
+              )}
+              {draft?.saveSettingsManually && (
+                <button className="primary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly || !configDirty && !editorDirty} onClick={() => void save()}>
+                  {saving ? t.saving : t.save}
+                </button>
+              )}
+              {draft && !draft.saveSettingsManually && autoSaveNeedsRetry && (
+                <button className="secondary-button" type="button" disabled={saving || autoSaving || view?.configReadOnly} onClick={() => queueAutoSave(draft)}>
+                  {t.retrySave}
+                </button>
+              )}
+            </div>
+            {hasUnsaved && <button type="button" className="secondary-button" disabled={saving || autoSaving} onClick={() => setPendingAction({ kind: "discard", run: discardDrafts })}>{ui.discardAll}</button>}
+          </footer>
+        </form>
       </div>
-      {pendingRemoval && draft && (
-        <div
-          className="confirmation-backdrop"
-          role="presentation"
-          onPointerDown={(event) => {
-            if (event.currentTarget === event.target) setPendingRemoval(null);
-          }}
-        >
-          <section
-            className="confirmation-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="remove-confirmation-title"
-            aria-describedby="remove-confirmation-description"
-          >
-            <div className="confirmation-icon" aria-hidden="true">!</div>
-            <div>
-              <h2 id="remove-confirmation-title">{t.confirmRemoveTitle}</h2>
-              <p id="remove-confirmation-description">
-                {(draft.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant)
-                  .replace("{name}", pendingRemoval.name)}
-              </p>
-            </div>
-            <div className="confirmation-actions">
-              <button className="secondary-button" type="button" autoFocus onClick={() => setPendingRemoval(null)}>{t.cancel}</button>
-              <button className="danger-button confirmation-delete" type="button" onClick={confirmRemoval}>{t.confirmDelete}</button>
-            </div>
-          </section>
-        </div>
-      )}
+      <SettingsDialog open={Boolean(pendingRemoval)} title={t.confirmRemoveTitle} onClose={() => setPendingRemoval(null)} footer={<><button className="secondary-button" type="button" onClick={() => setPendingRemoval(null)}>{t.cancel}</button><button className="danger-button" type="button" onClick={confirmRemoval}>{t.confirmDelete}</button></>}>
+        <p>{(draft?.saveSettingsManually ? t.confirmRemove : t.confirmRemoveInstant).replace("{name}", pendingRemoval?.name ?? "")}</p>
+      </SettingsDialog>
+      <SettingsDialog open={Boolean(pendingAction)} title={pendingAction?.kind === "discard" ? ui.discardTitle : ui.unsavedTitle} onClose={() => setPendingAction(null)} footer={<><button className="secondary-button" type="button" onClick={() => setPendingAction(null)}>{ui.keepEditing}</button><button className="danger-button" type="button" onClick={() => { const action = pendingAction; setPendingAction(null); action?.run(); }}>{pendingAction?.kind === "close" ? ui.closeAndDiscard : ui.discardAndContinue}</button></>}>
+        <p>{pendingAction?.kind === "switch" ? ui.switchDescription : pendingAction?.kind === "discard" ? ui.discardDescription : ui.unsavedDescription}</p>
+      </SettingsDialog>
     </main>
   );
 }
 
+function NavIcon({ name }: { name: string }) {
+  const paths: Record<string, string> = {
+    general: "M4 7h16M4 17h16M8 4v6M16 14v6",
+    search: "M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
+    scripts: "m8 5-6 7 6 7m8-14 6 7-6 7m-2-16-4 18",
+    web: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18",
+    services: "M3 5h12M9 2v3M5 8c2 5 5 8 9 9M13 5c-1 6-4 10-10 13M14 21l4-11 4 11m-6-4h4",
+    builtins: "m5 7 5 5-5 5m8 0h6",
+    appearance: "M12 3a9 9 0 1 0 9 9c0-3-3-2-5-2s-4 0-4-3V3Z",
+  };
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name] ?? paths.general} /></svg>;
+}
+
 function ConfigurationItem({
+  detailTarget,
   panelId,
   open,
   enabled,
@@ -1573,6 +1540,7 @@ function ConfigurationItem({
   readOnly,
   children,
 }: {
+  detailTarget: HTMLDivElement | null;
   panelId: string;
   open: boolean;
   enabled: boolean;
@@ -1610,7 +1578,7 @@ function ConfigurationItem({
           <span className="configuration-chevron" aria-hidden="true">⌄</span>
         </button>
       </div>
-      {open && <div className="configuration-editor" id={panelId}>{children}</div>}
+      {open && detailTarget && createPortal(<fieldset disabled={readOnly} className="configuration-editor" id={panelId}>{children}</fieldset>, detailTarget)}
     </article>
   );
 }

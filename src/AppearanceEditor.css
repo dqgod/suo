@@ -1,15 +1,15 @@
 .appearance-editor {
   display: grid;
   gap: 14px;
-  --appearance-launcher-scope: #8a78ff;
-  --appearance-settings-scope: #48d5b0;
+  --appearance-launcher-scope: var(--settings-scope-launcher, #8a78ff);
+  --appearance-settings-scope: var(--settings-scope-settings, #48d5b0);
   --appearance-scope: var(--appearance-launcher-scope);
   /* The editor is part of the Settings window, so its chrome follows the
      settings theme's base font size. Preview content below keeps using the
      theme being previewed instead. */
-  --appearance-primary-font-size: clamp(13px, calc(var(--settings-font-size, 14px) - 1px), 17px);
-  --appearance-secondary-font-size: clamp(12px, calc(var(--settings-font-size, 14px) - 2px), 16px);
-  --appearance-meta-font-size: clamp(10px, calc(var(--settings-font-size, 14px) - 4px), 13px);
+  --appearance-primary-font-size: var(--settings-font-size, 14px);
+  --appearance-secondary-font-size: calc(var(--settings-font-size, 14px) * .9);
+  --appearance-meta-font-size: calc(var(--settings-font-size, 14px) * .86);
   color: var(--settings-primary-text, var(--text, #f5f7ff));
 }
 
@@ -44,7 +44,7 @@
 .appearance-editor summary:focus-visible { outline: 2px solid var(--settings-accent, var(--accent, #8a78ff)); outline-offset: 2px; }
 
 .appearance-editor-heading h2,
-.appearance-library-heading h3 { margin: 0; font-size: 18px; }
+.appearance-library-heading h3 { margin: 0; font-size: calc(var(--settings-font-size, 14px) * 1.3); }
 .appearance-editor-heading p,
 .appearance-library-heading p,
 .appearance-editor small,
@@ -202,7 +202,7 @@
 .appearance-contrast-audit .ok { color: #67dba8; }
 .appearance-preview-panel .warning,
 .appearance-contrast-audit .warning { color: #f0ba65; }
-.appearance-preview-canvas { min-height: 335px; padding: 14px; background: linear-gradient(135deg, color-mix(in srgb, var(--settings-content-bg, #0b1222) 72%, #01030a), color-mix(in srgb, var(--settings-card-bg, #101a30) 64%, #161036)); }
+.appearance-preview-canvas { min-height: 335px; padding: 14px; background: var(--settings-window-bg, #0b1222); }
 
 .appearance-launcher-preview { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: var(--preview-window-width); height: 306px; margin: 0 auto; overflow: hidden; border: var(--preview-window-border-width) solid var(--preview-window-border); border-radius: var(--preview-radius); background: color-mix(in srgb, var(--preview-window) var(--preview-window-opacity), transparent); box-shadow: 0 16px 36px rgb(0 0 0 / var(--preview-shadow-opacity)); backdrop-filter: blur(var(--preview-blur)); isolation: isolate; }
 .appearance-launcher-preview::before,
@@ -237,7 +237,7 @@
 .appearance-settings-preview aside { display: grid; align-content: start; gap: 4px; padding: 10px 6px; border-right: 1px solid var(--preview-settings-border); background: color-mix(in srgb, var(--preview-settings-sidebar) 94%, transparent); color: var(--preview-settings-nav); font-size: .62em; }
 .appearance-settings-preview aside span,
 .appearance-settings-preview aside strong { padding: 6px; border-radius: 5px; font-weight: 500; }
-.appearance-settings-preview aside strong { color: var(--preview-settings-primary); background: var(--preview-settings-selected); }
+.appearance-settings-preview aside strong { color: var(--preview-settings-nav); background: var(--preview-settings-selected); }
 .appearance-settings-preview main { padding: 13px; background: color-mix(in srgb, var(--preview-settings-content) 94%, transparent); }
 .appearance-settings-preview h3 { margin: 0 0 5px; font-size: 1.08em; }
 .appearance-settings-preview main > p,
@@ -274,3 +274,66 @@
 @media (prefers-reduced-motion: reduce) {
   .appearance-editor *, .appearance-editor *::before { transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* The compact chooser keeps the full library out of the settings scroll area. */
+.appearance-scope-zone { display: block; padding: 8px; }
+.appearance-scope-tabs button { min-height: 48px; }
+.appearance-theme-picker { margin: 11px 14px 8px; }
+.appearance-toolbar { justify-content: flex-start; padding: 0 14px 11px; }
+.appearance-preview-canvas { overflow: auto; }
+.appearance-launcher-preview { max-width: 100%; overflow: auto; }
+.appearance-live-results { overflow: auto; }
+.appearance-settings-preview { height: 306px; overflow: auto; }
+.appearance-active-theme { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: var(--appearance-secondary-font-size); }
+.appearance-theme-picker { min-height: 70px; }
+.appearance-theme-copy { display: grid; min-width: 0; gap: 3px; }
+.appearance-theme-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.appearance-theme-picker > button { white-space: nowrap; }
+.appearance-library-dialog { width: min(460px, calc(100vw - 28px)); }
+.appearance-library-dialog .settings-dialog-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.appearance-library-toolbar { display: grid; gap: 12px; padding: 16px 18px 10px; }
+.appearance-library-toolbar input { width: 100%; min-height: 38px; padding: 7px 10px; border: 1px solid var(--settings-border, #343d5a); border-radius: 8px; color: inherit; background: var(--settings-content-bg, #161f39); font-size: var(--appearance-secondary-font-size); }
+.appearance-library-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.appearance-library-filters button { flex: 1 0 auto; }
+.appearance-library-filters button[aria-pressed="true"] { border-color: var(--settings-accent, #8a78ff); background: color-mix(in srgb, var(--settings-accent, #8a78ff) 20%, var(--settings-card-bg, #101a30)); }
+.appearance-library-results { min-height: 0; max-height: min(413px, calc(100dvh - 225px)); padding: 6px 10px 14px; overflow-y: auto; overscroll-behavior: contain; }
+.appearance-library-results > button { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; width: 100%; min-height: 62px; gap: 10px; padding: 8px; margin-bottom: 6px; text-align: left; }
+.appearance-library-results > button[aria-pressed="true"] { border-color: var(--settings-accent, #8a78ff); background: color-mix(in srgb, var(--settings-accent, #8a78ff) 13%, var(--settings-card-bg, #101a30)); }
+.appearance-library-results .appearance-theme-swatch { width: 52px; height: 42px; }
+.appearance-library-results > button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.appearance-library-results strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--appearance-primary-font-size); }
+.appearance-library-results small { font-size: var(--appearance-secondary-font-size); }
+.appearance-library-results em { color: var(--settings-accent, #8a78ff); font-size: var(--appearance-meta-font-size); font-style: normal; }
+.appearance-library-empty { padding: 25px 12px; margin: 0; color: var(--settings-secondary-text, #91a0c7); text-align: center; font-size: var(--appearance-secondary-font-size); }
+.appearance-library-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; color: var(--settings-secondary-text, #91a0c7); font-size: var(--appearance-secondary-font-size); }
+.appearance-number-control { min-width: 0; }
+.appearance-number-control .appearance-control-copy { flex: 1 1 auto; }
+.appearance-number-control .appearance-range-control { width: min(54%, 220px); min-width: 150px; }
+.appearance-number-control .appearance-range-control input[type="range"],
+.appearance-platform-grid .appearance-range-control input[type="range"] { flex: 1 1 auto; min-width: 35px; width: auto; }
+.appearance-number-control .appearance-range-control input[type="number"],
+.appearance-platform-grid .appearance-range-control input[type="number"] { flex: 0 0 59px; width: 59px; min-width: 0; min-height: 30px; padding: 3px 5px; border: 1px solid var(--settings-border, #343d5a); border-radius: 6px; color: inherit; background: var(--settings-content-bg, #161f39); font-size: var(--appearance-secondary-font-size); }
+.appearance-number-control .appearance-range-control span { color: var(--settings-secondary-text, #91a0c7); font-size: var(--appearance-secondary-font-size); }
+.appearance-number-control.invalid input[type="number"] { border-color: #dc5060; }
+.appearance-control-copy .appearance-value-error { color: #ed6877; }
+.appearance-control-copy .appearance-value-warning { color: #b97a16; }
+
+@media (max-width: 760px) {
+  .appearance-control-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .appearance-theme-picker { grid-template-columns: 40px minmax(0, 1fr); }
+  .appearance-theme-picker > button { grid-column: 1 / -1; }
+  .appearance-number-control { align-items: flex-start; flex-direction: column; padding: 10px 0; }
+  .appearance-number-control .appearance-range-control { width: 100%; }
+}
+
+.appearance-launcher-preview { grid-template-rows:auto auto minmax(0,1fr) auto; }
+.appearance-live-search { grid-row:1; }
+.appearance-live-provider { grid-row:2; }
+.appearance-live-results { grid-row:3; }
+.appearance-live-footer { grid-row:4; }
+.appearance-live-provider,.appearance-live-footer { padding:5px 10px; font-size:8px; color:var(--preview-row-secondary); }
+.appearance-live-provider { border-bottom:1px solid var(--preview-window-border); }
+.appearance-live-footer { border-top:1px solid var(--preview-window-border); }
+.appearance-preview-canvas > .appearance-native-note { color:var(--settings-secondary-text); }

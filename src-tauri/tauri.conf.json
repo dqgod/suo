@@ -17,7 +17,7 @@
         "title": "Suo / 梭",
         "width": 720,
         "height": 520,
-        "minWidth": 560,
+        "minWidth": 256,
         "minHeight": 74,
         "center": true,
         "decorations": false,

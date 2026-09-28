@@ -24,6 +24,7 @@ use crate::{
 };
 
 static PENDING_SHOW: AtomicBool = AtomicBool::new(false);
+static LAUNCHER_IS_COMPACT: AtomicBool = AtomicBool::new(false);
 const DEFAULT_LAUNCHER_WIDTH: f64 = 720.0;
 const DEFAULT_LAUNCHER_HEIGHT: f64 = 520.0;
 const LAUNCHER_COMPACT_HEIGHT: f64 = 74.0;
@@ -939,12 +940,22 @@ pub fn set_launcher_compact(
         .to_logical::<f64>(scale_factor);
     let snapshot = config.snapshot();
     let target = configured_launcher_size(&snapshot, compact);
+    let target = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .map(|monitor| {
+            fit_launcher_size(target, monitor.scale_factor(), monitor.work_area().size).0
+        })
+        .unwrap_or(target);
     let target_width = target.width;
     let target_height = target.height;
     if (current.height - target_height).abs() < 0.5 && (current.width - target_width).abs() < 0.5 {
+        LAUNCHER_IS_COMPACT.store(compact, Ordering::SeqCst);
         return Ok(());
     }
-    window.set_size(target).map_err(|error| error.to_string())
+    window.set_size(target).map_err(|error| error.to_string())?;
+    LAUNCHER_IS_COMPACT.store(compact, Ordering::SeqCst);
+    Ok(())
 }
 
 pub fn prepare_launcher_window(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
@@ -952,6 +963,7 @@ pub fn prepare_launcher_window(app: &AppHandle, config: &AppConfig) -> Result<()
         .get_webview_window("main")
         .ok_or_else(|| "找不到主窗口".to_string())?;
     focus::prepare_launcher_window(&window)?;
+    LAUNCHER_IS_COMPACT.store(config.launcher.compact_when_empty, Ordering::SeqCst);
     // Apply persisted geometry while the native window is still hidden. This
     // prevents the first shortcut invocation from briefly showing Tauri's
     // default centered 720×520 window before the frontend loads its config.
@@ -965,13 +977,52 @@ pub fn prepare_launcher_window(app: &AppHandle, config: &AppConfig) -> Result<()
 }
 
 fn configured_launcher_size(config: &AppConfig, compact: bool) -> LogicalSize<f64> {
+    let minimum_height = compact_launcher_height(config);
     LogicalSize::new(
         config.launcher_width(),
         if compact {
-            LAUNCHER_COMPACT_HEIGHT
+            minimum_height
         } else {
-            config.launcher_height()
+            config.launcher_height().max(minimum_height)
         },
+    )
+}
+
+fn compact_launcher_height(config: &AppConfig) -> f64 {
+    let (font_size, border_width) = config
+        .launcher_theme
+        .active_custom_theme()
+        .map(|theme| {
+            (
+                f64::from(theme.search_font_size_px),
+                f64::from(theme.search_border_width_px),
+            )
+        })
+        .unwrap_or((20.0, 1.0));
+    compact_height_for_search(font_size, border_width)
+}
+
+fn compact_height_for_search(font_size: f64, border_width: f64) -> f64 {
+    // Match the webview's 1.15 line-height, 8 px input padding, 10/8 px
+    // search-box margins and its two borders. Four extra pixels cover font
+    // metrics rounding, so the native window never cuts through the input.
+    let input_height = ((font_size * 1.15).ceil() + 8.0).max(38.0);
+    LAUNCHER_COMPACT_HEIGHT.max(input_height + 18.0 + border_width * 2.0 + 4.0)
+}
+
+fn fit_launcher_size(
+    target: LogicalSize<f64>,
+    scale_factor: f64,
+    work_area: PhysicalSize<u32>,
+) -> (LogicalSize<f64>, PhysicalSize<u32>) {
+    let width = ((target.width * scale_factor).round() as u32).min(work_area.width.max(1));
+    let height = ((target.height * scale_factor).round() as u32).min(work_area.height.max(1));
+    (
+        LogicalSize::new(
+            f64::from(width) / scale_factor,
+            f64::from(height) / scale_factor,
+        ),
+        PhysicalSize::new(width, height),
     )
 }
 
@@ -1034,24 +1085,52 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let work_area = monitor.work_area();
+    let compact = LAUNCHER_IS_COMPACT.load(Ordering::SeqCst);
     // Keep the launcher's top edge stable in compact and full modes. Using
     // the current compact height here would make later invocations drift down.
     // Use the destination monitor's DPI because the hidden window may still
     // belong to a different monitor when this position is calculated.
-    let (launcher_width, launcher_height, horizontal_offset, vertical_offset) = app
+    let (launcher_width, launcher_height, compact_height, horizontal_offset, vertical_offset) = app
         .try_state::<Arc<ConfigState>>()
         .map(|config| {
             let config = config.snapshot();
             (
                 config.launcher_width(),
-                config.launcher_height(),
+                configured_launcher_size(&config, false).height,
+                configured_launcher_size(&config, true).height,
                 config.launcher.horizontal_offset_px,
                 config.launcher.vertical_offset_px,
             )
         })
-        .unwrap_or((DEFAULT_LAUNCHER_WIDTH, DEFAULT_LAUNCHER_HEIGHT, 0, 0));
-    let positioning_width = (launcher_width * monitor.scale_factor()).round() as u32;
-    let positioning_height = (launcher_height * monitor.scale_factor()).round() as u32;
+        .unwrap_or((
+            DEFAULT_LAUNCHER_WIDTH,
+            DEFAULT_LAUNCHER_HEIGHT,
+            LAUNCHER_COMPACT_HEIGHT,
+            0,
+            0,
+        ));
+    let (_, positioning_size) = fit_launcher_size(
+        LogicalSize::new(launcher_width, launcher_height),
+        monitor.scale_factor(),
+        work_area.size,
+    );
+    let (display_size, _) = fit_launcher_size(
+        LogicalSize::new(
+            launcher_width,
+            if compact {
+                compact_height
+            } else {
+                launcher_height
+            },
+        ),
+        monitor.scale_factor(),
+        work_area.size,
+    );
+    // The saved logical dimensions can exceed a smaller destination display.
+    // Fit this invocation to its work area without changing the user's config.
+    window
+        .set_size(display_size)
+        .map_err(|error| error.to_string())?;
     let horizontal_offset = (f64::from(horizontal_offset) * monitor.scale_factor()).round() as i32;
     let vertical_offset = (f64::from(vertical_offset) * monitor.scale_factor()).round() as i32;
     let position = launcher_position(
@@ -1059,7 +1138,7 @@ pub fn position_launcher(app: &AppHandle) -> Result<(), String> {
         *monitor_size,
         work_area.position,
         work_area.size,
-        PhysicalSize::new(positioning_width, positioning_height),
+        positioning_size,
         PhysicalPosition::new(horizontal_offset, vertical_offset),
     );
     window
@@ -1634,12 +1713,13 @@ mod tests {
     };
 
     use super::{
-        calculate, catalog_results, command_arguments, configured_launcher_size, is_settings_query,
-        launcher_position, match_score, script_action_subtitle, script_command,
-        script_output_result, terminal_command, terminal_command_results, translation_command,
-        web_search_command, web_search_results, LauncherState,
+        calculate, catalog_results, command_arguments, compact_height_for_search,
+        configured_launcher_size, fit_launcher_size, is_settings_query, launcher_position,
+        match_score, script_action_subtitle, script_command, script_output_result,
+        terminal_command, terminal_command_results, translation_command, web_search_command,
+        web_search_results, LauncherState,
     };
-    use tauri::{PhysicalPosition, PhysicalSize};
+    use tauri::{LogicalSize, PhysicalPosition, PhysicalSize};
 
     #[test]
     fn launcher_position_preserves_the_current_default_and_clamps_offsets() {
@@ -1672,6 +1752,41 @@ mod tests {
             PhysicalPosition::new(1_000, 1_000),
         );
         assert_eq!((lower_right.x, lower_right.y), (-1_200, 360));
+    }
+
+    #[test]
+    fn oversized_launcher_fits_the_destination_work_area() {
+        let (logical, physical) = fit_launcher_size(
+            LogicalSize::new(2_560.0, 2_160.0),
+            1.5,
+            PhysicalSize::new(1_920, 1_040),
+        );
+        assert_eq!((physical.width, physical.height), (1_920, 1_040));
+        assert_eq!(logical.width, 1_280.0);
+        assert!((logical.height - 1_040.0 / 1.5).abs() < 0.001);
+
+        let position = launcher_position(
+            PhysicalPosition::new(0, 0),
+            PhysicalSize::new(1_920, 1_080),
+            PhysicalPosition::new(0, 40),
+            PhysicalSize::new(1_920, 1_040),
+            physical,
+            PhysicalPosition::new(8_192, -8_192),
+        );
+        assert_eq!((position.x, position.y), (0, 40));
+
+        let (_, small) = fit_launcher_size(
+            LogicalSize::new(256.0, 160.0),
+            1.0,
+            PhysicalSize::new(1_920, 1_040),
+        );
+        assert_eq!((small.width, small.height), (256, 160));
+    }
+
+    #[test]
+    fn compact_height_grows_to_show_the_configured_search_font() {
+        assert_eq!(compact_height_for_search(20.0, 1.0), 74.0);
+        assert_eq!(compact_height_for_search(255.0, 4.0), 332.0);
     }
 
     #[test]

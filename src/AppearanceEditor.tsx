@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import {
   builtinThemeIds,
   buildLauncherThemeBundle,
@@ -10,6 +10,7 @@ import {
   resolveLauncherTheme,
   resolveSettingsTheme,
   validateWallpaperImageDataUrl,
+  visualBounds,
   type LauncherCustomThemeConfig,
   type LauncherThemeConfig,
   type SearchBorderStyle,
@@ -19,6 +20,8 @@ import {
   type ThemeSelection,
 } from "./config";
 import { zhCN } from "./i18n/zh-CN";
+import { appearanceRedesign as r } from "./i18n/appearance-redesign";
+import SettingsDialog from "./SettingsDialog";
 import "./AppearanceEditor.css";
 
 type ThemeScope = "launcher" | "settings";
@@ -29,6 +32,8 @@ type AppearanceEditorProps = {
   saveSettingsManually: boolean;
   readOnly: boolean;
   saving?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  resetToken?: number;
 };
 
 type ThemeTarget = {
@@ -40,7 +45,8 @@ const t = zhCN.appearanceEditor;
 const MAX_CUSTOM_THEMES = 12;
 const MAX_THEME_BUNDLE_BYTES = Math.floor(2.5 * 1024 * 1024);
 const MAX_WALLPAPER_BYTES = Math.floor(1.5 * 1024 * 1024);
-const builtinLabels = { midnight: t.midnight, paper: t.paper, forest: t.forest } as const;
+const builtinLabels = { midnight: t.midnight, paper: t.paper, forest: t.forest, black: t.black } as const;
+const RangeValidityContext = createContext<(label: string, valid: boolean) => void>(() => {});
 
 function cloneBackground(theme: ThemeBackgroundConfig): ThemeBackgroundConfig {
   return { ...theme, platformOverrides: { ...theme.platformOverrides } };
@@ -148,11 +154,21 @@ function ColorControl({ label, value, disabled, onChange }: { label: string; val
   </label>;
 }
 
-function RangeControl({ label, value, minimum, maximum, unit = " px", disabled, onChange }: { label: string; value: number; minimum: number; maximum: number; unit?: string; disabled: boolean; onChange: (value: number) => void }) {
-  return <label className="appearance-control">
-    <span className="appearance-control-copy"><strong>{label}</strong></span>
-    <span className="appearance-range-control"><input aria-label={label} type="range" min={minimum} max={maximum} value={value} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} /><output>{value}{unit}</output></span>
-  </label>;
+function RangeControl({ label, value, minimum, maximum, legalMinimum = minimum, legalMaximum = maximum, unit = " px", disabled, onChange }: { label: string; value: number; minimum: number; maximum: number; legalMinimum?: number; legalMaximum?: number; unit?: string; disabled: boolean; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  const id = useId();
+  const reportValidity = useContext(RangeValidityContext);
+  const valid = /^\d+$/.test(draft) && Number(draft) >= legalMinimum && Number(draft) <= legalMaximum;
+  const unusual = valid && (Number(draft) < minimum || Number(draft) > maximum);
+  useEffect(() => setDraft(String(value)), [value]);
+  useEffect(() => {
+    reportValidity(id, valid);
+    return () => reportValidity(id, true);
+  }, [id, valid, reportValidity]);
+  return <div className={`appearance-control appearance-number-control ${valid ? "" : "invalid"}`}>
+    <span className="appearance-control-copy"><strong>{label}</strong>{!valid && <small className="appearance-value-error">{r.legalRange.replace("{min}", String(legalMinimum)).replace("{max}", String(legalMaximum))}</small>}{unusual && <small className="appearance-value-warning">{r.comfortWarning.replace("{min}", String(minimum)).replace("{max}", String(maximum))}</small>}</span>
+    <span className="appearance-range-control"><input aria-label={label} type="range" min={minimum} max={maximum} value={Math.max(minimum, Math.min(maximum, value))} disabled={disabled} onChange={(event) => { const next = Number(event.target.value); setDraft(String(next)); onChange(next); }} /><input aria-label={r.exactValue.replace("{label}", label)} type="number" inputMode="numeric" step="1" min={legalMinimum} max={legalMaximum} value={draft} aria-invalid={!valid} disabled={disabled} onChange={(event) => { const next = event.target.value; setDraft(next); if (/^\d+$/.test(next) && Number(next) >= legalMinimum && Number(next) <= legalMaximum) onChange(Number(next)); }} /><span>{unit.trim()}</span></span>
+  </div>;
 }
 
 function ToggleControl({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
@@ -192,33 +208,35 @@ function LauncherControls({ theme, disabled, update, onWallpaper, onRemoveWallpa
       <ColorControl label={t.windowBackground} value={theme.windowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBackground: value }))} />
       <ColorControl label={t.windowBorder} value={theme.windowBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBorder: value }))} />
       <RangeControl label={t.windowBorderWidth} value={theme.windowBorderWidthPx} minimum={0} maximum={4} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowBorderWidthPx: value }))} />
-      <RangeControl label={t.windowWidth} value={theme.windowWidthPx} minimum={620} maximum={900} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowWidthPx: value, searchWidthPx: Math.min(current.searchWidthPx, value) }))} />
-      <RangeControl label={t.windowRadius} value={theme.windowRadiusPx} minimum={0} maximum={28} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowRadiusPx: value }))} />
+      <RangeControl label={t.windowWidth} value={theme.windowWidthPx} minimum={Math.max(620, theme.searchWidthPx)} maximum={Math.max(900, theme.searchWidthPx)} legalMinimum={Math.max(visualBounds.launcherTheme.windowWidthPx.min, theme.searchWidthPx)} legalMaximum={visualBounds.launcherTheme.windowWidthPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowWidthPx: value }))} />
+      <RangeControl label={t.windowRadius} value={theme.windowRadiusPx} minimum={0} maximum={28} legalMinimum={visualBounds.launcherTheme.windowRadiusPx.min} legalMaximum={visualBounds.launcherTheme.windowRadiusPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowRadiusPx: value }))} />
       <ColorControl label={t.searchBackground} value={theme.searchBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBackground: value }))} />
       <ColorControl label={t.searchBorder} value={theme.searchBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorder: value }))} />
       <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.searchBorderStyle}</strong></span><select value={theme.searchBorderStyle} disabled={disabled} onChange={(event) => update((current) => ({ ...current, searchBorderStyle: event.target.value as SearchBorderStyle }))}><option value="solid">{t.solid}</option><option value="dashed">{t.dashed}</option><option value="dotted">{t.dotted}</option><option value="double">{t.double}</option><option value="none">{t.none}</option></select></label>
       <RangeControl label={t.searchBorderWidth} value={theme.searchBorderWidthPx} minimum={0} maximum={4} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorderWidthPx: value }))} />
-      <RangeControl label={t.searchWidth} value={theme.searchWidthPx} minimum={320} maximum={theme.windowWidthPx} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchWidthPx: value }))} />
+      <RangeControl label={t.searchWidth} value={theme.searchWidthPx} minimum={Math.min(320, theme.windowWidthPx)} maximum={theme.windowWidthPx} legalMinimum={visualBounds.launcherTheme.searchWidthPx.min} legalMaximum={Math.min(visualBounds.launcherTheme.searchWidthPx.max, theme.windowWidthPx)} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchWidthPx: value }))} />
       <ColorControl label={t.searchText} value={theme.searchTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchTextColor: value }))} />
-      <RangeControl label={t.searchFontSize} value={theme.searchFontSizePx} minimum={12} maximum={24} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchFontSizePx: value }))} />
+      <RangeControl label={t.searchFontSize} value={theme.searchFontSizePx} minimum={12} maximum={24} legalMinimum={visualBounds.launcherTheme.searchFontSizePx.min} legalMaximum={visualBounds.launcherTheme.searchFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchFontSizePx: value }))} />
       <ToggleControl label={t.showSearchIcon} checked={theme.showSearchIcon} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showSearchIcon: value }))} />
       <ToggleControl label={t.showLogo} checked={theme.showLogo} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showLogo: value }))} />
+      <ToggleControl label={t.showProviderStatus} checked={theme.showProviderStatus} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showProviderStatus: value }))} />
+      <ToggleControl label={t.showFooterHints} checked={theme.showFooterHints} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showFooterHints: value }))} />
     </Section>
     <Section title={t.normalResults} hint={t.normalResultsHint}>
       <ColorControl label={t.normalRowBackground} value={theme.normalRowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalRowBackground: value }))} />
       <ColorControl label={t.normalPrimary} value={theme.normalPrimaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalPrimaryColor: value }))} />
-      <RangeControl label={t.normalPrimarySize} value={theme.normalPrimaryFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalPrimaryFontSizePx: value }))} />
+      <RangeControl label={t.normalPrimarySize} value={theme.normalPrimaryFontSizePx} minimum={12} maximum={20} legalMinimum={visualBounds.launcherTheme.normalPrimaryFontSizePx.min} legalMaximum={visualBounds.launcherTheme.normalPrimaryFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalPrimaryFontSizePx: value }))} />
       <ColorControl label={t.normalSecondary} value={theme.normalSecondaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalSecondaryColor: value }))} />
-      <RangeControl label={t.normalSecondarySize} value={theme.normalSecondaryFontSizePx} minimum={10} maximum={18} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalSecondaryFontSizePx: value }))} />
-      <RangeControl label={t.rowHeight} value={theme.normalRowHeightPx} minimum={44} maximum={84} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalRowHeightPx: value }))} />
+      <RangeControl label={t.normalSecondarySize} value={theme.normalSecondaryFontSizePx} minimum={10} maximum={18} legalMinimum={visualBounds.launcherTheme.normalSecondaryFontSizePx.min} legalMaximum={visualBounds.launcherTheme.normalSecondaryFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalSecondaryFontSizePx: value }))} />
+      <RangeControl label={t.rowHeight} value={theme.normalRowHeightPx} minimum={44} maximum={84} legalMinimum={visualBounds.launcherTheme.normalRowHeightPx.min} legalMaximum={visualBounds.launcherTheme.normalRowHeightPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, normalRowHeightPx: value }))} />
     </Section>
     <Section title={t.selectedAndIcons} hint={t.selectedAndIconsHint}>
       <ColorControl label={t.selectedBackground} value={theme.selectedRowBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedRowBackground: value }))} />
       <ColorControl label={t.selectedPrimary} value={theme.selectedPrimaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedPrimaryColor: value }))} />
-      <RangeControl label={t.selectedPrimarySize} value={theme.selectedPrimaryFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedPrimaryFontSizePx: value }))} />
+      <RangeControl label={t.selectedPrimarySize} value={theme.selectedPrimaryFontSizePx} minimum={12} maximum={20} legalMinimum={visualBounds.launcherTheme.selectedPrimaryFontSizePx.min} legalMaximum={visualBounds.launcherTheme.selectedPrimaryFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedPrimaryFontSizePx: value }))} />
       <ColorControl label={t.selectedSecondary} value={theme.selectedSecondaryColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedSecondaryColor: value }))} />
-      <RangeControl label={t.selectedSecondarySize} value={theme.selectedSecondaryFontSizePx} minimum={10} maximum={18} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedSecondaryFontSizePx: value }))} />
-      <RangeControl label={t.iconSize} value={theme.iconSizePx} minimum={16} maximum={64} disabled={disabled} onChange={(value) => update((current) => ({ ...current, iconSizePx: value }))} />
+      <RangeControl label={t.selectedSecondarySize} value={theme.selectedSecondaryFontSizePx} minimum={10} maximum={18} legalMinimum={visualBounds.launcherTheme.selectedSecondaryFontSizePx.min} legalMaximum={visualBounds.launcherTheme.selectedSecondaryFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedSecondaryFontSizePx: value }))} />
+      <RangeControl label={t.iconSize} value={theme.iconSizePx} minimum={16} maximum={64} legalMinimum={visualBounds.launcherTheme.iconSizePx.min} legalMaximum={visualBounds.launcherTheme.iconSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, iconSizePx: value }))} />
       <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.maxResults}</strong></span><select value={theme.maxResults} disabled={disabled} onChange={(event) => update((current) => ({ ...current, maxResults: Number(event.target.value) as LauncherCustomThemeConfig["maxResults"] }))}>{([6, 8, 10, 12] as const).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
       <ToggleControl label={t.showSourceBadge} checked={theme.showSourceBadge} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showSourceBadge: value }))} />
     </Section>
@@ -242,8 +260,8 @@ function SettingsControls({ theme, disabled, update, onWallpaper, onRemoveWallpa
       <ColorControl label={t.secondaryText} value={theme.secondaryTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, secondaryTextColor: value }))} />
       <ColorControl label={t.navText} value={theme.navTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, navTextColor: value }))} />
       <ColorControl label={t.selectedNav} value={theme.selectedNavBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, selectedNavBackground: value }))} />
-      <RangeControl label={t.baseFontSize} value={theme.baseFontSizePx} minimum={12} maximum={20} disabled={disabled} onChange={(value) => update((current) => ({ ...current, baseFontSizePx: value }))} />
-      <RangeControl label={t.windowRadius} value={theme.radiusPx} minimum={0} maximum={28} disabled={disabled} onChange={(value) => update((current) => ({ ...current, radiusPx: value }))} />
+      <RangeControl label={t.baseFontSize} value={theme.baseFontSizePx} minimum={12} maximum={20} legalMinimum={visualBounds.settingsTheme.baseFontSizePx.min} legalMaximum={visualBounds.settingsTheme.baseFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, baseFontSizePx: value }))} />
+      <RangeControl label={t.windowRadius} value={theme.radiusPx} minimum={0} maximum={28} legalMinimum={visualBounds.settingsTheme.radiusPx.min} legalMaximum={visualBounds.settingsTheme.radiusPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, radiusPx: value }))} />
     </Section>
     <BackgroundControls theme={theme} disabled={disabled} onWallpaper={onWallpaper} onRemoveWallpaper={onRemoveWallpaper} onChange={(updater) => update((current) => ({ ...current, ...updater(current) }))} />
   </>;
@@ -254,17 +272,35 @@ function LauncherPreview({ theme }: { theme: LauncherCustomThemeConfig }) {
   const style = {
     "--preview-accent": theme.accentColor, "--preview-window": theme.windowBackground, "--preview-window-border": theme.windowBorder, "--preview-window-border-width": `${theme.windowBorderWidthPx}px`, "--preview-window-width": `${(theme.windowWidthPx / 900) * 100}%`, "--preview-radius": `${theme.windowRadiusPx}px`, "--preview-window-opacity": `${material.opacity}%`, "--preview-blur": `${material.blurPx}px`, "--preview-shadow-opacity": String(theme.shadowPercent / 100), "--preview-wallpaper": previewWallpaper(theme.wallpaperDataUrl), "--preview-wallpaper-opacity": String(theme.wallpaperOpacity / 100), "--preview-search": theme.searchBackground, "--preview-search-border": theme.searchBorder, "--preview-search-border-width": `${theme.searchBorderWidthPx}px`, "--preview-search-border-style": theme.searchBorderStyle, "--preview-search-width": `${Math.min(100, (theme.searchWidthPx / theme.windowWidthPx) * 100)}%`, "--preview-search-text": theme.searchTextColor, "--preview-search-size": `${theme.searchFontSizePx}px`, "--preview-row": theme.normalRowBackground, "--preview-row-primary": theme.normalPrimaryColor, "--preview-row-secondary": theme.normalSecondaryColor, "--preview-row-primary-size": `${theme.normalPrimaryFontSizePx}px`, "--preview-row-secondary-size": `${theme.normalSecondaryFontSizePx}px`, "--preview-row-height": `${theme.normalRowHeightPx}px`, "--preview-selected": theme.selectedRowBackground, "--preview-selected-primary": theme.selectedPrimaryColor, "--preview-selected-secondary": theme.selectedSecondaryColor, "--preview-selected-primary-size": `${theme.selectedPrimaryFontSizePx}px`, "--preview-selected-secondary-size": `${theme.selectedSecondaryFontSizePx}px`, "--preview-icon-size": `${theme.iconSizePx}px`,
   } as CSSProperties;
+  // Keep the sample's dimensions proportional to its bounded preview frame.
+  // Very large legal fonts remain inspectable through the preview scroll area.
+  const scale = Math.min(1, 420 / theme.windowWidthPx);
+  const scaled = (value: number) => `${value === 0 ? 0 : Math.max(1, Math.round(value * scale))}px`;
+  Object.assign(style, {
+    "--preview-window-width": `${Math.min(100, theme.windowWidthPx / 900 * 100)}%`,
+    "--preview-radius": scaled(theme.windowRadiusPx),
+    "--preview-search-size": scaled(theme.searchFontSizePx),
+    "--preview-row-primary-size": scaled(theme.normalPrimaryFontSizePx),
+    "--preview-row-secondary-size": scaled(theme.normalSecondaryFontSizePx),
+    "--preview-selected-primary-size": scaled(theme.selectedPrimaryFontSizePx),
+    "--preview-selected-secondary-size": scaled(theme.selectedSecondaryFontSizePx),
+    "--preview-row-height": scaled(theme.normalRowHeightPx),
+    "--preview-icon-size": scaled(theme.iconSizePx),
+  });
   const sampleRows = [
     { kind: "wechat", title: t.previewAppTitle, path: t.previewAppPath, badge: t.previewAppBadge, selected: true },
     { kind: "folder", title: t.previewFolderTitle, path: t.previewFolderPath, badge: t.previewFolderBadge },
     { kind: "file", title: t.previewFileTitle, path: t.previewFilePath, badge: t.previewFileBadge },
   ];
   const rows = Array.from({ length: theme.maxResults }, (_, index) => ({ ...sampleRows[index % sampleRows.length], selected: index === 0 }));
-  return <div className="appearance-launcher-preview" style={style}>
+  return <><div className="appearance-launcher-preview" style={style} data-provider-status={theme.showProviderStatus} data-footer-hints={theme.showFooterHints}>
     <div className="appearance-live-search">{theme.showSearchIcon && <span aria-hidden="true">⌕</span>}<strong>{t.previewQuery}</strong>{theme.showLogo && <i aria-hidden="true">◇</i>}</div>
+    <div className="appearance-live-provider" hidden={!theme.showProviderStatus}>{t.previewProviderStatus}</div>
     <div className="appearance-live-results">{rows.map((row, index) => <div key={`${row.kind}-${index}`} className={`appearance-live-row ${row.selected ? "selected" : ""}`}><PreviewIcon kind={row.kind} /><span><strong>{row.title}</strong><small>{row.path}</small></span>{theme.showSourceBadge && <em>{row.badge}</em>}</div>)}</div>
+    <div className="appearance-live-footer" hidden={!theme.showFooterHints}>{t.previewFooterHints}</div>
+  </div>
     <p className="appearance-native-note">{t.previewLauncherDimensions.replace("{width}", String(theme.windowWidthPx)).replace("{count}", String(theme.maxResults))}<br />{t.nativeIconNote}</p>
-  </div>;
+  </>;
 }
 
 function PreviewIcon({ kind }: { kind: string }) {
@@ -279,7 +315,7 @@ function SettingsPreview({ theme }: { theme: SettingsCustomThemeConfig }) {
   return <div className="appearance-settings-preview" style={style}><header><strong>{t.previewSettingsTitle}</strong><span>×</span></header><div><aside><span>{t.previewGeneral}</span><span>{t.previewSearch}</span><span>{t.previewCommands}</span><strong>{t.previewAppearance}</strong></aside><main><h3>{t.previewPageTitle}</h3><p>{t.previewPageCopy}</p><section><strong>{t.previewCardTitle}</strong><p>{t.previewCardCopy}</p><i /><i /><i /></section></main></div></div>;
 }
 
-export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, saveSettingsManually, readOnly, saving = false }: AppearanceEditorProps) {
+export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, saveSettingsManually, readOnly, saving = false, onDirtyChange, resetToken }: AppearanceEditorProps) {
   const [scope, setScope] = useState<ThemeScope>("launcher");
   const [workingLauncher, setWorkingLauncher] = useState(() => cloneLauncherScope(launcherTheme));
   const [workingSettings, setWorkingSettings] = useState(() => cloneSettingsScope(settingsTheme));
@@ -288,6 +324,10 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   const [notice, setNotice] = useState("");
   const [importing, setImporting] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryFilter, setLibraryFilter] = useState<"all" | "builtin" | "custom">("all");
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [invalidIds, setInvalidIds] = useState<Set<string>>(() => new Set());
   const importRef = useRef<HTMLInputElement>(null);
   const importRequestRef = useRef(0);
   const tabRefs = useRef<Record<ThemeScope, HTMLButtonElement | null>>({ launcher: null, settings: null });
@@ -295,6 +335,27 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   const launcherLibrarySignature = useMemo(() => JSON.stringify(launcherTheme.customThemes), [launcherTheme.customThemes]);
   const settingsLibrarySignature = useMemo(() => JSON.stringify(settingsTheme.customThemes), [settingsTheme.customThemes]);
   const disabled = readOnly || saving || importing || committing;
+  const reportValidity = useCallback((id: string, valid: boolean) => {
+    setInvalidIds((current) => {
+      if (valid && !current.has(id) || !valid && current.has(id)) return current;
+      const next = new Set(current);
+      if (valid) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (resetToken === undefined) return;
+    importRequestRef.current += 1;
+    setWorkingLauncher(cloneLauncherScope(launcherTheme));
+    setWorkingSettings(cloneSettingsScope(settingsTheme));
+    setEditingLauncherTheme(launcherTheme.theme);
+    setEditingSettingsTheme(settingsTheme.theme);
+    setLibraryOpen(false);
+    setNotice("");
+  // resetToken is an explicit discard request from the parent.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetToken]);
 
   useEffect(() => {
     importRequestRef.current += 1;
@@ -344,19 +405,23 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   const committedLauncher = selectedLauncherId ? launcherTheme.customThemes.find((theme) => sameId(theme.id, selectedLauncherId)) ?? null : null;
   const launcherEditingHasChanges = selectedLauncher !== null
     && (committedLauncher === null || JSON.stringify(selectedLauncher) !== JSON.stringify(committedLauncher));
-  const launcherPreview = resolveLauncherTheme({ ...workingLauncher, theme: editingLauncherTheme });
+  const launcherPreview = resolveLauncherTheme({ ...workingLauncher, theme: editingLauncherTheme, accentColor: editingLauncherTheme === workingLauncher.theme ? workingLauncher.accentColor : "" });
   const selectedSettingsId = customId(editingSettingsTheme);
   const selectedSettings = selectedSettingsId ? workingSettings.customThemes.find((theme) => sameId(theme.id, selectedSettingsId)) ?? null : null;
   const committedSettings = selectedSettingsId ? settingsTheme.customThemes.find((theme) => sameId(theme.id, selectedSettingsId)) ?? null : null;
   const settingsEditingHasChanges = selectedSettings !== null
     && (committedSettings === null || JSON.stringify(selectedSettings) !== JSON.stringify(committedSettings));
-  const settingsPreview = resolveSettingsTheme({ ...workingSettings, theme: editingSettingsTheme });
+  const settingsPreview = resolveSettingsTheme({ ...workingSettings, theme: editingSettingsTheme, accentColor: editingSettingsTheme === workingSettings.theme ? workingSettings.accentColor : "" });
   const checks = scope === "launcher" ? launcherChecks(launcherPreview) : settingsChecks(settingsPreview);
   const checksPass = checks.every((check) => check.ratio >= check.minimum);
   const sceneReview = needsSceneContrastReview(scope === "launcher" ? launcherPreview : settingsPreview);
   const contrastVerified = checksPass && !sceneReview;
   const selectedCustom = scope === "launcher" ? selectedLauncher : selectedSettings;
   const editingHasChanges = scope === "launcher" ? launcherEditingHasChanges : settingsEditingHasChanges;
+  const dirty = JSON.stringify(workingLauncher.customThemes) !== launcherLibrarySignature
+    || JSON.stringify(workingSettings.customThemes) !== settingsLibrarySignature
+    || editingLauncherTheme !== launcherTheme.theme || editingSettingsTheme !== settingsTheme.theme;
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   const commitThemes = async (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => {
     setCommitting(true);
@@ -396,6 +461,7 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
   const chooseScope = (next: ThemeScope) => {
     if (disabled) return;
+    if (invalidIds.size) return setNotice(r.invalidValues);
     invalidateCurrentWallpaperRequest();
     setScope(next);
     setNotice("");
@@ -420,19 +486,22 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
   const chooseEditingTheme = (selection: ThemeSelection) => {
     const current = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
-    if (selection === current) return;
+    if (selection === current) return true;
+    if (invalidIds.size) { setNotice(r.invalidValues); return false; }
     if (editingHasChanges) {
       setNotice(t.saveBeforeSwitchingTheme);
-      return;
+      return false;
     }
     invalidateCurrentWallpaperRequest();
     const id = customId(selection);
     if (id) chooseCustom(id);
     else chooseBuiltin(selection as typeof builtinThemeIds[number]);
+    return true;
   };
 
   const chooseActiveTheme = async (selection: ThemeSelection) => {
     if (disabled) return;
+    if (invalidIds.size) return setNotice(r.invalidValues);
     const commitScope = scope;
     let themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig };
     if (commitScope === "launcher") {
@@ -511,19 +580,19 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
       if (!deletedId) return;
       if (!committedSettings) {
         setWorkingSettings((current) => ({ ...current, customThemes: current.customThemes.filter((theme) => !sameId(theme.id, deletedId)) }));
-        setEditingSettingsTheme("midnight");
+        setEditingSettingsTheme("forest");
         setNotice(t.deletedUnsavedTheme);
         return;
       }
       const next = {
         ...cloneSettingsScope(settingsTheme),
-        ...(customId(settingsTheme.theme) === deletedId ? { theme: "midnight" as const, accentColor: createSettingsTheme("midnight").accentColor } : {}),
+        ...(customId(settingsTheme.theme) === deletedId ? { theme: "forest" as const, accentColor: createSettingsTheme("forest").accentColor } : {}),
         customThemes: settingsTheme.customThemes.filter((theme) => !sameId(theme.id, deletedId)),
       };
       const saved = await commitThemes({ launcherTheme: cloneLauncherScope(launcherTheme), settingsTheme: next });
       if (!saved) return setNotice(t.themeSaveFailed);
       setWorkingSettings(cloneSettingsScope(next));
-      setEditingSettingsTheme("midnight");
+      setEditingSettingsTheme("forest");
     }
     setNotice(saveSettingsManually ? t.deletedThemeToDraft : t.deletedTheme);
   };
@@ -535,19 +604,23 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     setNotice(t.resetTheme);
   };
   const importError = (targetScope: ThemeScope, value: unknown, error: unknown) => {
-    const expectedSchema = targetScope === "launcher" ? "suo-launcher-theme-v1" : "suo-settings-theme-v1";
+    const schemas = targetScope === "launcher" ? ["suo-launcher-theme-v1", "suo-launcher-theme-v2"] : ["suo-settings-theme-v1"];
+    const expectedSchema = schemas.join(" / ");
     const schema = value && typeof value === "object" && "schema" in value ? (value as { schema?: unknown }).schema : "";
     const version = value && typeof value === "object" && "version" in value ? (value as { version?: unknown }).version : undefined;
     const detail = error instanceof Error ? error.message.trim() : "";
     if (error instanceof SyntaxError) return t.invalidJson;
     if (schema === "suo-theme-v1") return t.legacySchema;
-    if (schema === (targetScope === "launcher" ? "suo-settings-theme-v1" : "suo-launcher-theme-v1")) return t.wrongScope.replace("{scope}", targetScope === "launcher" ? t.settingsScope : t.launcherScope);
-    if (schema === expectedSchema && version !== 1) {
+    const wrongScope = targetScope === "launcher" ? schema === "suo-settings-theme-v1" : schema === "suo-launcher-theme-v1" || schema === "suo-launcher-theme-v2";
+    if (wrongScope) return t.wrongScope.replace("{scope}", targetScope === "launcher" ? t.settingsScope : t.launcherScope);
+    const knownSchema = typeof schema === "string" && schemas.includes(schema);
+    const expectedVersion = schema === "suo-launcher-theme-v2" ? 2 : 1;
+    if (knownSchema && version !== expectedVersion) {
       return typeof version === "number"
-        ? t.unsupportedThemeVersion.replace("{version}", `v${version}`)
-        : t.invalidThemeVersion;
+        ? t.unsupportedThemeVersion.replace("{version}", `v${version}`).replace("{supported}", `v${expectedVersion}`)
+        : t.invalidThemeVersion.replace("{supported}", String(expectedVersion));
     }
-    if (schema === expectedSchema) {
+    if (knownSchema) {
       return detail
         ? t.invalidThemeFieldsWithReason.replace("{reason}", detail)
         : t.invalidThemeFields;
@@ -664,6 +737,7 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   };
   const applyDraft = async () => {
     if (disabled || !editingHasChanges) return;
+    if (invalidIds.size) return setNotice(r.invalidValues);
     const commitScope = scope;
     const editingSelection = commitScope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
     const activeSelection = commitScope === "launcher" ? launcherTheme.theme : settingsTheme.theme;
@@ -708,12 +782,11 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   const selectedBuiltin = scope === "launcher" ? (selectedLauncher ? null : editingLauncherTheme) : (selectedSettings ? null : editingSettingsTheme);
   const activeSelection = scope === "launcher" ? launcherTheme.theme : settingsTheme.theme;
   const editingSelection = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
-  const activeCustomThemes = scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes;
   const editingCustomThemes = scope === "launcher" ? workingLauncher.customThemes : workingSettings.customThemes;
   const editingName = themeName(editingSelection, editingCustomThemes);
   const editingIsActive = editingSelection === activeSelection;
   const hasThemeChanges = editingHasChanges;
-  const canApplySavedInactiveTheme = !saveSettingsManually && !editingIsActive && !hasThemeChanges;
+  const canApplySavedInactiveTheme = !editingIsActive && !hasThemeChanges;
   const primaryActionLabel = canApplySavedInactiveTheme
     ? t.applyTheme
     : !saveSettingsManually && editingIsActive ? t.saveAndApply : t.saveTheme;
@@ -727,41 +800,40 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     }
     void applyDraft();
   };
-  const editingSwatchStyle = selectedCustom
-    ? { background: `linear-gradient(135deg, ${selectedCustom.windowBackground}, ${scope === "launcher" ? (selectedCustom as LauncherCustomThemeConfig).selectedRowBackground : (selectedCustom as SettingsCustomThemeConfig).selectedNavBackground})` }
-    : undefined;
-  return <section className="appearance-editor" aria-label={t.ariaLabel}>
-    <header className="appearance-editor-heading"><div><h2>{t.title}</h2><p>{t.description}</p></div></header>
+  const editingSwatchStyle = { background: `linear-gradient(135deg, ${scope === "launcher" ? launcherPreview.windowBackground : settingsPreview.windowBackground}, ${scope === "launcher" ? launcherPreview.selectedRowBackground : settingsPreview.selectedNavBackground})` };
+  const libraryItems = [
+    ...builtinThemeIds.map((id) => {
+      const theme = scope === "launcher"
+        ? resolveLauncherTheme({ theme: id, accentColor: "", customThemes: [] })
+        : resolveSettingsTheme({ theme: id, accentColor: "", customThemes: [] });
+      return { selection: id as ThemeSelection, name: builtinLabels[id], kind: "builtin" as const, swatch: id, style: { background: `linear-gradient(135deg, ${theme.windowBackground}, ${scope === "launcher" ? (theme as LauncherCustomThemeConfig).selectedRowBackground : (theme as SettingsCustomThemeConfig).selectedNavBackground})` } as CSSProperties };
+    }),
+    ...editingCustomThemes.map((theme) => ({ selection: `custom:${theme.id}` as ThemeSelection, name: theme.name, kind: "custom" as const, swatch: "", style: { background: `linear-gradient(135deg, ${theme.windowBackground}, ${scope === "launcher" ? (theme as LauncherCustomThemeConfig).selectedRowBackground : (theme as SettingsCustomThemeConfig).selectedNavBackground})` } as CSSProperties })),
+  ].filter((item) => (libraryFilter === "all" || item.kind === libraryFilter) && item.name.toLocaleLowerCase().includes(librarySearch.trim().toLocaleLowerCase()));
+  return <RangeValidityContext.Provider value={reportValidity}><section className="appearance-editor" aria-label={t.ariaLabel}>
     <section className={`appearance-scope-zone ${scope}`}>
       <div>
-        <span className="appearance-step-label">{t.chooseScopeStep}</span>
         <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
           {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={`${id} ${scope === id ? "active" : ""}`} onClick={() => chooseScope(id)}><span aria-hidden="true">{id === "launcher" ? "⌕" : "⚙"}</span><span><strong>{id === "launcher" ? t.launcherScope : t.settingsScope}</strong><small>{id === "launcher" ? t.launcherScopeHint : t.settingsScopeHint}</small></span><em>{scope === id ? t.designing : t.switchScope}</em></button>)}
         </nav>
       </div>
-      <label className="appearance-active-theme">
-        <span><i className="appearance-active-dot" aria-hidden="true" /><strong>{scope === "launcher" ? t.launcherActiveTheme : t.settingsActiveTheme}</strong><small>{t.activeThemeHint}</small></span>
-        <select value={activeSelection} disabled={disabled} onChange={(event) => void chooseActiveTheme(event.target.value as ThemeSelection)}>
-          {builtinThemeIds.map((id) => <option key={id} value={id}>{builtinLabels[id]} · {t.builtin}</option>)}
-          {activeCustomThemes.map((theme) => <option key={theme.id} value={`custom:${theme.id}`}>{theme.name} · {t.custom}</option>)}
-        </select>
-      </label>
-      <p className="appearance-separation-note"><strong>{t.scopeRule}</strong>{t.separateNotice}</p>
     </section>
     <div id={`appearance-${scope}-panel`} role="tabpanel" aria-labelledby={`appearance-${scope}-tab`} className="appearance-workbench">
       <section className="appearance-edit-panel">
-        <header className="appearance-library-heading"><div><span className="appearance-step-label">{t.chooseEditingStep}</span><h3>{scope === "launcher" ? t.launcherLibrary : t.settingsLibrary}</h3><p>{t.editingThemeHint}</p></div><span>{t.isolated}</span></header>
-        <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
         <div className="appearance-theme-picker">
           <span className={`appearance-theme-swatch ${selectedBuiltin ? `appearance-theme-swatch-${selectedBuiltin}` : ""}`} style={editingSwatchStyle} aria-hidden="true" />
-          <label><span><strong>{t.chooseEditingTheme}</strong><small>{t.editingOnlyHint}</small></span><select value={editingSelection} disabled={disabled} onChange={(event) => chooseEditingTheme(event.target.value as ThemeSelection)}>{builtinThemeIds.map((id) => <option key={id} value={id}>{builtinLabels[id]} · {t.builtin}{id === activeSelection ? ` · ${t.inUse}` : ""}</option>)}{editingCustomThemes.map((theme) => { const selection = `custom:${theme.id}` as ThemeSelection; return <option key={theme.id} value={selection}>{theme.name} · {t.custom}{selection === activeSelection ? ` · ${t.inUse}` : ""}</option>; })}</select></label>
-          <span className="appearance-theme-status"><em className="editing">✎ {t.editing}</em>{editingIsActive && <em className="in-use"><i className="appearance-active-dot" aria-hidden="true" />{t.inUse}</em>}<small>{selectedCustom ? t.custom : t.builtin} · {scope === "launcher" ? t.launcherTag : t.settingsTag}</small></span>
+          <span className="appearance-theme-copy"><strong>{editingName}</strong><small>{selectedCustom ? r.custom : r.builtin}{editingIsActive ? ` · ${t.inUse}` : ` · ${r.previewing} · ${r.activeSkin.replace("{name}", themeName(activeSelection, scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes))}`}</small></span>
+          <button type="button" disabled={disabled} onClick={() => { setLibraryFilter("all"); setLibrarySearch(""); setLibraryOpen(true); }}>{r.changeSkin}</button>
         </div>
-        <header className="appearance-editing-banner"><span aria-hidden="true">✎</span><div><small>{t.editingStep}</small><strong>{t.editingThemeName.replace("{name}", editingName)}</strong><p>{editingIsActive ? t.editingActiveThemeHint : t.editingInactiveThemeHint}</p></div></header>
+        <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
         {selectedCustom ? <div className="appearance-custom-editor"><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
-        <footer className="appearance-edit-footer"><span aria-live="polite">{notice || primaryActionHint}</span><button type="button" className={`primary ${canApplySavedInactiveTheme ? "apply" : ""}`} title={!hasThemeChanges && !canApplySavedInactiveTheme ? t.noThemeChanges : undefined} disabled={disabled || (!hasThemeChanges && !canApplySavedInactiveTheme)} onClick={runPrimaryAction}>{primaryActionLabel}</button></footer>
+        <footer className="appearance-edit-footer"><span aria-live="polite">{notice || primaryActionHint}</span><button type="button" className={`primary ${canApplySavedInactiveTheme ? "apply" : ""}`} title={!hasThemeChanges && !canApplySavedInactiveTheme ? t.noThemeChanges : undefined} disabled={disabled || !!invalidIds.size || (!hasThemeChanges && !canApplySavedInactiveTheme)} onClick={runPrimaryAction}>{primaryActionLabel}</button></footer>
       </section>
       <aside className="appearance-preview-panel" aria-label={t.previewAriaLabel}><header><div><strong>{scope === "launcher" ? t.previewLauncher : t.previewSettings}：{editingName}</strong><small>{editingIsActive ? t.previewEditingActive : t.previewEditingInactive}</small></div><span className={contrastVerified ? "ok" : "warning"}>{contrastVerified ? t.contrastPass : checksPass ? t.contrastSceneReview : t.contrastAdjust}</span></header><div className="appearance-preview-canvas">{scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}</div><ContrastAudit checks={checks} sceneReview={sceneReview} /></aside>
     </div>
-  </section>;
+    <SettingsDialog open={libraryOpen} title={r.libraryTitle} onClose={() => setLibraryOpen(false)} className="appearance-library-dialog" footer={<div className="appearance-library-footer"><span role="status">{r.libraryCount.replace("{count}", String(libraryItems.length))}</span><span>{r.libraryHint}</span></div>}>
+      <div className="appearance-library-toolbar"><input data-dialog-autofocus type="search" aria-label={r.librarySearch} placeholder={r.librarySearch} value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} /><div className="appearance-library-filters" role="group" aria-label={r.libraryFilter}>{(["all", "builtin", "custom"] as const).map((filter) => <button key={filter} type="button" aria-pressed={libraryFilter === filter} onClick={() => setLibraryFilter(filter)}>{r[filter]}</button>)}</div></div>
+      <div className="appearance-library-results" aria-label={r.libraryTitle}>{libraryItems.length ? libraryItems.map((item) => <button key={item.selection} type="button" aria-pressed={editingSelection === item.selection} onClick={() => { if (chooseEditingTheme(item.selection)) setLibraryOpen(false); }}><span className={`appearance-theme-swatch appearance-theme-swatch-${item.swatch}`} style={item.style} aria-hidden="true" /><span><strong>{item.name}</strong><small>{item.kind === "builtin" ? r.builtin : r.custom}{item.selection === activeSelection ? ` · ${t.inUse}` : ""}</small></span>{editingSelection === item.selection && <em>{r.previewing}</em>}</button>) : <p className="appearance-library-empty">{r.noResults}</p>}</div>
+    </SettingsDialog>
+  </section></RangeValidityContext.Provider>;
 }

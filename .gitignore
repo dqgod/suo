@@ -23,3 +23,9 @@ dist-ssr
 *.sln
 *.sw?
 .codex/
+.pnpm-store/
+# Local design renders and browser verification artifacts
+/docs/ui-settings-redesign-*.png
+/test-results/
+/playwright-report/
+/.playwright/

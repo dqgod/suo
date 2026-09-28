@@ -25,6 +25,7 @@ export type TerminalCommandConfig = {
 };
 
 export type TranslationProvider = "microsoft" | "google" | "youdao";
+export type SettingsIconStyle = "transparentColor" | "monochrome" | "original";
 
 export type TranslationConfig = {
   enabled: boolean;
@@ -69,7 +70,7 @@ export type WebSearchConfig = {
   urlTemplate: string;
 };
 
-export type BuiltinThemeId = "midnight" | "paper" | "forest";
+export type BuiltinThemeId = "midnight" | "paper" | "forest" | "black";
 export type ThemeSelection = BuiltinThemeId | `custom:${string}`;
 export type SearchBorderStyle = "solid" | "dashed" | "dotted" | "double" | "none";
 
@@ -123,6 +124,8 @@ export type LauncherCustomThemeConfig = ThemeBackgroundConfig & {
   showLogo: boolean;
   /** Kept when v5 local configuration is migrated; launcher-only. */
   showSourceBadge: boolean;
+  showProviderStatus: boolean;
+  showFooterHints: boolean;
   maxResults: 6 | 8 | 10 | 12;
 };
 
@@ -156,7 +159,33 @@ export type SettingsThemeConfig = {
   customThemes: SettingsCustomThemeConfig[];
 };
 
-export const builtinThemeIds: readonly BuiltinThemeId[] = ["midnight", "paper", "forest"];
+export const builtinThemeIds: readonly BuiltinThemeId[] = ["midnight", "paper", "forest", "black"];
+
+/** Persisted visual limits shared by the editor and strict theme imports. */
+export const visualBounds = {
+  launcher: {
+    windowWidthPx: { min: 256, max: 2560 },
+    windowHeightPx: { min: 160, max: 2160 },
+    horizontalOffsetPx: { min: -8192, max: 8192 },
+    verticalOffsetPx: { min: -8192, max: 8192 },
+  },
+  launcherTheme: {
+    windowWidthPx: { min: 256, max: 2560 },
+    windowRadiusPx: { min: 0, max: 255 },
+    searchWidthPx: { min: 128, max: 2560 },
+    searchFontSizePx: { min: 1, max: 255 },
+    normalPrimaryFontSizePx: { min: 1, max: 255 },
+    normalSecondaryFontSizePx: { min: 1, max: 255 },
+    normalRowHeightPx: { min: 1, max: 1024 },
+    selectedPrimaryFontSizePx: { min: 1, max: 255 },
+    selectedSecondaryFontSizePx: { min: 1, max: 255 },
+    iconSizePx: { min: 1, max: 255 },
+  },
+  settingsTheme: {
+    baseFontSizePx: { min: 1, max: 255 },
+    radiusPx: { min: 0, max: 255 },
+  },
+} as const;
 
 const defaultPlatformOverrides = (): PlatformThemeOverrides => ({
   enabled: false,
@@ -191,6 +220,10 @@ type ThemePalette = {
 };
 
 const palettes: Record<BuiltinThemeId, ThemePalette> = {
+  black: {
+    name: "Minimal Black", window: "#000000", panel: "#000000", field: "#000000", text: "#eeeeee",
+    muted: "#a0a0a0", accent: "#707070", selected: "#181818", border: "#303030", opacity: 100, blur: 0, shadow: 0,
+  },
   midnight: {
     name: "Midnight", window: "#0b1222", panel: "#101a30", field: "#161f39", text: "#f5f7ff",
     muted: "#91a0c7", accent: "#8a78ff", selected: "#302b63", border: "#66728f", opacity: 96, blur: 18, shadow: 45,
@@ -215,11 +248,11 @@ function builtinLauncherTheme(id: BuiltinThemeId): LauncherCustomThemeConfig {
     windowBorder: palette.border,
     windowBorderWidthPx: 1,
     windowWidthPx: 720,
-    windowRadiusPx: 18,
+    windowRadiusPx: id === "black" ? 10 : 18,
     searchBackground: palette.field,
     searchBorder: palette.border,
-    searchBorderWidthPx: 1,
-    searchBorderStyle: "solid",
+    searchBorderWidthPx: id === "black" ? 0 : 1,
+    searchBorderStyle: id === "black" ? "none" : "solid",
     searchWidthPx: 720,
     searchTextColor: palette.text,
     searchFontSizePx: 20,
@@ -234,17 +267,32 @@ function builtinLauncherTheme(id: BuiltinThemeId): LauncherCustomThemeConfig {
     selectedSecondaryColor: palette.muted,
     selectedPrimaryFontSizePx: 14,
     selectedSecondaryFontSizePx: 12,
-    iconSizePx: 32,
-    showSearchIcon: true,
-    showLogo: true,
-    showSourceBadge: true,
+    iconSizePx: id === "black" ? 24 : 32,
+    showSearchIcon: id !== "black",
+    showLogo: id !== "black",
+    showSourceBadge: id !== "black",
+    showProviderStatus: id !== "black",
+    showFooterHints: id !== "black",
     maxResults: 8,
     ...defaultBackground(palette.opacity, palette.blur, palette.shadow),
+    ...(id === "black" ? { platformOverrides: { enabled: false, windowsBlurPx: 0, windowsOpacity: 100, macosBlurPx: 0, macosOpacity: 100 } } : {}),
   };
 }
 
 function builtinSettingsTheme(id: BuiltinThemeId): SettingsCustomThemeConfig {
   const palette = palettes[id];
+  // The Forest settings canvas follows the light-content/dark-sidebar layout.
+  // Launcher Forest keeps its independent dark palette.
+  if (id === "forest") return {
+    id, name: palette.name, accentColor: "#236749",
+    windowBackground: "#fcfcfa", titlebarBackground: "#ffffff",
+    sidebarBackground: "#192b25", contentBackground: "#fcfcfa",
+    cardBackground: "#ffffff", borderColor: "#e3e8e2",
+    primaryTextColor: "#25342d", secondaryTextColor: "#737f76",
+    navTextColor: "#bcc9c1", selectedNavBackground: "#31483b",
+    baseFontSizePx: 14, radiusPx: 10,
+    ...defaultBackground(100, 0, 30),
+  };
   return {
     id,
     name: palette.name,
@@ -260,8 +308,9 @@ function builtinSettingsTheme(id: BuiltinThemeId): SettingsCustomThemeConfig {
     navTextColor: palette.text,
     selectedNavBackground: palette.selected,
     baseFontSizePx: 14,
-    radiusPx: 18,
+    radiusPx: id === "black" ? 10 : 18,
     ...defaultBackground(palette.opacity, palette.blur, palette.shadow),
+    ...(id === "black" ? { platformOverrides: { enabled: false, windowsBlurPx: 0, windowsOpacity: 100, macosBlurPx: 0, macosOpacity: 100 } } : {}),
   };
 }
 
@@ -291,7 +340,7 @@ export function createLauncherTheme(sourceId: string = "midnight"): LauncherCust
   return { ...theme, id: createThemeId("launcher"), name: "Custom launcher theme" };
 }
 
-export function createSettingsTheme(sourceId: string = "midnight"): SettingsCustomThemeConfig {
+export function createSettingsTheme(sourceId: string = "forest"): SettingsCustomThemeConfig {
   const theme = builtinSettingsTheme(asBuiltinThemeId(sourceId));
   return { ...theme, id: createThemeId("settings"), name: "Custom settings theme" };
 }
@@ -321,6 +370,7 @@ export function resolveSettingsTheme(scope: SettingsThemeConfig): SettingsCustom
 export type AppConfig = {
   version: number;
   saveSettingsManually: boolean;
+  settingsIconStyle: SettingsIconStyle;
   launcher: LauncherConfig;
   translation: TranslationConfig;
   scriptCommands: ScriptCommandConfig[];
@@ -394,11 +444,15 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig, launcher?: L
   const material = platformMaterial(theme);
   const windowWidthPx = launcher?.windowWidthPx ?? theme.windowWidthPx;
   const searchHorizontalMargin = Math.max(0, theme.windowWidthPx - theme.searchWidthPx);
-  const searchWidthPx = Math.max(320, Math.min(windowWidthPx, windowWidthPx - searchHorizontalMargin));
+  const searchWidthPx = Math.max(visualBounds.launcherTheme.searchWidthPx.min, Math.min(windowWidthPx, windowWidthPx - searchHorizontalMargin));
   const root = document.documentElement;
+  root.dataset.launcherNeutralChrome = String([theme.accentColor, theme.windowBackground, theme.searchBackground].every(isNeutralColor));
   root.dataset.launcherShowSearchIcon = String(theme.showSearchIcon);
   root.dataset.launcherShowLogo = String(theme.showLogo);
   root.dataset.launcherShowSourceBadge = String(theme.showSourceBadge);
+  root.dataset.launcherShowProviderStatus = String(theme.showProviderStatus);
+  root.dataset.launcherShowFooterHints = String(theme.showFooterHints);
+  root.dataset.launcherSearchBorderEnabled = String(theme.searchBorderWidthPx > 0 && theme.searchBorderStyle !== "none");
   setCssVariables({
     "--launcher-window-bg": theme.windowBackground,
     "--launcher-window-border": theme.windowBorder,
@@ -436,10 +490,15 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig, launcher?: L
   return theme;
 }
 
+function isNeutralColor(hex: string) {
+  return /^#[0-9a-f]{6}$/i.test(hex) && hex.slice(1, 3).toLowerCase() === hex.slice(3, 5).toLowerCase() && hex.slice(3, 5).toLowerCase() === hex.slice(5, 7).toLowerCase();
+}
+
 /** Applies only settings variables; it cannot mutate launcher tokens. */
 export function applySettingsAppearance(scope: SettingsThemeConfig) {
   const theme = resolveSettingsTheme(scope);
   const material = platformMaterial(theme);
+  const neutralChrome = [theme.accentColor, theme.windowBackground, theme.sidebarBackground, theme.cardBackground].every(isNeutralColor);
   setCssVariables({
     "--settings-window-bg": theme.windowBackground,
     "--settings-titlebar-bg": theme.titlebarBackground,
@@ -459,16 +518,29 @@ export function applySettingsAppearance(scope: SettingsThemeConfig) {
     "--settings-wallpaper-image": wallpaperImage(theme.wallpaperDataUrl),
     "--settings-wallpaper-opacity": String(theme.wallpaperOpacity / 100),
     "--settings-accent": theme.accentColor,
+    // Neutral skins keep editor chrome monochrome, including copies/imports.
+    // Native app icons and semantic danger/warning colours remain independent.
+    "--settings-scope-launcher": neutralChrome ? theme.primaryTextColor : "#8a78ff",
+    "--settings-scope-settings": neutralChrome ? theme.primaryTextColor : "#48d5b0",
+    "--settings-success": neutralChrome ? "#a0a0a0" : "#65dca9",
+    "--settings-success-foreground": neutralChrome ? "#000000" : "#ffffff",
   });
   return theme;
 }
 
 type LauncherThemeImport = Omit<LauncherCustomThemeConfig, "id">;
+type LauncherThemeImportV1 = Omit<LauncherThemeImport, "showProviderStatus" | "showFooterHints">;
 type SettingsThemeImport = Omit<SettingsCustomThemeConfig, "id">;
 
 export type LauncherThemeBundleV1 = {
   schema: "suo-launcher-theme-v1";
   version: 1;
+  theme: LauncherThemeImportV1;
+};
+
+export type LauncherThemeBundleV2 = {
+  schema: "suo-launcher-theme-v2";
+  version: 2;
   theme: LauncherThemeImport;
 };
 
@@ -478,7 +550,7 @@ export type SettingsThemeBundleV1 = {
   theme: SettingsThemeImport;
 };
 
-const launcherBundleFields = [
+const launcherBundleFieldsV1 = [
   "name", "accentColor", "windowBackground", "windowBorder", "windowBorderWidthPx", "windowWidthPx", "windowRadiusPx",
   "searchBackground", "searchBorder", "searchBorderWidthPx", "searchBorderStyle", "searchWidthPx", "searchTextColor", "searchFontSizePx",
   "normalRowBackground", "normalPrimaryColor", "normalSecondaryColor", "normalPrimaryFontSizePx", "normalSecondaryFontSizePx", "normalRowHeightPx",
@@ -486,6 +558,7 @@ const launcherBundleFields = [
   "iconSizePx", "showSearchIcon", "showLogo", "showSourceBadge", "maxResults",
   "windowOpacity", "blurPx", "shadowPercent", "wallpaperDataUrl", "wallpaperOpacity", "platformOverrides",
 ] as const;
+const launcherBundleFieldsV2 = [...launcherBundleFieldsV1, "showProviderStatus", "showFooterHints"] as const;
 
 const settingsBundleFields = [
   "name", "accentColor", "windowBackground", "titlebarBackground", "sidebarBackground", "contentBackground", "cardBackground", "borderColor",
@@ -861,54 +934,62 @@ function assertName(value: unknown) {
   if (!value.trim() || [...value].length > 40) throw new Error("name must contain 1–40 characters");
 }
 
-function assertLauncherTheme(theme: Record<string, unknown>) {
+function assertLauncherTheme(theme: Record<string, unknown>, requireVisibility = true) {
   assertName(theme.name);
   for (const field of ["accentColor", "windowBackground", "windowBorder", "searchBackground", "searchBorder", "searchTextColor", "normalRowBackground", "normalPrimaryColor", "normalSecondaryColor", "selectedRowBackground", "selectedPrimaryColor", "selectedSecondaryColor"]) assertColor(theme[field], field);
   assertIntegerInRange(theme.windowBorderWidthPx, 0, 4, "windowBorderWidthPx");
-  assertIntegerInRange(theme.windowWidthPx, 620, 900, "windowWidthPx");
-  assertIntegerInRange(theme.windowRadiusPx, 0, 28, "windowRadiusPx");
+  assertIntegerInRange(theme.windowWidthPx, visualBounds.launcherTheme.windowWidthPx.min, visualBounds.launcherTheme.windowWidthPx.max, "windowWidthPx");
+  assertIntegerInRange(theme.windowRadiusPx, visualBounds.launcherTheme.windowRadiusPx.min, visualBounds.launcherTheme.windowRadiusPx.max, "windowRadiusPx");
   assertIntegerInRange(theme.searchBorderWidthPx, 0, 4, "searchBorderWidthPx");
   if (theme.searchBorderStyle !== "solid" && theme.searchBorderStyle !== "dashed" && theme.searchBorderStyle !== "dotted" && theme.searchBorderStyle !== "double" && theme.searchBorderStyle !== "none") throw new Error("searchBorderStyle is invalid");
-  assertIntegerInRange(theme.searchWidthPx, 320, 900, "searchWidthPx");
+  assertIntegerInRange(theme.searchWidthPx, visualBounds.launcherTheme.searchWidthPx.min, visualBounds.launcherTheme.searchWidthPx.max, "searchWidthPx");
   if ((theme.searchWidthPx as number) > (theme.windowWidthPx as number)) throw new Error("searchWidthPx cannot exceed windowWidthPx");
-  assertIntegerInRange(theme.searchFontSizePx, 12, 24, "searchFontSizePx");
-  assertIntegerInRange(theme.normalPrimaryFontSizePx, 12, 20, "normalPrimaryFontSizePx");
-  assertIntegerInRange(theme.normalSecondaryFontSizePx, 10, 18, "normalSecondaryFontSizePx");
-  assertIntegerInRange(theme.normalRowHeightPx, 44, 84, "normalRowHeightPx");
-  assertIntegerInRange(theme.selectedPrimaryFontSizePx, 12, 20, "selectedPrimaryFontSizePx");
-  assertIntegerInRange(theme.selectedSecondaryFontSizePx, 10, 18, "selectedSecondaryFontSizePx");
-  assertIntegerInRange(theme.iconSizePx, 16, 64, "iconSizePx");
+  assertIntegerInRange(theme.searchFontSizePx, visualBounds.launcherTheme.searchFontSizePx.min, visualBounds.launcherTheme.searchFontSizePx.max, "searchFontSizePx");
+  assertIntegerInRange(theme.normalPrimaryFontSizePx, visualBounds.launcherTheme.normalPrimaryFontSizePx.min, visualBounds.launcherTheme.normalPrimaryFontSizePx.max, "normalPrimaryFontSizePx");
+  assertIntegerInRange(theme.normalSecondaryFontSizePx, visualBounds.launcherTheme.normalSecondaryFontSizePx.min, visualBounds.launcherTheme.normalSecondaryFontSizePx.max, "normalSecondaryFontSizePx");
+  assertIntegerInRange(theme.normalRowHeightPx, visualBounds.launcherTheme.normalRowHeightPx.min, visualBounds.launcherTheme.normalRowHeightPx.max, "normalRowHeightPx");
+  assertIntegerInRange(theme.selectedPrimaryFontSizePx, visualBounds.launcherTheme.selectedPrimaryFontSizePx.min, visualBounds.launcherTheme.selectedPrimaryFontSizePx.max, "selectedPrimaryFontSizePx");
+  assertIntegerInRange(theme.selectedSecondaryFontSizePx, visualBounds.launcherTheme.selectedSecondaryFontSizePx.min, visualBounds.launcherTheme.selectedSecondaryFontSizePx.max, "selectedSecondaryFontSizePx");
+  assertIntegerInRange(theme.iconSizePx, visualBounds.launcherTheme.iconSizePx.min, visualBounds.launcherTheme.iconSizePx.max, "iconSizePx");
   if (theme.maxResults !== 6 && theme.maxResults !== 8 && theme.maxResults !== 10 && theme.maxResults !== 12) throw new Error("maxResults is invalid");
   assertBoolean(theme.showSearchIcon, "showSearchIcon");
   assertBoolean(theme.showLogo, "showLogo");
   assertBoolean(theme.showSourceBadge, "showSourceBadge");
+  if (requireVisibility) {
+    assertBoolean(theme.showProviderStatus, "showProviderStatus");
+    assertBoolean(theme.showFooterHints, "showFooterHints");
+  }
   assertBackground(theme);
 }
 
 function assertSettingsTheme(theme: Record<string, unknown>) {
   assertName(theme.name);
   for (const field of ["accentColor", "windowBackground", "titlebarBackground", "sidebarBackground", "contentBackground", "cardBackground", "borderColor", "primaryTextColor", "secondaryTextColor", "navTextColor", "selectedNavBackground"]) assertColor(theme[field], field);
-  assertIntegerInRange(theme.baseFontSizePx, 12, 20, "baseFontSizePx");
-  assertIntegerInRange(theme.radiusPx, 0, 28, "radiusPx");
+  assertIntegerInRange(theme.baseFontSizePx, visualBounds.settingsTheme.baseFontSizePx.min, visualBounds.settingsTheme.baseFontSizePx.max, "baseFontSizePx");
+  assertIntegerInRange(theme.radiusPx, visualBounds.settingsTheme.radiusPx.min, visualBounds.settingsTheme.radiusPx.max, "radiusPx");
   assertBackground(theme);
 }
 
-function parseThemeBundle<T>(value: unknown, schema: string, fields: readonly string[], validate: (theme: Record<string, unknown>) => void): T {
+function parseThemeBundle<T>(value: unknown, schema: string, version: 1 | 2, fields: readonly string[], validate: (theme: Record<string, unknown>) => void): T {
   if (!isRecord(value)) throw new Error("theme bundle must be an object");
   assertExactFields(value, ["schema", "version", "theme"], "theme bundle");
-  if (value.schema !== schema || value.version !== 1) throw new Error(`only ${schema} v1 is supported`);
+  if (value.schema !== schema || value.version !== version) throw new Error(`only ${schema} v${version} is supported`);
   if (!isRecord(value.theme)) throw new Error("theme bundle theme must be an object");
   assertExactFields(value.theme, fields, "theme bundle theme");
   validate(value.theme);
   return value.theme as unknown as T;
 }
 
-export function parseLauncherThemeBundle(value: unknown): LauncherThemeBundleV1 {
-  return { schema: "suo-launcher-theme-v1", version: 1, theme: parseThemeBundle(value, "suo-launcher-theme-v1", launcherBundleFields, assertLauncherTheme) };
+export function parseLauncherThemeBundle(value: unknown): LauncherThemeBundleV2 {
+  if (isRecord(value) && value.schema === "suo-launcher-theme-v1" && value.version === 1) {
+    const legacy = parseThemeBundle<LauncherThemeImportV1>(value, "suo-launcher-theme-v1", 1, launcherBundleFieldsV1, (theme) => assertLauncherTheme(theme, false));
+    return { schema: "suo-launcher-theme-v2", version: 2, theme: { ...legacy, showProviderStatus: true, showFooterHints: true } };
+  }
+  return { schema: "suo-launcher-theme-v2", version: 2, theme: parseThemeBundle(value, "suo-launcher-theme-v2", 2, launcherBundleFieldsV2, assertLauncherTheme) };
 }
 
 export function parseSettingsThemeBundle(value: unknown): SettingsThemeBundleV1 {
-  return { schema: "suo-settings-theme-v1", version: 1, theme: parseThemeBundle(value, "suo-settings-theme-v1", settingsBundleFields, assertSettingsTheme) };
+  return { schema: "suo-settings-theme-v1", version: 1, theme: parseThemeBundle(value, "suo-settings-theme-v1", 1, settingsBundleFields, assertSettingsTheme) };
 }
 
 function withoutId<T extends { id: string }>(theme: T): Omit<T, "id"> {
@@ -916,8 +997,8 @@ function withoutId<T extends { id: string }>(theme: T): Omit<T, "id"> {
   return exported;
 }
 
-export function buildLauncherThemeBundle(theme: LauncherCustomThemeConfig): LauncherThemeBundleV1 {
-  const bundle: LauncherThemeBundleV1 = { schema: "suo-launcher-theme-v1", version: 1, theme: withoutId(theme) };
+export function buildLauncherThemeBundle(theme: LauncherCustomThemeConfig): LauncherThemeBundleV2 {
+  const bundle: LauncherThemeBundleV2 = { schema: "suo-launcher-theme-v2", version: 2, theme: withoutId(theme) };
   return parseLauncherThemeBundle(bundle);
 }
 

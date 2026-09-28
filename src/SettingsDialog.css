@@ -1,0 +1,21 @@
+.settings-dialog {
+  width: min(520px, calc(100vw - 28px));
+  max-width: calc(100vw - 28px);
+  max-height: calc(100dvh - 36px);
+  padding: 0;
+  border: 1px solid var(--settings-border, #dfe5df);
+  border-radius: 14px;
+  color: var(--settings-primary-text, #25342d);
+  background: var(--settings-card-bg, #fff);
+  box-shadow: 0 20px 70px #142c2950;
+  overflow: hidden;
+}
+.settings-dialog[open] { display: flex; flex-direction: column; }
+.settings-dialog::backdrop { background: #11262370; backdrop-filter: blur(2px); }
+.settings-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--settings-border, #dfe5df); }
+.settings-dialog-header h2 { min-width: 0; margin: 0; font-size: calc(var(--settings-font-size, 14px) * 1.25); }
+.settings-dialog-close { flex: 0 0 auto; min-width: 34px; min-height: 34px; border: 0; border-radius: 8px; color: inherit; background: transparent; font-size: calc(var(--settings-font-size, 14px) * 1.5); cursor: pointer; }
+.settings-dialog-close:hover { background: color-mix(in srgb, var(--settings-accent, #236749) 12%, transparent); }
+.settings-dialog-close:focus-visible { outline: 2px solid var(--settings-accent, #236749); outline-offset: 2px; }
+.settings-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.settings-dialog-footer { padding: 14px 20px; border-top: 1px solid var(--settings-border, #dfe5df); }

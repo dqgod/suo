@@ -137,16 +137,9 @@ pub fn run() {
                 window.on_window_event(move |event| match event {
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        if let Err(error) = hotkey::stop_recording(event_window.app_handle()) {
-                            eprintln!("关闭设置时无法结束快捷键录制：{error}");
-                            let _ = event_window.emit("hotkey-recording-error", error);
-                            return;
-                        }
-                        let _ = event_window.emit("hotkey-recording-stopped", ());
-                        let _ = event_window.hide();
-                        if let Err(error) = dock::settings_closed(event_window.app_handle()) {
-                            eprintln!("关闭设置后无法隐藏 Dock 图标：{error}");
-                        }
+                        // The shared settings UI owns draft confirmation on both platforms.
+                        // Accepted closes call hide_settings, which also cleans up recording/Dock.
+                        let _ = event_window.emit("settings-close-requested", ());
                     }
                     WindowEvent::Focused(false) => {
                         if let Err(error) = hotkey::stop_recording(event_window.app_handle()) {
@@ -190,6 +183,7 @@ pub fn run() {
             config::open_config_directory,
             config::change_config_directory,
             config::save_app_config,
+            config::validate_app_config,
             hotkey::set_hotkey_recording,
             config::set_translation_credentials,
             config::clear_translation_credentials,
