@@ -1,6 +1,14 @@
 # macOS Apple Silicon current handoff
 
-## `dev` 0.1.4 / 配置 v18 待验证
+## 当前：`dev` 0.1.4 / 配置 v19，尚未在 macOS 验证
+
+设置改版、图标偏好、宽范围精确输入和 v19 迁移的当前清单与命令在 [`SETTINGS_REDESIGN.md`](SETTINGS_REDESIGN.md)。以下 2026-09-23 的 0.1.4 本地 `.app` 与 ZIP 来自**配置 v18 的旧提交**，不含本轮设置改版。不得将那次 arm64 编译、Terminal/字号实测或安装结果计为 v19 通过，也不要在旧二进制中打开并写入 v19 真实配置。
+
+- [ ] 保留本机修改后更新 `dev`，核对 Node、Rust host 与最终 Mach-O 都是 arm64；按交接文件运行锁文件安装、前端构建、Chromium UI 测试、Rust 测试/all-targets check 与新 `.app` 构建。
+- [ ] 从新 `.app` 冷启动，完成 680×520 与常规窗口、8/32 px 字号、极端几何/混合 DPI、皮肤库与编辑草稿、手动/自动保存、原生关闭 dirty 对话框、平台材质、图标三样式、严格主题导入的实机复核；分别在搜索框与设置页应用“极简黑”，确认纯黑底、灰白文字、无模糊/阴影；复制为自定义搜索皮肤后，独立切换来源状态栏和底部快捷键栏；边框 0 / none 时聚焦无描边。旧 v1 导入保留两栏，v2 导出保留显隐值，切换一侧不改变另一侧。
+- [ ] 回归快捷键/非激活搜索焦点、Dock/菜单栏、原生全屏 Space 与 `>` 高风险终端行为；第二物理显示器仍待接入。真实 v18→v19 迁移前备份配置/位置指针并记录哈希，复原后再记录结果。
+
+## 历史：`dev` 0.1.4 / 配置 v18 定向验证（2026-09-23）
 
 本轮新增可关闭的 `>` 内置终端命令，以及由设置皮肤基础字号派生的命令摘要/外观编辑器组件字号。历史代码基线是下文不可变的 `v0.1.3` tag；这些改动只在 `dev`，不能覆盖旧 tag。
 
@@ -13,7 +21,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 - [x] 用真实 v17 配置迁移到 v18 后默认启用 Terminal；定向测试结束时曾恢复原 v17 `config.json` 与 `.bak` 的原始哈希。停用 `>` 后空结果仍建议 `> ls` 的文案问题已修复并在 macOS UI 复核。当前正式本机安装后的配置状态见下一节。
 - [x] 设置字号 12 px 的内置命令摘要和 20 px 的脚本、网络搜索、服务、内置命令摘要已目视验证。20 px 时外观编辑器步骤卡片曾与说明重叠，布局修复后重启复核不再重叠；搜索皮肤预览仍显示自身独立字号。
 
-## 0.1.4 本地可用包与安装
+## 历史：v18 本地可用包与安装
 
 - 来源：`dev` 提交 `28612254e1b0687d7c5d82ddc7672b5817c3fa7d`，产品版本 0.1.4、配置协议 v18、Mach-O arm64。前端构建、Rust 测试（127 通过、1 忽略）、all-targets check 和正式 `.app` 构建通过。
 - 本地包：`~/Downloads/Suo_0.1.4_macos_arm64_local.zip`，5.7 MB，SHA-256 `99592559c7f9fe9305155ea4897f574b0f1fd56044827c6b3cc5b4792a637fa2`。使用 `ditto -c -k --sequesterRsrc --keepParent` 打包；解包后的 `.app` 通过 `codesign --verify --deep --strict`。
@@ -21,7 +29,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 - 安装后真实配置已从 v17 写成 v18；对照安装前副本，只有 `version` 和新增 `launcher.terminal` 变化，原有字段保持。旧版 0.1.3 应用及原 v17 `config.json`、`.bak` 保存在 `~/Library/Application Support/io.github.dqgod.suo-install-backup-20260923/`（目录权限 `0700`），用于本机回退。
 - 该 `.app` 经完整 ad-hoc 重签，只供本机使用。`spctl --assess --type execute` 返回 Code Signing 子系统内部错误；没有 Developer ID 签名、公证或 stapling，不能把该 ZIP 宣称为可通过公网下载 Gatekeeper 的发行包。
 
-## `dev` 0.1.4 仍待验证
+## v18 当时未完成项（用 v19 重测，不复用旧结论）
 
 - [ ] 默认 Terminal 中执行 `> printf '你好\n'` 并确认中文显示及执行后窗口保持可见；图形控制工具不允许读取 Terminal 窗口。
 - [ ] 自动保存模式下开启 `>`、更改终端目标并重启复核；手动保存模式下关闭 `>`、更改目标并重启复核。
@@ -32,7 +40,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 
 状态：**`v0.1.3` tag 仍在，但 2026-09-23 的 GitHub Release 查询返回 `release not found`。** 不可变 tag 指向 `b027d774a6aa9aa61fea3f325e221f34e3dc7735`；产品版本 0.1.3，配置协议 v17，支持 macOS 13+ arm64。历史构建、实机、配置恢复和资产哈希留在 [`archive/MACOS_V0.1.3_2026-09-11.md`](archive/MACOS_V0.1.3_2026-09-11.md)；当前本机使用上面的 0.1.4 本地包。
 
-## 当前待验证
+## 跨版本长期待验证
 
 - [ ] 连接第二块物理显示器，在 A/B 两屏分别准备普通窗口 Space 与原生全屏应用 Space；把鼠标移到目标屏幕后触发快捷键，确认搜索框始终出现在该屏当前 Space 的全屏应用上层。两屏缩放不同时还要确认位置、尺寸和工作区夹紧正确，关闭后不切换 Space、不退出全屏、不激活 Suo。
 - [ ] 用真实 v15、v16 配置副本完成一次 v17 迁移：只迁移内置 `timestamp-example` 路径，只在 `qr` 关键字/别名与 ID 均未占用时新增默认命令，用户脚本目录中的已有文件不得被覆盖；测试前后恢复真实配置并核对哈希。
@@ -41,7 +49,7 @@ Windows 端已完成共享前端构建、Rust 132 项单元测试与 all-targets
 - [ ] 真实验证 Dock 设置页显隐、菜单栏模板图标、失焦/Esc、单实例、`startAtLogin` LaunchAgent 创建、登录后台启动和关闭清理；不得使用 `sudo`。
 - [ ] Developer ID 签名、公证和 DMG 仍未提供；0.1.4 本地 ZIP 为完整 ad-hoc 签名，不得宣称可绕过公网下载的 Gatekeeper 或支持 Mac App Store。
 
-## 不可变来源与复验命令
+## 历史 `v0.1.3` 不可变来源与复验命令
 
 ```bash
 git fetch origin --tags

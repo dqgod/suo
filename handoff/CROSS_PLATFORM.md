@@ -28,6 +28,7 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - macOS Dock 可见性通过 `src-tauri/src/dock.rs` 隔离；`showDockIcon=true` 只表示设置窗口打开期间显示，设置关闭和正常后台运行时必须隐藏，实时关闭开关不能连带隐藏设置窗口。Windows 不应把同一字段解释为 taskbar 隐藏。
 - Windows taskbar 角色通过 `src-tauri/src/taskbar.rs` 隔离：`main` 搜索窗口跳过任务栏，`settings` 设置窗口保留任务栏入口；显示 `main` 时仅用 `ITaskbarList::ActivateTab` 维持原前台应用按钮的选中外观，不把键盘焦点还给原窗口；不得把这项策略泄漏到 macOS Dock。
 - Dock 图标、菜单栏图标、搜索框 Logo 与设置页 Logo 是不同呈现位置，不要通过替换同一个资源顺带改变全部位置。
+- 配置 v19 的 `settingsIconStyle` 只改变启动器与设置窗口内的品牌图形；Windows 彩色托盘、macOS 菜单栏模板图标/Dock 和系统应用图标仍由各自平台策略管理。默认 `transparentColor`，另有 `monochrome`、`original`；这些不是远程图标来源。
 - 平台修复必须放在 adapter 或 `cfg(target_os = ...)` 后面，避免未使用 import、错误 API 或行为泄漏到另一平台。
 - Windows 开发阶段曾让 `std::env` import 和仅 Windows 使用的参数暴露到 macOS 编译；此类 warning 应通过精确 `cfg` 或明确的跨平台接口处理，不要长期留在共享模块。
 
@@ -46,6 +47,9 @@ Git for Windows 也可能提供名为 `link.exe` 的程序。若它在 PATH 中�
 - v16：只把内置 `timestamp-example` 的旧默认路径 `examples/timestamp.py` 迁移为 `scripts/timestamp.py`，其他自定义路径必须保持。`examples/` 是 bundle 中的只读初始化模板；缺失模板复制到平台默认应用配置目录的 `scripts/`，必须使用“不存在才创建”语义，升级与重装不得覆盖用户文件。该目录不跟随可迁移的 `config.json`。
 - v17：在 `qr` 关键字/别名和 `qr-example` ID 都未被占用、脚本数量未达上限时添加默认二维码命令；新增 `qr.py` 仍使用“不存在才创建”，不得覆盖用户同名文件。
 - v18：`launcher.terminal` 新增可关闭的 `>` 内置终端命令；旧配置默认使用 Windows PowerShell / macOS Terminal。若任一既有翻译、脚本或网络搜索关键词/别名已占用 `>`，必须保留用户项并把内置命令迁移为关闭，不能借“系统保留字”删除或改名用户配置。
+- v19：新增 `settingsIconStyle`，v18 及更早文件默认迁移为 `transparentColor`；旧搜索自定义皮肤的 `showProviderStatus` / `showFooterHints` 默认补 true，保持两栏可见。搜索皮肤导出 v2，严格旧 v1 导入会补 true；新版 v2 两个字段均必填。v19 缺少该字段或值未知应拒绝；旧二进制不得覆盖新文件。迁移保留终端目标/启用状态、用户命令、已有主题选择和自定义皮肤。新配置的设置皮肤选用浅色内容/深色侧栏的 Forest；迁移不强制改换旧选择。
+
+设置改版的精确视觉范围须在前端输入、严格主题导入与 Rust 保存端保持一致：字体/结果图标 1–255 px，圆角 0–255 px，结果行高 1–1024 px，主题/启动器宽度 256–2560 px，搜索框宽度 128–2560 px 且不超过主题窗口，启动器高度 160–2160 px，位置偏移 −8192–8192 px。滑块常用范围不等于配置合法范围；扩张视觉数值不得连带扩张图片、透明度、脚本超时或防抖安全边界。按目标显示器缩放后的真实窗口尺寸也须夹紧到工作区，保留磁盘中的用户逻辑像素值。独立可滚动的皮肤库只改变预览，应用时才切换运行主题；关闭和保存时必须保护皮肤及命令编辑草稿。当前完整清单见 [`SETTINGS_REDESIGN.md`](SETTINGS_REDESIGN.md)。
 
 脚本单结果协议跨平台固定为区分大小写的行首：旧 `SUO_RESULT:` 与 `SUO_RESULT:text:` 返回文本，`SUO_RESULT:image:` 返回一张受限 PNG/JPEG/WebP data URL（raw Base64 按 PNG），`SUO_RESULT:qrcode:` 由共享 Rust 核心本地生成 QR PNG。二维码限 500 个 UTF-8 字节，必须在 byte mode 前声明 UTF-8 ECI 26，生成的 PNG 保持至少 4 px/模块；启动器把所有脚本图片等比例缩为最大 240 px、随窗口可用高度继续缩小的完整缩略图。出现标记时忽略普通 stdout，没有标记时兼容完整 stdout；仅用于成功脚本 stdout，错误 stderr 和二次结果 Shell 输出保持原样。不得混合文本和图片或返回多张图片；两端必须共享 512 KB、1024 px、有界解码和前端 data URL 白名单。
 

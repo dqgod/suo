@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Suo · 设置界面设计提案</title>
+  <link rel="stylesheet" href="ui-settings-redesign.css">
+</head>
+<body>
+  <header class="review-bar">
+    <div class="review-brand"><span class="review-mark">S</span><div><strong>Suo / 设置界面</strong><span>设计方向对比 · 可交互评审稿</span></div></div>
+    <nav class="directions" aria-label="设计方向">
+      <button data-direction="native"><span>A</span> 简洁原生</button>
+      <button data-direction="studio"><span>B</span> 分栏工具 <small>选定方向</small></button>
+      <button data-direction="refined"><span>C</span> 深色改良</button>
+    </nav>
+    <span class="prototype-label">示例数据 · 不写入配置</span>
+  </header>
+  <section class="direction-summary"><div><span id="direction-number">02 / 03</span><h1 id="direction-title">更专注的命令工作台。</h1></div><p id="direction-description">列表与编辑并排，切换命令时保留上下文。适合经常管理脚本与搜索的人。</p></section>
+  <div id="app" class="app" data-direction="studio">
+    <header class="window-bar"><span><span data-brand-slot="titlebar"></span> Suo 设置</span><span class="window-caption">本地优先，随手即用</span><button id="close-window" class="icon-button" aria-label="关闭设置预演">×</button></header>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="workspace-brand"><span data-brand-slot="sidebar"></span><div><strong>Suo</strong><small>你的桌面，井然有序</small></div></div>
+        <nav id="navigation" aria-label="设置分类"></nav>
+        <div class="sidebar-bottom"><div><span class="local-dot"></span> 本地配置</div><small>v0.1.3 <span>Windows</span></small></div>
+      </aside>
+      <main class="main">
+        <header class="page-header"><div><div class="breadcrumb" id="breadcrumb">能力 / 脚本命令</div><h2 id="page-title">脚本命令</h2><p id="page-description">把重复的事情，交给一个关键词。</p></div><div id="page-actions"></div></header>
+        <div class="page-scroll" id="page-content"></div>
+        <footer class="save-bar"><span class="save-message" id="save-message" role="status"><span class="local-dot"></span> 所有更改已保存</span><div id="footer-actions"><span id="mode-label">普通设置自动保存</span><button class="text-button" id="save-preference">保存偏好</button></div></footer>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+  <footer class="review-footer"><span id="direction-footnote">B · 固定导航 / 双栏编辑 / 常驻保存状态</span><span>可点击分类、编辑命令、切换皮肤预览</span></footer>
+  <dialog id="editor-dialog" class="editor-dialog" aria-label="编辑命令"><div id="dialog-editor"></div></dialog>
+  <dialog id="guard-dialog" class="guard-dialog" aria-labelledby="guard-title"><div class="guard-icon">↗</div><h2 id="guard-title">先处理这次修改</h2><p id="guard-copy">当前命令有未保存的修改。离开前，你希望如何处理？</p><div class="guard-actions"><button class="button" id="guard-stay">继续编辑</button><button class="button danger-text" id="guard-discard">放弃修改</button><button class="button primary" id="guard-save">保存并继续</button></div></dialog>
+  <dialog id="notice-dialog" class="guard-dialog" aria-labelledby="notice-title"><h2 id="notice-title">设计预演</h2><p id="notice-copy"></p><div class="guard-actions"><button class="button primary" id="notice-close">知道了</button></div></dialog>
+  <dialog id="theme-library-dialog" class="theme-library-dialog" aria-labelledby="library-title">
+    <header class="library-header"><div><span id="library-scope">搜索界面</span><h2 id="library-title">皮肤库</h2><p id="library-count"></p></div><button class="icon-button" data-action="close-library" aria-label="关闭皮肤库">×</button></header>
+    <div class="library-toolbar"><label class="search-box"><span aria-hidden="true">⌕</span><input type="search" id="theme-library-search" aria-label="搜索皮肤" placeholder="搜索皮肤名称"></label><div class="filter-tabs" aria-label="皮肤类型筛选"><button data-library-filter="all" class="active">全部</button><button data-library-filter="builtin">内置</button><button data-library-filter="custom">自定义</button></div></div>
+    <div id="theme-library-results" class="library-results" aria-label="可选皮肤"></div>
+    <footer class="library-footer"><span id="library-result-count" role="status"></span><p>选择只更新预览，应用后才会生效。</p></footer>
+  </dialog>
+  <script src="ui-settings-redesign.js"></script>
+</body>
+</html>

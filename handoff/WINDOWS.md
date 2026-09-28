@@ -1,6 +1,18 @@
 # Windows current release handoff
 
-## `dev` 0.1.4 / 配置 v18 待验证
+## 当前：`dev` 0.1.4 / 配置 v19
+
+本轮设置改版、两类极简黑、数值范围与 v18→v19 迁移见 [`SETTINGS_REDESIGN.md`](SETTINGS_REDESIGN.md)。Windows x64 工具链为 VS 2022 Build Tools / Rust 1.98.1 MSVC；Build Tools 位于 `D:\Software\SuoBuildTools`。必须从 Developer PowerShell 运行原生命令并确认 MSVC `link.exe` 优先。
+
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml --locked`：137 通过、2 忽略、0 失败；包含新极简黑双 scope 往返、v19 迁移、数值边界与窗口工作区测试。
+- [x] `cargo check --locked --all-targets`、`cargo fmt --check`、`pnpm build` 和正式 `pnpm tauri build --no-bundle` 通过。仅保留既有 `dock::visible_for_settings` dead_code 警告；未用测试标识构建正式产物。
+- [x] `pnpm test:ui` 36/36 通过，覆盖完整设置流程和搜索/设置极简黑。最终 exe SHA-256 为 `8337E758F5ABF9CDDA8A35B1675452E8577057CDB57736702FA0FB5A8A1E7B74`（15,683,072 bytes），产品名 `Suo`、0.1.4、正式应用标识；日志与明细见交接文档。
+- [x] 正式 NSIS 安装包 `src-tauri/target/release/bundle/nsis/Suo_0.1.4_x64-setup.exe` 已生成，4,087,087 bytes；SHA-256 `A75A06793793A34E6A7467E91F10BB8417674603E224F9690A40822AF1925BC1`。构建脚本包含主程序与五个 examples 资源，未运行安装包或完成安装/升级/卸载验收。
+- [x] 独立标识原生实例确认数值编辑进入草稿、保存策略锁定、Alt+F4 保护与 Esc 保留草稿、Alt+Space 唤出启动器窗口。
+- [ ] 补原生截图/鼠标与搜索焦点全过程、两类极简黑观感、680×520 / 8/32 px、大尺寸和偏移、多显示器 DPI、模糊/透明、托盘/任务栏。窗口工具捕获与点击失败限制见 [`SETTINGS_REDESIGN.md`](SETTINGS_REDESIGN.md)，浏览器测试不能代替这一项。
+- [ ] 用备份副本完成真实 v18→v19 迁移与重启保留；不触碰现有生产配置，不移动旧 tag；本轮按用户要求生成本地安装包，不发布 GitHub Release。
+
+## 历史：`dev` 0.1.4 / 配置 v18 定向自动化（2026-09-12）
 
 本轮新增可关闭的 `>` 内置终端命令，以及由设置皮肤基础字号派生的命令摘要/外观编辑器组件字号。历史代码基线是下文不可变的 `v0.1.3` tag；这些改动只能在 `dev` 验证，不能反向覆盖旧 tag。
 
@@ -15,13 +27,13 @@
 
 状态：**`v0.1.3` tag 仍在，但 2026-09-23 的 GitHub Release 查询返回 `release not found`；不能按“向现有 Release 追加”执行。** tag 对应提交为 `b027d774a6aa9aa61fea3f325e221f34e3dc7735`。Windows x64 资产若仍需发布，应先完成同一不可变 tag 的构建与实机验证，再决定恢复 0.1.3 Release 或发布新版本；不能改名复用 `v0.1.2` 安装包。`v0.1.2` 历史已归档到 [`archive/WINDOWS_V0.1.2_2026-09-11.md`](archive/WINDOWS_V0.1.2_2026-09-11.md)。
 
-## 本轮代码范围
+## 历史 `v0.1.3` 代码范围
 
 - 0.1.3 的行为修复仅位于 macOS `focus.rs` adapter：启动器加入原生全屏 Space。Windows 不应编译或复制 AppKit collection behavior。
 - 共享产品版本已升至 0.1.3，配置协议仍为 v17，没有新增配置迁移。
 - `app_icon.rs` 只把 Windows 测试使用的 `Path` import 放到精确 `cfg(target_os = "windows")` 下，不改变运行时图标行为。
 
-## Windows 待执行
+## 历史 `v0.1.3` Windows 待执行
 
 - [ ] 在 Visual Studio Developer PowerShell 中拉取 tag，确认 `Get-Command link.exe` 指向 MSVC，并核对 Node/Rust 为 x64。
 - [ ] 执行锁文件安装、前端构建、全部 Rust 测试、`cargo check --locked --all-targets` 和正式 NSIS 构建；安装包及 release 可执行文件的 Product/File Version 必须都是 0.1.3、PE 架构必须是 x64。
@@ -33,7 +45,7 @@
 - [ ] 验证 `startAtLogin` 的当前用户启动项、真实注销登录后台启动和关闭清理；不得使用管理员权限安装服务。
 - [ ] 若决定发布 0.1.3 Windows 资产，生成 `Suo_0.1.3_x64-setup.exe` 与 `.sha256`，从安装包完成安装/卸载/重装复测；发布前确认目标 Release 已恢复或创建，上传后核对远程大小和 digest。
 
-## 构建入口
+## 历史 `v0.1.3` 构建入口
 
 ```powershell
 git fetch origin --tags
