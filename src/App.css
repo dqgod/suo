@@ -459,6 +459,11 @@ button {
   font-size: 9px;
 }
 
+.result > kbd {
+  grid-column: 4;
+  grid-row: 1;
+}
+
 :root[data-launcher-show-source-badge="false"] .result-badge,
 :root[data-show-source-badge="false"] .result-badge {
   display: none;
@@ -529,31 +534,19 @@ kbd {
 
 @media (max-width: 620px) {
   .launcher .result {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 8px;
+    /* Keep icon and copy together; only shrink oversized icons to fit. */
+    grid-template-columns: minmax(0, min(var(--launcher-icon-size), 25%)) minmax(0, 1fr) auto 22px;
+    column-gap: 8px;
   }
 
   .launcher .result-icon {
-    flex: 0 1 auto;
     width: min(var(--launcher-icon-size), 100%);
     height: auto;
     aspect-ratio: 1;
   }
 
-  .launcher .result-copy {
-    flex: 1 1 100%;
-    order: 2;
-  }
-
   .launcher .result-badge {
-    margin: 0 0 0 auto;
-    order: 1;
-  }
-
-  .launcher .result > kbd {
-    order: 1;
+    margin-left: 0;
   }
 }
 
