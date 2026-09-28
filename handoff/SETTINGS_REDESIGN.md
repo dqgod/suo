@@ -1,8 +1,8 @@
 # 设置改版跨平台交接（`dev` 0.1.4 / 配置 v19）
 
-实现提交：`f6f0c25`（设置改版、极简黑、皮肤显隐与 v2 导入导出；文档更新另行提交）。
+实现提交：`f6f0c25`（设置改版、极简黑、皮肤显隐与 v2 导入导出），`f9ca562`（窄窗口搜索结果对齐修复与回归；文档更新另行提交）。
 
-状态（2026-09-28）：Windows 前端正式构建、137 项 Rust 测试（2 项系统目录集成测试忽略）、all-targets check、格式检查及正式 NSIS 安装包构建通过。界面回归包含搜索与设置两类极简黑，最新界面回归 36/36 通过，详见下表。macOS v19 尚未编译或实机验证。2026-09-23 的 macOS 0.1.4 本地包只含 v18，不能用于验收本轮改版。设计依据是 [`docs/PRODUCT_REQUIREMENTS.md`](../docs/PRODUCT_REQUIREMENTS.md) 和 [B「分栏工具」原型](../docs/ui-settings-redesign-proposal.html)；原型不是运行时代码。
+状态（2026-09-28）：Windows 前端正式构建、137 项 Rust 测试（2 项系统目录集成测试忽略）、all-targets check、格式检查及正式 NSIS 安装包构建通过。界面回归包含搜索与设置两类极简黑，最新界面回归 42/42 通过，详见下表。macOS v19 尚未编译或实机验证。2026-09-23 的 macOS 0.1.4 本地包只含 v18，不能用于验收本轮改版。设计依据是 [`docs/PRODUCT_REQUIREMENTS.md`](../docs/PRODUCT_REQUIREMENTS.md) 和 [B「分栏工具」原型](../docs/ui-settings-redesign-proposal.html)；原型不是运行时代码。
 
 ## 当前行为与不变量
 
@@ -16,12 +16,13 @@
 
 | 平台 | 已确认 | 待确认 |
 | --- | --- | --- |
-| Windows x64 | 前端构建；UI 回归 36/36；Rust 137 通过、2 忽略；all-targets check；fmt；正式 NSIS 安装包构建。隔离实例的数值草稿、Alt+F4 关闭保护、Esc 返回保留草稿及 Alt+Space 创建启动器窗口有原生控件树证据。 | 安装/升级/卸载；原生完整视觉、鼠标操作、焦点/搜索全过程、实际 DPI/多显示器；截图与点击工具失败，不能用浏览器回归代替。 |
+| Windows x64 | 前端构建；UI 回归 42/42；Rust 137 通过、2 忽略；all-targets check；fmt；正式 NSIS 安装包构建。隔离实例的数值草稿、Alt+F4 关闭保护、Esc 返回保留草稿及 Alt+Space 创建启动器窗口有原生控件树证据。 | 安装/升级/卸载；原生完整视觉、鼠标操作、焦点/搜索全过程、实际 DPI/多显示器；截图与点击工具失败，不能用浏览器回归代替。 |
 | macOS arm64 | v18 曾有本地安装与定向终端/字号实测，均为历史代码。 | v19 的 arm64 工具链、前端/UI/Rust、`.app` 构建及以下真实窗口验收，均未完成。 |
 
 ### 本轮验证细节
 
-- 前端 `pnpm test:ui` 使用隔离的 Tauri 内存接口，不读取真实配置、凭据或运行用户脚本。覆盖 1180×720 / 680×520、字号 8/32/255 与非法值、命令草稿/保存失败/取消启用、皮肤库 16 项的搜索与滚动、两类极简黑的独立应用，以及实际 Launcher 组件的黑色输入框与结果区。最终 `pnpm test:ui` 36/36 通过（含实际搜索框组件的两个视口用例）。
+- 修复 `max-width: 620px` 将搜索结果强制分为图标/文字两行的问题：窄窗口保持横向网格，过大图标等比适配；隐藏来源徽标时回车提示仍固定在最右列。新增“午夜 副本”与极简黑在 256/480/600/620/621/720 px 的几何断言，以及 255 px 图标的最窄窗口检查。修复前 600 px 用例复现失败，修复后完整套件 42/42 通过。Mac 实机须复核这些宽度。
+- 前端 `pnpm test:ui` 使用隔离的 Tauri 内存接口，不读取真实配置、凭据或运行用户脚本。覆盖 1180×720 / 680×520、字号 8/32/255 与非法值、命令草稿/保存失败/取消启用、皮肤库 16 项的搜索与滚动、两类极简黑的独立应用，以及实际 Launcher 组件的黑色输入框与结果区。最终 `pnpm test:ui` 42/42 通过（含实际搜索框组件的两个视口用例）。
 - 极简黑（`black`）两侧均为纯黑底、灰白文字、100% 不透明、0 模糊、0 阴影；搜索侧隐藏 Logo、放大镜、来源标签、来源状态栏和底部快捷键栏，Suo 自带结果字形去掉彩色渐变，原生应用图标保留。上下两栏通过皮肤制作中的通用开关控制，边框设置为 0 / none 同时移除输入框聚焦描边；旧皮肤的两栏仍默认显示。搜索皮肤导出升级到 `suo-launcher-theme-v2` / version 2，严格旧 v1 导入会补默认值；设置皮肤仍为 v1。复制为自定义皮肤和导入后，灰度配色仍保留中性编辑控件。
 - 原生检查使用 `Suo UI Validation` / `io.github.dqgod.suo.ui-validation` 独立产品名和配置路径。记录到宽度 720→680 后出现未保存状态且保存模式禁用；Alt+F4 出现“保留这次修改？”；Esc 返回后仍为 680；Alt+Space 后窗口列表新增启动器。未将这些观测描述为原生视觉全量通过。
 - Windows 截图工具返回 `FrameArrived timed out` / `window capture timed out`，点击返回 `coordinate input geometry is unavailable`；后续启动器输入尝试返回 `window is not a usable app window`，因此真实搜索输入、鼠标和焦点全过程未验收。窗口工具第一次启动还误匹配已安装的 Suo；终止该正式实例被自动审批拒绝，随后改用明确绝对路径启动隔离副本，未对正式实例进行测试性编辑。
@@ -40,10 +41,10 @@
 
 ## 本轮正式 Windows 构建
 
-- 安装包：`src-tauri/target/release/bundle/nsis/Suo_0.1.4_x64-setup.exe`，4,087,087 bytes，x64，产品名/版本 `Suo` / 0.1.4。
-- 安装包 SHA-256：`A75A06793793A34E6A7467E91F10BB8417674603E224F9690A40822AF1925BC1`。
+- 安装包：`src-tauri/target/release/bundle/nsis/Suo_0.1.4_x64-setup.exe`，4,091,297 bytes，x64，产品名/版本 `Suo` / 0.1.4。
+- 安装包 SHA-256：`D3B70529ADF66323FE9D579E3D03FED9774B3D48C25736D7C998E492295E1881`。
 - 包内程序：`src-tauri/target/release/suo.exe`，15,683,072 bytes，x64，产品名 `Suo`，产品版本 0.1.4，标识 `io.github.dqgod.suo`。NSIS 打包会为程序写入 bundle 类型信息，故与此前 no-bundle 程序哈希不同。
-- 程序 SHA-256：`8337E758F5ABF9CDDA8A35B1675452E8577057CDB57736702FA0FB5A8A1E7B74`。
-- 最后构建日志：`logs/native-validation-final/tauri-nsis-build-proxy.log`，包括前端构建成功、官方 NSIS 工具下载哈希验证及 `makensis` 成功；同目录的 `artifact-manifest.txt` 记录版本、哈希及 NSIS 脚本中主程序与五个 examples 资源的路径。未运行安装包，未独立解包验证。
-- Rust 测试日志 `logs/native-validation-black/cargo-test.log` 为 137 通过、2 忽略；格式检查通过，最新 all-targets check 日志在 `logs/native-validation-final/cargo-check-all-targets.log`。
+- 程序 SHA-256：`220E8F1AD7DC256F22DA6F4D3CF0461397C0B34F81F944BB870084AD0FD961BF`。
+- 最后构建日志：`logs/native-validation-alignment/tauri-nsis-build.log`，2026-09-28 22:52 完成，含 `f9ca562` 的窄窗口对齐修复。前端、release 与 `makensis` 均成功；本轮复用已经校验的官方 NSIS 工具缓存。此前安装包/程序副本保存在同目录 `previous/`，最新版本、大小及哈希以上文为准。未运行安装包，未独立解包验证。
+- Rust 测试日志 `logs/native-validation-alignment/cargo-test-single-job.log` 为 137 通过、2 忽略；格式检查通过，最新 all-targets check 日志在 `logs/native-validation-final/cargo-check-all-targets.log`。
 - 本轮推送 `dev` 源码和文档，并应用户要求生成上述本地 Windows NSIS 安装包；不发布 GitHub Release，不向 Git 提交可执行文件。Mac 从最新 `origin/dev` 自行构建并执行上述清单；旧 0.1.4/v18 本地包不含这些改动。
