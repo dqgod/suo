@@ -13,6 +13,7 @@ pub enum ResultKind {
     File,
     Directory,
     Calculator,
+    Terminal,
     Script,
     Web,
     Translation,
@@ -29,6 +30,7 @@ impl ResultKind {
             Self::File => "file",
             Self::Directory => "directory",
             Self::Calculator => "calculator",
+            Self::Terminal => "terminal",
             Self::Script => "script",
             Self::Web => "web",
             Self::Translation => "translation",
@@ -82,6 +84,11 @@ pub enum ResultAction {
         args: Vec<String>,
     },
     RunScriptOutput {
+        action_id: String,
+    },
+    /// Execute a `>` result through a one-time backend lookup. The command
+    /// text never crosses back to the webview as an activatable payload.
+    RunTerminalCommand {
         action_id: String,
     },
     OpenSettings,
@@ -147,6 +154,13 @@ mod tests {
         .unwrap();
         assert_eq!(value["type"], "runScriptOutput");
         assert_eq!(value["actionId"], "opaque-action");
+
+        let value = serde_json::to_value(ResultAction::RunTerminalCommand {
+            action_id: "opaque-terminal-action".into(),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "runTerminalCommand");
+        assert_eq!(value["actionId"], "opaque-terminal-action");
 
         let value = serde_json::to_value(ResultAction::LaunchApplication {
             result_id: "app:windows:opaque-digest".into(),

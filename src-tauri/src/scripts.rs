@@ -861,7 +861,7 @@ fn hide_console(command: &mut Command) {
 fn hide_console(_command: &mut Command) {}
 
 #[cfg(target_os = "windows")]
-fn ensure_unprivileged() -> Result<(), String> {
+pub(crate) fn ensure_unprivileged() -> Result<(), String> {
     use std::{ffi::c_void, mem::size_of};
     use windows::Win32::{
         Foundation::{CloseHandle, HANDLE},
@@ -887,24 +887,24 @@ fn ensure_unprivileged() -> Result<(), String> {
         let _ = CloseHandle(token);
         result.map_err(|error| format!("无法检查当前进程权限：{error}"))?;
         if elevation.TokenIsElevated != 0 {
-            return Err("Suo 正以管理员权限运行，已拒绝执行自定义脚本".into());
+            return Err("Suo 正以管理员权限运行，已拒绝执行终端命令或自定义脚本".into());
         }
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_unprivileged() -> Result<(), String> {
+pub(crate) fn ensure_unprivileged() -> Result<(), String> {
     // SAFETY: geteuid has no preconditions and does not dereference pointers.
     if unsafe { libc::geteuid() } == 0 {
-        Err("Suo 正以 root 权限运行，已拒绝执行自定义脚本".into())
+        Err("Suo 正以 root 权限运行，已拒绝执行终端命令或自定义脚本".into())
     } else {
         Ok(())
     }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn ensure_unprivileged() -> Result<(), String> {
+pub(crate) fn ensure_unprivileged() -> Result<(), String> {
     Ok(())
 }
 

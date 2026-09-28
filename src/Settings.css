@@ -11,6 +11,12 @@
   --settings-nav-selected-bg: #302b63;
   --settings-accent: #8a78ff;
   --settings-font-size: 14px;
+  /* Component typography derives from the settings-theme base size. These
+     floors keep configuration summaries readable while the upper bounds stop
+     badges from crowding their enable switch at the largest theme size. */
+  --configuration-title-font-size: clamp(13px, calc(var(--settings-font-size) - 1px), 17px);
+  --configuration-description-font-size: clamp(12px, calc(var(--settings-font-size) - 2px), 16px);
+  --configuration-meta-font-size: clamp(10px, calc(var(--settings-font-size) - 4px), 13px);
   --settings-radius: 18px;
   --settings-opacity: 96%;
   --settings-blur: 18px;
@@ -808,7 +814,7 @@ button:disabled {
   border-radius: 8px;
   color: var(--subtle);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--configuration-description-font-size);
   cursor: pointer;
 }
 
@@ -898,7 +904,7 @@ button:disabled {
 
 .configuration-title-line strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--configuration-title-font-size);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -910,14 +916,14 @@ button:disabled {
   border-radius: 6px;
   color: color-mix(in srgb, var(--accent) 68%, var(--text));
   background: color-mix(in srgb, var(--accent) 13%, transparent);
-  font-size: 9px;
+  font-size: var(--configuration-meta-font-size);
 }
 
 .configuration-description {
   display: block;
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--configuration-description-font-size);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -938,7 +944,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 6px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--configuration-meta-font-size);
   white-space: nowrap;
 }
 
@@ -1049,7 +1055,7 @@ button:disabled {
 
 .configuration-editor-header > span {
   color: var(--subtle);
-  font-size: 9px;
+  font-size: var(--configuration-meta-font-size);
 }
 
 .editor-actions {
@@ -1070,14 +1076,14 @@ button:disabled {
   border: 1px dashed var(--line);
   border-radius: 12px;
   color: var(--subtle);
-  font-size: 10px;
+  font-size: var(--configuration-description-font-size);
   text-align: center;
 }
 
 .configuration-hint {
   margin: 12px 2px 0;
   color: var(--subtle);
-  font-size: 9px;
+  font-size: var(--configuration-meta-font-size);
   text-align: right;
 }
 
@@ -1097,7 +1103,7 @@ button:disabled {
   border-radius: 8px;
   color: #ed9daa;
   background: rgba(153, 53, 70, 0.12);
-  font-size: 10px;
+  font-size: var(--configuration-description-font-size);
 }
 
 .confirmation-backdrop {

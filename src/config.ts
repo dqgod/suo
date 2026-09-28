@@ -13,6 +13,15 @@ export type LauncherConfig = {
   windowHeightPx: number;
   horizontalOffsetPx: number;
   verticalOffsetPx: number;
+  terminal: TerminalCommandConfig;
+};
+
+export type WindowsTerminalShell = "powerShell" | "commandPrompt";
+
+export type TerminalCommandConfig = {
+  enabled: boolean;
+  windowsShell: WindowsTerminalShell;
+  macosTerminalApplication: string;
 };
 
 export type TranslationProvider = "microsoft" | "google" | "youdao";
