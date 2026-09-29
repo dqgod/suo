@@ -38,8 +38,12 @@
   --launcher-search-border-width: 1px;
   --launcher-search-border-style: solid;
   --launcher-search-width: 720px;
+  --launcher-search-side-gap: 12px;
+  --launcher-search-left-padding: 18px;
+  --launcher-search-vertical-gap: 9px;
   --launcher-search-text: #f7f8ff;
   --launcher-search-font-size: 20px;
+  --launcher-search-row-min-height: 74px;
   --launcher-accent: #8a78ff;
   --launcher-result-bg: transparent;
   --launcher-result-primary: #f1f3ff;
@@ -114,7 +118,7 @@ button {
 .launcher {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(74px, max-content) var(--launcher-provider-row-size, minmax(42px, max-content)) minmax(0, 1fr) var(--launcher-footer-row-size, minmax(44px, max-content));
+  grid-template-rows: minmax(var(--launcher-search-row-min-height), max-content) var(--launcher-provider-row-size, minmax(42px, max-content)) minmax(0, 1fr) var(--launcher-footer-row-size, minmax(44px, max-content));
   width: 100%;
   height: 100%;
   overflow: hidden auto;
@@ -160,9 +164,9 @@ button {
   display: flex;
   align-items: center;
   gap: 13px;
-  width: min(calc(100% - 24px), var(--launcher-search-width));
-  margin: 10px auto 8px;
-  padding: 0 18px;
+  width: min(calc(100% - var(--launcher-search-side-gap) - var(--launcher-search-side-gap)), var(--launcher-search-width));
+  margin: var(--launcher-search-vertical-gap) auto;
+  padding: 0 18px 0 var(--launcher-search-left-padding);
   border-width: var(--launcher-search-border-width);
   border-style: var(--launcher-search-border-style);
   border-color: var(--launcher-search-border);
@@ -172,7 +176,7 @@ button {
 }
 
 .search-box:focus-within {
-  border-color: var(--launcher-accent);
+  border-color: var(--launcher-search-border);
   box-shadow: inset 0 1px 12px rgba(0, 0, 0, 0.18), 0 0 0 3px color-mix(in srgb, var(--launcher-accent) 18%, transparent);
 }
 
@@ -614,7 +618,7 @@ body,
 }
 
 .search-box:focus-within {
-  border-color: var(--launcher-accent);
+  border-color: var(--launcher-search-border);
 }
 
 .search-box input {

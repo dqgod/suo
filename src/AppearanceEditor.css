@@ -196,7 +196,7 @@
 .appearance-settings-preview::before { content: ""; position: absolute; inset: 0; z-index: 0; background-image: var(--preview-wallpaper); background-position: center; background-size: cover; opacity: var(--preview-wallpaper-opacity); pointer-events: none; }
 .appearance-launcher-preview > *,
 .appearance-settings-preview > * { position: relative; z-index: 1; }
-.appearance-live-search { display: flex; width: min(calc(100% - 22px), var(--preview-search-width)); min-height: 47px; align-items: center; gap: 8px; box-sizing: border-box; margin: 11px auto; padding: 0 11px; border: var(--preview-search-border-width) var(--preview-search-border-style) var(--preview-search-border); border-radius: calc(var(--preview-radius) * .72); color: var(--preview-search-text); background: var(--preview-search); font-size: var(--preview-search-size); }
+.appearance-live-search { display: flex; width: min(calc(100% - var(--preview-search-side-gap, 11px) - var(--preview-search-side-gap, 11px)), var(--preview-search-width)); min-height: 47px; align-items: center; gap: 8px; box-sizing: border-box; margin: var(--preview-search-vertical-gap, 9px) auto; padding: 0 11px 0 var(--preview-search-left-padding, 11px); border: var(--preview-search-border-width) var(--preview-search-border-style) var(--preview-search-border); border-radius: calc(var(--preview-radius) * .72); color: var(--preview-search-text); background: var(--preview-search); font-size: var(--preview-search-size); }
 .appearance-live-search > span { color: var(--preview-search-text); font-size: 20px; }
 .appearance-live-search i { margin-left: auto; color: var(--preview-accent); font-style: normal; }
 .appearance-live-results { min-height: 0; padding: 0 7px; overflow: hidden; }
@@ -261,10 +261,10 @@
 
 /* The compact chooser keeps the full library out of the settings scroll area. */
 .appearance-toolbar { justify-content: flex-start; padding: 0 14px 11px; }
-.appearance-preview-canvas { overflow: auto; }
-.appearance-launcher-preview { max-width: 100%; overflow: auto; }
-.appearance-live-results { overflow: auto; }
-.appearance-settings-preview { height: 306px; overflow: auto; }
+.appearance-preview-canvas { overflow: visible; }
+.appearance-launcher-preview { max-width: 100%; height: auto; min-height: 306px; overflow: hidden; }
+.appearance-live-results { overflow: hidden; }
+.appearance-settings-preview { height: auto; min-height: 306px; overflow: hidden; }
 .appearance-library-dialog { width: min(460px, calc(100vw - 28px)); }
 .appearance-library-dialog .settings-dialog-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .appearance-library-toolbar { display: grid; gap: 12px; padding: 16px 18px 10px; }

@@ -105,6 +105,8 @@ export type LauncherCustomThemeConfig = ThemeBackgroundConfig & {
   searchBorder: string;
   searchBorderWidthPx: number;
   searchBorderStyle: SearchBorderStyle;
+  searchLeftSpacePx: number;
+  searchVerticalSpacePx: number;
   searchWidthPx: number;
   searchTextColor: string;
   searchFontSizePx: number;
@@ -172,6 +174,9 @@ export const visualBounds = {
   launcherTheme: {
     windowWidthPx: { min: 256, max: 2560 },
     windowRadiusPx: { min: 0, max: 255 },
+    searchBorderWidthPx: { min: 0, max: 32 },
+    searchLeftSpacePx: { min: 0, max: 128 },
+    searchVerticalSpacePx: { min: 0, max: 64 },
     searchWidthPx: { min: 128, max: 2560 },
     searchFontSizePx: { min: 1, max: 255 },
     normalPrimaryFontSizePx: { min: 1, max: 255 },
@@ -253,6 +258,8 @@ function builtinLauncherTheme(id: BuiltinThemeId): LauncherCustomThemeConfig {
     searchBorder: palette.border,
     searchBorderWidthPx: id === "black" ? 0 : 1,
     searchBorderStyle: id === "black" ? "none" : "solid",
+    searchLeftSpacePx: 30,
+    searchVerticalSpacePx: 9,
     searchWidthPx: id === "black" ? 560 : 720,
     searchTextColor: palette.text,
     searchFontSizePx: 20,
@@ -445,6 +452,7 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig, launcher?: L
   const windowWidthPx = launcher?.windowWidthPx ?? theme.windowWidthPx;
   const searchHorizontalMargin = Math.max(0, theme.windowWidthPx - theme.searchWidthPx);
   const searchWidthPx = Math.max(visualBounds.launcherTheme.searchWidthPx.min, Math.min(windowWidthPx, windowWidthPx - searchHorizontalMargin));
+  const searchSideGapPx = Math.min(12, theme.searchLeftSpacePx);
   const root = document.documentElement;
   root.dataset.launcherNeutralChrome = String([theme.accentColor, theme.windowBackground, theme.searchBackground].every(isNeutralColor));
   root.dataset.launcherShowSearchIcon = String(theme.showSearchIcon);
@@ -467,6 +475,10 @@ export function applyLauncherAppearance(scope: LauncherThemeConfig, launcher?: L
     "--launcher-search-border": theme.searchBorder,
     "--launcher-search-border-width": `${theme.searchBorderWidthPx}px`,
     "--launcher-search-border-style": theme.searchBorderStyle,
+    "--launcher-search-side-gap": `${searchSideGapPx}px`,
+    "--launcher-search-left-padding": `${theme.searchLeftSpacePx - searchSideGapPx}px`,
+    "--launcher-search-vertical-gap": `${theme.searchVerticalSpacePx}px`,
+    "--launcher-search-row-min-height": `${74 + 2 * (theme.searchVerticalSpacePx - 9)}px`,
     "--launcher-search-width": `${searchWidthPx}px`,
     "--launcher-search-text": theme.searchTextColor,
     "--launcher-search-font-size": `${theme.searchFontSizePx}px`,
@@ -529,7 +541,8 @@ export function applySettingsAppearance(scope: SettingsThemeConfig) {
 }
 
 type LauncherThemeImport = Omit<LauncherCustomThemeConfig, "id">;
-type LauncherThemeImportV1 = Omit<LauncherThemeImport, "showProviderStatus" | "showFooterHints">;
+type LauncherThemeImportV1 = Omit<LauncherThemeImport, "showProviderStatus" | "showFooterHints" | "searchLeftSpacePx" | "searchVerticalSpacePx">;
+type LauncherThemeImportV2 = Omit<LauncherThemeImport, "searchLeftSpacePx" | "searchVerticalSpacePx">;
 type SettingsThemeImport = Omit<SettingsCustomThemeConfig, "id">;
 
 export type LauncherThemeBundleV1 = {
@@ -541,6 +554,12 @@ export type LauncherThemeBundleV1 = {
 export type LauncherThemeBundleV2 = {
   schema: "suo-launcher-theme-v2";
   version: 2;
+  theme: LauncherThemeImportV2;
+};
+
+export type LauncherThemeBundleV3 = {
+  schema: "suo-launcher-theme-v3";
+  version: 3;
   theme: LauncherThemeImport;
 };
 
@@ -559,6 +578,7 @@ const launcherBundleFieldsV1 = [
   "windowOpacity", "blurPx", "shadowPercent", "wallpaperDataUrl", "wallpaperOpacity", "platformOverrides",
 ] as const;
 const launcherBundleFieldsV2 = [...launcherBundleFieldsV1, "showProviderStatus", "showFooterHints"] as const;
+const launcherBundleFieldsV3 = [...launcherBundleFieldsV2, "searchLeftSpacePx", "searchVerticalSpacePx"] as const;
 
 const settingsBundleFields = [
   "name", "accentColor", "windowBackground", "titlebarBackground", "sidebarBackground", "contentBackground", "cardBackground", "borderColor",
@@ -934,14 +954,18 @@ function assertName(value: unknown) {
   if (!value.trim() || [...value].length > 40) throw new Error("name must contain 1–40 characters");
 }
 
-function assertLauncherTheme(theme: Record<string, unknown>, requireVisibility = true) {
+function assertLauncherTheme(theme: Record<string, unknown>, requireVisibility = true, requireSpacing = true) {
   assertName(theme.name);
   for (const field of ["accentColor", "windowBackground", "windowBorder", "searchBackground", "searchBorder", "searchTextColor", "normalRowBackground", "normalPrimaryColor", "normalSecondaryColor", "selectedRowBackground", "selectedPrimaryColor", "selectedSecondaryColor"]) assertColor(theme[field], field);
   assertIntegerInRange(theme.windowBorderWidthPx, 0, 4, "windowBorderWidthPx");
   assertIntegerInRange(theme.windowWidthPx, visualBounds.launcherTheme.windowWidthPx.min, visualBounds.launcherTheme.windowWidthPx.max, "windowWidthPx");
   assertIntegerInRange(theme.windowRadiusPx, visualBounds.launcherTheme.windowRadiusPx.min, visualBounds.launcherTheme.windowRadiusPx.max, "windowRadiusPx");
-  assertIntegerInRange(theme.searchBorderWidthPx, 0, 4, "searchBorderWidthPx");
+  assertIntegerInRange(theme.searchBorderWidthPx, visualBounds.launcherTheme.searchBorderWidthPx.min, visualBounds.launcherTheme.searchBorderWidthPx.max, "searchBorderWidthPx");
   if (theme.searchBorderStyle !== "solid" && theme.searchBorderStyle !== "dashed" && theme.searchBorderStyle !== "dotted" && theme.searchBorderStyle !== "double" && theme.searchBorderStyle !== "none") throw new Error("searchBorderStyle is invalid");
+  if (requireSpacing) {
+    assertIntegerInRange(theme.searchLeftSpacePx, visualBounds.launcherTheme.searchLeftSpacePx.min, visualBounds.launcherTheme.searchLeftSpacePx.max, "searchLeftSpacePx");
+    assertIntegerInRange(theme.searchVerticalSpacePx, visualBounds.launcherTheme.searchVerticalSpacePx.min, visualBounds.launcherTheme.searchVerticalSpacePx.max, "searchVerticalSpacePx");
+  }
   assertIntegerInRange(theme.searchWidthPx, visualBounds.launcherTheme.searchWidthPx.min, visualBounds.launcherTheme.searchWidthPx.max, "searchWidthPx");
   if ((theme.searchWidthPx as number) > (theme.windowWidthPx as number)) throw new Error("searchWidthPx cannot exceed windowWidthPx");
   assertIntegerInRange(theme.searchFontSizePx, visualBounds.launcherTheme.searchFontSizePx.min, visualBounds.launcherTheme.searchFontSizePx.max, "searchFontSizePx");
@@ -970,7 +994,7 @@ function assertSettingsTheme(theme: Record<string, unknown>) {
   assertBackground(theme);
 }
 
-function parseThemeBundle<T>(value: unknown, schema: string, version: 1 | 2, fields: readonly string[], validate: (theme: Record<string, unknown>) => void): T {
+function parseThemeBundle<T>(value: unknown, schema: string, version: 1 | 2 | 3, fields: readonly string[], validate: (theme: Record<string, unknown>) => void): T {
   if (!isRecord(value)) throw new Error("theme bundle must be an object");
   assertExactFields(value, ["schema", "version", "theme"], "theme bundle");
   if (value.schema !== schema || value.version !== version) throw new Error(`only ${schema} v${version} is supported`);
@@ -980,12 +1004,16 @@ function parseThemeBundle<T>(value: unknown, schema: string, version: 1 | 2, fie
   return value.theme as unknown as T;
 }
 
-export function parseLauncherThemeBundle(value: unknown): LauncherThemeBundleV2 {
+export function parseLauncherThemeBundle(value: unknown): LauncherThemeBundleV3 {
   if (isRecord(value) && value.schema === "suo-launcher-theme-v1" && value.version === 1) {
-    const legacy = parseThemeBundle<LauncherThemeImportV1>(value, "suo-launcher-theme-v1", 1, launcherBundleFieldsV1, (theme) => assertLauncherTheme(theme, false));
-    return { schema: "suo-launcher-theme-v2", version: 2, theme: { ...legacy, showProviderStatus: true, showFooterHints: true } };
+    const legacy = parseThemeBundle<LauncherThemeImportV1>(value, "suo-launcher-theme-v1", 1, launcherBundleFieldsV1, (theme) => assertLauncherTheme(theme, false, false));
+    return { schema: "suo-launcher-theme-v3", version: 3, theme: { ...legacy, showProviderStatus: true, showFooterHints: true, searchLeftSpacePx: 30, searchVerticalSpacePx: 9 } };
   }
-  return { schema: "suo-launcher-theme-v2", version: 2, theme: parseThemeBundle(value, "suo-launcher-theme-v2", 2, launcherBundleFieldsV2, assertLauncherTheme) };
+  if (isRecord(value) && value.schema === "suo-launcher-theme-v2" && value.version === 2) {
+    const legacy = parseThemeBundle<LauncherThemeImportV2>(value, "suo-launcher-theme-v2", 2, launcherBundleFieldsV2, (theme) => assertLauncherTheme(theme, true, false));
+    return { schema: "suo-launcher-theme-v3", version: 3, theme: { ...legacy, searchLeftSpacePx: 30, searchVerticalSpacePx: 9 } };
+  }
+  return { schema: "suo-launcher-theme-v3", version: 3, theme: parseThemeBundle(value, "suo-launcher-theme-v3", 3, launcherBundleFieldsV3, assertLauncherTheme) };
 }
 
 export function parseSettingsThemeBundle(value: unknown): SettingsThemeBundleV1 {
@@ -997,8 +1025,8 @@ function withoutId<T extends { id: string }>(theme: T): Omit<T, "id"> {
   return exported;
 }
 
-export function buildLauncherThemeBundle(theme: LauncherCustomThemeConfig): LauncherThemeBundleV2 {
-  const bundle: LauncherThemeBundleV2 = { schema: "suo-launcher-theme-v2", version: 2, theme: withoutId(theme) };
+export function buildLauncherThemeBundle(theme: LauncherCustomThemeConfig): LauncherThemeBundleV3 {
+  const bundle: LauncherThemeBundleV3 = { schema: "suo-launcher-theme-v3", version: 3, theme: withoutId(theme) };
   return parseLauncherThemeBundle(bundle);
 }
 

@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{autostart, dock, hotkey, launcher::LauncherState, web_search};
 
-const CONFIG_VERSION: u32 = 19;
+const CONFIG_VERSION: u32 = 20;
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_LOCATION_FILE_NAME: &str = "config-location.json";
 const CONFIG_LOCATION_VERSION: u32 = 1;
@@ -412,6 +412,10 @@ pub struct LauncherCustomThemeConfig {
     pub search_border: String,
     pub search_border_width_px: u8,
     pub search_border_style: String,
+    #[serde(default = "default_search_left_space_px")]
+    pub search_left_space_px: u8,
+    #[serde(default = "default_search_vertical_space_px")]
+    pub search_vertical_space_px: u8,
     pub search_width_px: u16,
     pub search_text_color: String,
     pub search_font_size_px: u8,
@@ -572,6 +576,14 @@ const fn default_show_footer_hints() -> bool {
     true
 }
 
+const fn default_search_left_space_px() -> u8 {
+    30
+}
+
+const fn default_search_vertical_space_px() -> u8 {
+    9
+}
+
 fn default_builtin_theme() -> String {
     "midnight".into()
 }
@@ -712,6 +724,8 @@ impl LauncherCustomThemeConfig {
             search_border: theme.border_color.clone(),
             search_border_width_px: 1,
             search_border_style: "solid".into(),
+            search_left_space_px: default_search_left_space_px(),
+            search_vertical_space_px: default_search_vertical_space_px(),
             search_width_px: theme.launcher_width_px,
             search_text_color: theme.text_color.clone(),
             search_font_size_px: 20,
@@ -1446,12 +1460,14 @@ fn migrate_config(mut config: AppConfig) -> Result<AppConfig, String> {
         // v16 moves the bundled timestamp example to a user-owned script copy,
         // v17 adds typed script results plus the dependency-free QR example,
         // v18 adds the opt-out built-in terminal command and its terminal
-        // target preferences; v19 adds window UI branding preference.
+        // target preferences; v19 adds window UI branding preference and
+        // v20 stores adjustable search spacing in launcher skins.
         // Older versions preserve their former behavior through serde defaults.
         0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 => {
             config.version = CONFIG_VERSION
         }
-        19 => {}
+        19 => config.version = CONFIG_VERSION,
+        20 => {}
         version => return Err(format!("不支持的配置版本 v{version}")),
     }
     Ok(config)
@@ -1765,7 +1781,7 @@ fn validate_launcher_custom_theme(theme: &LauncherCustomThemeConfig) -> Result<(
     validate_range(
         theme.search_border_width_px,
         0,
-        4,
+        32,
         &theme.name,
         "搜索框边框宽度",
     )?;
@@ -1775,6 +1791,20 @@ fn validate_launcher_custom_theme(theme: &LauncherCustomThemeConfig) -> Result<(
     ) {
         return Err(format!("搜索皮肤 {} 的搜索框边框样式无效", theme.name));
     }
+    validate_range(
+        theme.search_left_space_px,
+        0,
+        128,
+        &theme.name,
+        "搜索框左侧留白",
+    )?;
+    validate_range(
+        theme.search_vertical_space_px,
+        0,
+        64,
+        &theme.name,
+        "搜索框上下留白",
+    )?;
     if !(128..=2_560).contains(&theme.search_width_px)
         || theme.search_width_px > theme.window_width_px
     {
@@ -1861,6 +1891,8 @@ const LAUNCHER_THEME_BUNDLE_SCHEMA_V1: &str = "suo-launcher-theme-v1";
 #[allow(dead_code)]
 const LAUNCHER_THEME_BUNDLE_SCHEMA_V2: &str = "suo-launcher-theme-v2";
 #[allow(dead_code)]
+const LAUNCHER_THEME_BUNDLE_SCHEMA_V3: &str = "suo-launcher-theme-v3";
+#[allow(dead_code)]
 const SETTINGS_THEME_BUNDLE_SCHEMA: &str = "suo-settings-theme-v1";
 
 #[allow(dead_code)]
@@ -1940,15 +1972,18 @@ const PLATFORM_OVERRIDE_FIELDS: &[&str] = &[
 /// the retired `suo-theme-v1` schema or a settings bundle.
 #[allow(dead_code)]
 pub fn parse_launcher_theme_bundle(value: &str) -> Result<LauncherCustomThemeConfig, String> {
-    let legacy_v1 = serde_json::from_str::<serde_json::Value>(value)
-        .ok()
-        .is_some_and(|root| {
-            root.get("schema").and_then(serde_json::Value::as_str)
-                == Some(LAUNCHER_THEME_BUNDLE_SCHEMA_V1)
-                && root.get("version").and_then(serde_json::Value::as_u64) == Some(1)
-        });
+    let root = serde_json::from_str::<serde_json::Value>(value)
+        .map_err(|error| format!("搜索皮肤 JSON 无效：{error}"))?;
+    let legacy_v1 = root.get("schema").and_then(serde_json::Value::as_str)
+        == Some(LAUNCHER_THEME_BUNDLE_SCHEMA_V1)
+        && root.get("version").and_then(serde_json::Value::as_u64) == Some(1);
+    let legacy_v2 = root.get("schema").and_then(serde_json::Value::as_str)
+        == Some(LAUNCHER_THEME_BUNDLE_SCHEMA_V2)
+        && root.get("version").and_then(serde_json::Value::as_u64) == Some(2);
     let mut v2_fields = LAUNCHER_THEME_BUNDLE_FIELDS_V1.to_vec();
     v2_fields.extend(["showProviderStatus", "showFooterHints"]);
+    let mut v3_fields = v2_fields.clone();
+    v3_fields.extend(["searchLeftSpacePx", "searchVerticalSpacePx"]);
     let mut payload = if legacy_v1 {
         parse_theme_bundle_payload(
             value,
@@ -1956,12 +1991,24 @@ pub fn parse_launcher_theme_bundle(value: &str) -> Result<LauncherCustomThemeCon
             1,
             LAUNCHER_THEME_BUNDLE_FIELDS_V1,
         )?
-    } else {
+    } else if legacy_v2 {
         parse_theme_bundle_payload(value, LAUNCHER_THEME_BUNDLE_SCHEMA_V2, 2, &v2_fields)?
+    } else {
+        parse_theme_bundle_payload(value, LAUNCHER_THEME_BUNDLE_SCHEMA_V3, 3, &v3_fields)?
     };
     if legacy_v1 {
         payload.insert("showProviderStatus".into(), serde_json::Value::Bool(true));
         payload.insert("showFooterHints".into(), serde_json::Value::Bool(true));
+    }
+    if legacy_v1 || legacy_v2 {
+        payload.insert(
+            "searchLeftSpacePx".into(),
+            serde_json::json!(default_search_left_space_px()),
+        );
+        payload.insert(
+            "searchVerticalSpacePx".into(),
+            serde_json::json!(default_search_vertical_space_px()),
+        );
     }
     payload.insert(
         "id".into(),
@@ -2000,7 +2047,7 @@ pub fn build_launcher_theme_bundle(
     theme: &LauncherCustomThemeConfig,
 ) -> Result<serde_json::Value, String> {
     validate_launcher_custom_theme(theme)?;
-    build_theme_bundle(LAUNCHER_THEME_BUNDLE_SCHEMA_V2, 2, theme)
+    build_theme_bundle(LAUNCHER_THEME_BUNDLE_SCHEMA_V3, 3, theme)
 }
 
 #[allow(dead_code)]
@@ -3046,6 +3093,8 @@ mod tests {
             search_border: "#343d5a".into(),
             search_border_width_px: 1,
             search_border_style: "solid".into(),
+            search_left_space_px: default_search_left_space_px(),
+            search_vertical_space_px: default_search_vertical_space_px(),
             search_width_px: 720,
             search_text_color: "#f5f7ff".into(),
             search_font_size_px: 20,
@@ -3371,7 +3420,7 @@ mod tests {
         let config =
             normalize_and_validate(AppConfig::default()).expect("default config should be valid");
         assert!(config.save_settings_manually);
-        assert_eq!(config.version, 19);
+        assert_eq!(config.version, CONFIG_VERSION);
         assert_eq!(
             config.settings_icon_style,
             SettingsIconStyle::TransparentColor
@@ -4365,21 +4414,100 @@ mod tests {
     }
 
     #[test]
+    fn launcher_search_spacing_and_border_width_validate_at_save_and_import() {
+        let mut theme = launcher_custom_theme("spacing-bounds");
+        theme.search_left_space_px = 0;
+        theme.search_vertical_space_px = 0;
+        theme.search_border_width_px = 32;
+        assert!(validate_launcher_custom_theme(&theme).is_ok());
+
+        theme.search_left_space_px = 128;
+        theme.search_vertical_space_px = 64;
+        assert!(validate_launcher_custom_theme(&theme).is_ok());
+        let bundle = build_launcher_theme_bundle(&theme).expect("valid v3 bundle");
+        assert!(parse_launcher_theme_bundle(&bundle.to_string()).is_ok());
+
+        theme.search_border_width_px = 33;
+        assert!(validate_launcher_custom_theme(&theme).is_err());
+        theme.search_border_width_px = 32;
+        theme.search_left_space_px = 129;
+        assert!(validate_launcher_custom_theme(&theme).is_err());
+        theme.search_left_space_px = 128;
+        theme.search_vertical_space_px = 65;
+        assert!(validate_launcher_custom_theme(&theme).is_err());
+
+        let mut invalid_bundle = bundle;
+        invalid_bundle["theme"]["searchBorderWidthPx"] = serde_json::json!(33);
+        assert!(parse_launcher_theme_bundle(&invalid_bundle.to_string()).is_err());
+    }
+
+    #[test]
+    fn existing_v19_custom_theme_defaults_new_spacing_fields() {
+        let mut config = AppConfig::default();
+        config
+            .launcher_theme
+            .custom_themes
+            .push(launcher_custom_theme("existing"));
+        config.launcher_theme.theme = "custom:existing".into();
+        let mut old_v19 = serde_json::to_value(config).expect("serialize current config");
+        old_v19["version"] = serde_json::json!(19);
+        let theme = old_v19["launcherTheme"]["customThemes"][0]
+            .as_object_mut()
+            .expect("custom theme object");
+        theme.remove("searchLeftSpacePx");
+        theme.remove("searchVerticalSpacePx");
+        let loaded: AppConfig = serde_json::from_value(old_v19).expect("deserialize old v19");
+        let validated = normalize_and_validate(loaded).expect("validate old v19");
+        assert_eq!(validated.version, CONFIG_VERSION);
+        assert_eq!(validated.launcher_theme.theme, "custom:existing");
+        assert_eq!(
+            validated.launcher_theme.custom_themes[0].search_left_space_px,
+            30
+        );
+        assert_eq!(
+            validated.launcher_theme.custom_themes[0].search_vertical_space_px,
+            9
+        );
+    }
+
+    #[test]
     fn rejects_wrong_scope_and_illegal_theme_bundle_tokens() {
         let mut launcher = launcher_custom_theme("bundle");
         launcher.show_provider_status = false;
         launcher.show_footer_hints = false;
         let launcher_bundle =
             build_launcher_theme_bundle(&launcher).expect("build launcher bundle");
-        assert_eq!(launcher_bundle["schema"], "suo-launcher-theme-v2");
-        assert_eq!(launcher_bundle["version"], 2);
+        assert_eq!(launcher_bundle["schema"], "suo-launcher-theme-v3");
+        assert_eq!(launcher_bundle["version"], 3);
         assert_eq!(launcher_bundle["theme"]["accentColor"], "#8a78ff");
+        assert_eq!(launcher_bundle["theme"]["searchLeftSpacePx"], 30);
+        assert_eq!(launcher_bundle["theme"]["searchVerticalSpacePx"], 9);
         let serialized =
             serde_json::to_string(&launcher_bundle).expect("serialize launcher bundle");
-        let parsed = parse_launcher_theme_bundle(&serialized).expect("parse v2 launcher bundle");
+        let parsed = parse_launcher_theme_bundle(&serialized).expect("parse v3 launcher bundle");
         assert!(!parsed.show_provider_status);
         assert!(!parsed.show_footer_hints);
+        assert_eq!(parsed.search_left_space_px, 30);
+        assert_eq!(parsed.search_vertical_space_px, 9);
         assert!(parse_settings_theme_bundle(&serialized).is_err());
+
+        let mut v2_launcher = launcher_bundle.clone();
+        v2_launcher["schema"] = serde_json::json!("suo-launcher-theme-v2");
+        v2_launcher["version"] = serde_json::json!(2);
+        v2_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("searchLeftSpacePx");
+        v2_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("searchVerticalSpacePx");
+        let parsed_v2 = parse_launcher_theme_bundle(&v2_launcher.to_string())
+            .expect("parse complete v2 launcher bundle");
+        assert!(!parsed_v2.show_provider_status);
+        assert!(!parsed_v2.show_footer_hints);
+        assert_eq!(parsed_v2.search_left_space_px, 30);
+        assert_eq!(parsed_v2.search_vertical_space_px, 9);
 
         let mut legacy_launcher = launcher_bundle.clone();
         legacy_launcher["schema"] = serde_json::json!("suo-launcher-theme-v1");
@@ -4392,10 +4520,20 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("showFooterHints");
+        legacy_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("searchLeftSpacePx");
+        legacy_launcher["theme"]
+            .as_object_mut()
+            .unwrap()
+            .remove("searchVerticalSpacePx");
         let parsed_legacy = parse_launcher_theme_bundle(&legacy_launcher.to_string())
             .expect("parse complete v1 launcher bundle");
         assert!(parsed_legacy.show_provider_status);
         assert!(parsed_legacy.show_footer_hints);
+        assert_eq!(parsed_legacy.search_left_space_px, 30);
+        assert_eq!(parsed_legacy.search_vertical_space_px, 9);
 
         let mut old_with_v2_field = legacy_launcher.clone();
         old_with_v2_field["theme"]["showProviderStatus"] = serde_json::json!(false);
@@ -4408,12 +4546,25 @@ mod tests {
             .remove("showFooterHints");
         assert!(parse_launcher_theme_bundle(&missing_visibility.to_string()).is_err());
 
+        for missing_field in ["searchLeftSpacePx", "searchVerticalSpacePx"] {
+            let mut missing_spacing = launcher_bundle.clone();
+            missing_spacing["theme"]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing_field);
+            assert!(parse_launcher_theme_bundle(&missing_spacing.to_string()).is_err());
+        }
+
+        let mut old_with_v3_field = v2_launcher.clone();
+        old_with_v3_field["theme"]["searchLeftSpacePx"] = serde_json::json!(30);
+        assert!(parse_launcher_theme_bundle(&old_with_v3_field.to_string()).is_err());
+
         let mut wrong_visibility = launcher_bundle.clone();
         wrong_visibility["theme"]["showProviderStatus"] = serde_json::json!("false");
         assert!(parse_launcher_theme_bundle(&wrong_visibility.to_string()).is_err());
 
         let mut unsupported_version = launcher_bundle.clone();
-        unsupported_version["version"] = serde_json::json!(3);
+        unsupported_version["version"] = serde_json::json!(4);
         assert!(parse_launcher_theme_bundle(&unsupported_version.to_string()).is_err());
 
         let settings_bundle = build_settings_theme_bundle(&settings_custom_theme("bundle"))

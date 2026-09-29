@@ -11,7 +11,8 @@ export function launcherSkin(id, name) {
     id, name, accentColor: "#8a78ff", windowBackground: "#0b1222", windowBorder: "#66728f",
     windowBorderWidthPx: 1, windowWidthPx: 720, windowRadiusPx: 18,
     searchBackground: "#161f39", searchBorder: "#66728f", searchBorderWidthPx: 1,
-    searchBorderStyle: "solid", searchWidthPx: 720, searchTextColor: "#f5f7ff", searchFontSizePx: 20,
+    searchBorderStyle: "solid", searchLeftSpacePx: 30, searchVerticalSpacePx: 9,
+    searchWidthPx: 720, searchTextColor: "#f5f7ff", searchFontSizePx: 20,
     normalRowBackground: "#0b1222", normalPrimaryColor: "#f5f7ff", normalSecondaryColor: "#91a0c7",
     normalPrimaryFontSizePx: 14, normalSecondaryFontSizePx: 12, normalRowHeightPx: 58,
     selectedRowBackground: "#302b63", selectedPrimaryColor: "#f5f7ff", selectedSecondaryColor: "#91a0c7",
@@ -33,7 +34,7 @@ export function settingsSkin(id, name) {
 
 export function fixtureConfig(overrides = {}) {
   const config = {
-    version: 19, saveSettingsManually: true, settingsIconStyle: "transparentColor",
+    version: 20, saveSettingsManually: true, settingsIconStyle: "transparentColor",
     launcher: {
       globalHotkey: "alt+Space", startAtLogin: false, closeOnBlur: true, keepLastInput: false,
       compactWhenEmpty: false, showDockIcon: true, emptyQueryDebounceMs: 0, nonEmptyQueryDebounceMs: 50,

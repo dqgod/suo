@@ -989,7 +989,7 @@ fn configured_launcher_size(config: &AppConfig, compact: bool) -> LogicalSize<f6
 }
 
 fn compact_launcher_height(config: &AppConfig) -> f64 {
-    let (font_size, search_border_width, window_border_width) = config
+    let (font_size, search_border_width, window_border_width, vertical_space) = config
         .launcher_theme
         .active_custom_theme()
         .map(|theme| {
@@ -1001,6 +1001,7 @@ fn compact_launcher_height(config: &AppConfig) -> f64 {
                     f64::from(theme.search_border_width_px)
                 },
                 f64::from(theme.window_border_width_px),
+                f64::from(theme.search_vertical_space_px),
             )
         })
         .unwrap_or((
@@ -1011,21 +1012,34 @@ fn compact_launcher_height(config: &AppConfig) -> f64 {
                 1.0
             },
             1.0,
+            9.0,
         ));
-    compact_height_for_search(font_size, search_border_width, window_border_width)
+    compact_height_for_search(
+        font_size,
+        search_border_width,
+        window_border_width,
+        vertical_space,
+    )
 }
 
 fn compact_height_for_search(
     font_size: f64,
     search_border_width: f64,
     window_border_width: f64,
+    vertical_space: f64,
 ) -> f64 {
-    // Match the webview's 1.15 line-height, 8 px input padding, 10/8 px
+    // Match the webview's 1.15 line-height, 8 px input padding, paired
     // search-box margins and both the search and outer window borders.
-    // Two extra pixels cover font metrics rounding.
+    // The default 9 px spacing keeps the historical 74 px compact height;
+    // smaller spacing can shrink it to 56 px. Two pixels cover rounding.
     let input_height = ((font_size * 1.15).ceil() + 8.0).max(38.0);
-    LAUNCHER_COMPACT_HEIGHT
-        .max(input_height + 18.0 + search_border_width * 2.0 + window_border_width * 2.0 + 2.0)
+    (LAUNCHER_COMPACT_HEIGHT + 2.0 * (vertical_space - 9.0)).max(
+        input_height
+            + vertical_space * 2.0
+            + search_border_width * 2.0
+            + window_border_width * 2.0
+            + 2.0,
+    )
 }
 
 fn fit_launcher_size(
@@ -1803,11 +1817,14 @@ mod tests {
 
     #[test]
     fn compact_height_grows_to_show_the_configured_search_font() {
-        assert_eq!(compact_height_for_search(20.0, 1.0, 1.0), 74.0);
-        assert_eq!(compact_height_for_search(20.0, 0.0, 1.0), 74.0);
-        assert_eq!(compact_height_for_search(255.0, 4.0, 1.0), 332.0);
-        assert_eq!(compact_height_for_search(255.0, 4.0, 4.0), 338.0);
-        assert_eq!(compact_height_for_search(255.0, 0.0, 4.0), 330.0);
+        assert_eq!(compact_height_for_search(20.0, 1.0, 1.0, 9.0), 74.0);
+        assert_eq!(compact_height_for_search(20.0, 0.0, 1.0, 9.0), 74.0);
+        assert_eq!(compact_height_for_search(20.0, 0.0, 1.0, 0.0), 56.0);
+        assert_eq!(compact_height_for_search(20.0, 0.0, 1.0, 64.0), 184.0);
+        assert_eq!(compact_height_for_search(255.0, 4.0, 1.0, 9.0), 332.0);
+        assert_eq!(compact_height_for_search(255.0, 4.0, 4.0, 9.0), 338.0);
+        assert_eq!(compact_height_for_search(255.0, 0.0, 4.0, 9.0), 330.0);
+        assert_eq!(compact_height_for_search(255.0, 32.0, 4.0, 0.0), 376.0);
     }
 
     #[test]

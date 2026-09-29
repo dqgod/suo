@@ -387,13 +387,15 @@ test("custom skin capability flags control launcher rows without theme-name chec
 });
 
 
-test("legacy launcher bundles upgrade chrome flags and v2 exports preserve them", async ({ page }) => {
+test("legacy launcher bundles upgrade chrome and spacing for v3 exports", async ({ page }) => {
   await boot(page);
   await appearance(page);
   const legacy = launcherSkin("legacy", "Legacy Launcher");
   delete legacy.id;
   delete legacy.showProviderStatus;
   delete legacy.showFooterHints;
+  delete legacy.searchLeftSpacePx;
+  delete legacy.searchVerticalSpacePx;
   await page.locator(".appearance-hidden-input[type=file]").setInputFiles({ name:"legacy.json", mimeType:"application/json", buffer:Buffer.from(JSON.stringify({ schema:"suo-launcher-theme-v1", version:1, theme:legacy })) });
   await expect(page.locator(".appearance-theme-copy strong")).toHaveText("Legacy Launcher");
   await expect(page.getByRole("checkbox", {name:"显示来源状态栏"})).toBeChecked();
@@ -404,8 +406,10 @@ test("legacy launcher bundles upgrade chrome flags and v2 exports preserve them"
   const download = await downloadPromise;
   const { readFile } = await import("node:fs/promises");
   const bundle = JSON.parse(await readFile(await download.path(), "utf8"));
-  expect(bundle.schema).toBe("suo-launcher-theme-v2");
-  expect(bundle.version).toBe(2);
+  expect(bundle.schema).toBe("suo-launcher-theme-v3");
+  expect(bundle.version).toBe(3);
   expect(bundle.theme.showProviderStatus).toBe(true);
   expect(bundle.theme.showFooterHints).toBe(false);
+  expect(bundle.theme.searchLeftSpacePx).toBe(30);
+  expect(bundle.theme.searchVerticalSpacePx).toBe(9);
 });

@@ -154,7 +154,7 @@ function ColorControl({ label, value, disabled, onChange }: { label: string; val
   </label>;
 }
 
-function RangeControl({ label, value, minimum, maximum, legalMinimum = minimum, legalMaximum = maximum, unit = " px", disabled, onChange }: { label: string; value: number; minimum: number; maximum: number; legalMinimum?: number; legalMaximum?: number; unit?: string; disabled: boolean; onChange: (value: number) => void }) {
+function RangeControl({ label, hint, value, minimum, maximum, legalMinimum = minimum, legalMaximum = maximum, unit = " px", disabled, onChange }: { label: string; hint?: string; value: number; minimum: number; maximum: number; legalMinimum?: number; legalMaximum?: number; unit?: string; disabled: boolean; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState(String(value));
   const id = useId();
   const reportValidity = useContext(RangeValidityContext);
@@ -166,7 +166,7 @@ function RangeControl({ label, value, minimum, maximum, legalMinimum = minimum, 
     return () => reportValidity(id, true);
   }, [id, valid, reportValidity]);
   return <div className={`appearance-control appearance-number-control ${valid ? "" : "invalid"}`}>
-    <span className="appearance-control-copy"><strong>{label}</strong>{!valid && <small className="appearance-value-error">{r.legalRange.replace("{min}", String(legalMinimum)).replace("{max}", String(legalMaximum))}</small>}{unusual && <small className="appearance-value-warning">{r.comfortWarning.replace("{min}", String(minimum)).replace("{max}", String(maximum))}</small>}</span>
+    <span className="appearance-control-copy"><strong>{label}</strong>{hint && <small>{hint}</small>}{!valid && <small className="appearance-value-error">{r.legalRange.replace("{min}", String(legalMinimum)).replace("{max}", String(legalMaximum))}</small>}{unusual && <small className="appearance-value-warning">{r.comfortWarning.replace("{min}", String(minimum)).replace("{max}", String(maximum))}</small>}</span>
     <span className="appearance-range-control"><input aria-label={label} type="range" min={minimum} max={maximum} value={Math.max(minimum, Math.min(maximum, value))} disabled={disabled} onChange={(event) => { const next = Number(event.target.value); setDraft(String(next)); onChange(next); }} /><input aria-label={r.exactValue.replace("{label}", label)} type="number" inputMode="numeric" step="1" min={legalMinimum} max={legalMaximum} value={draft} aria-invalid={!valid} disabled={disabled} onChange={(event) => { const next = event.target.value; setDraft(next); if (/^\d+$/.test(next) && Number(next) >= legalMinimum && Number(next) <= legalMaximum) onChange(Number(next)); }} /><span>{unit.trim()}</span></span>
   </div>;
 }
@@ -211,12 +211,14 @@ function LauncherControls({ theme, disabled, update, onWallpaper, onRemoveWallpa
       <RangeControl label={t.windowWidth} value={theme.windowWidthPx} minimum={Math.max(620, theme.searchWidthPx)} maximum={Math.max(900, theme.searchWidthPx)} legalMinimum={Math.max(visualBounds.launcherTheme.windowWidthPx.min, theme.searchWidthPx)} legalMaximum={visualBounds.launcherTheme.windowWidthPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowWidthPx: value }))} />
       <RangeControl label={t.windowRadius} value={theme.windowRadiusPx} minimum={0} maximum={28} legalMinimum={visualBounds.launcherTheme.windowRadiusPx.min} legalMaximum={visualBounds.launcherTheme.windowRadiusPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, windowRadiusPx: value }))} />
       <ColorControl label={t.searchBackground} value={theme.searchBackground} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBackground: value }))} />
-      <ColorControl label={t.searchBorder} value={theme.searchBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorder: value }))} />
-      <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.searchBorderStyle}</strong></span><select value={theme.searchBorderStyle} disabled={disabled} onChange={(event) => update((current) => ({ ...current, searchBorderStyle: event.target.value as SearchBorderStyle }))}><option value="solid">{t.solid}</option><option value="dashed">{t.dashed}</option><option value="dotted">{t.dotted}</option><option value="double">{t.double}</option><option value="none">{t.none}</option></select></label>
-      <RangeControl label={t.searchBorderWidth} value={theme.searchBorderWidthPx} minimum={0} maximum={4} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorderWidthPx: value }))} />
-      <RangeControl label={t.searchWidth} value={theme.searchWidthPx} minimum={Math.min(320, theme.windowWidthPx)} maximum={theme.windowWidthPx} legalMinimum={visualBounds.launcherTheme.searchWidthPx.min} legalMaximum={Math.min(visualBounds.launcherTheme.searchWidthPx.max, theme.windowWidthPx)} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchWidthPx: value }))} />
+      <ColorControl label={t.searchBorder} value={theme.searchBorder} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorder: value, searchBorderWidthPx: current.searchBorderWidthPx || 2, searchBorderStyle: current.searchBorderStyle === "none" ? "solid" : current.searchBorderStyle }))} />
+      <label className="appearance-control"><span className="appearance-control-copy"><strong>{t.searchBorderStyle}</strong></span><select value={theme.searchBorderStyle} disabled={disabled} onChange={(event) => { const style = event.target.value as SearchBorderStyle; update((current) => ({ ...current, searchBorderStyle: style, searchBorderWidthPx: style !== "none" && current.searchBorderWidthPx === 0 ? 2 : current.searchBorderWidthPx })); }}><option value="solid">{t.solid}</option><option value="dashed">{t.dashed}</option><option value="dotted">{t.dotted}</option><option value="double">{t.double}</option><option value="none">{t.none}</option></select></label>
+      <RangeControl label={t.searchBorderWidth} value={theme.searchBorderWidthPx} minimum={0} maximum={12} legalMaximum={32} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchBorderWidthPx: value, searchBorderStyle: value > 0 && current.searchBorderStyle === "none" ? "solid" : current.searchBorderStyle }))} />
+      <RangeControl label={t.searchWidth} hint={t.searchWidthTracksWindow} value={theme.searchWidthPx} minimum={Math.min(320, theme.windowWidthPx)} maximum={Math.max(1_200, theme.windowWidthPx)} legalMinimum={visualBounds.launcherTheme.searchWidthPx.min} legalMaximum={visualBounds.launcherTheme.searchWidthPx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchWidthPx: value, windowWidthPx: Math.max(current.windowWidthPx, value) }))} />
+      <RangeControl label={t.searchLeftSpace} value={theme.searchLeftSpacePx} minimum={0} maximum={64} legalMaximum={128} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchLeftSpacePx: value }))} />
+      <RangeControl label={t.searchVerticalSpace} hint={t.searchVerticalSpaceHint} value={theme.searchVerticalSpacePx} minimum={0} maximum={32} legalMaximum={64} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchVerticalSpacePx: value }))} />
       <ColorControl label={t.searchText} value={theme.searchTextColor} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchTextColor: value }))} />
-      <RangeControl label={t.searchFontSize} value={theme.searchFontSizePx} minimum={12} maximum={24} legalMinimum={visualBounds.launcherTheme.searchFontSizePx.min} legalMaximum={visualBounds.launcherTheme.searchFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchFontSizePx: value }))} />
+      <RangeControl label={t.searchFontSize} value={theme.searchFontSizePx} minimum={8} maximum={64} legalMinimum={visualBounds.launcherTheme.searchFontSizePx.min} legalMaximum={visualBounds.launcherTheme.searchFontSizePx.max} disabled={disabled} onChange={(value) => update((current) => ({ ...current, searchFontSizePx: value }))} />
       <ToggleControl label={t.showSearchIcon} checked={theme.showSearchIcon} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showSearchIcon: value }))} />
       <ToggleControl label={t.showLogo} checked={theme.showLogo} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showLogo: value }))} />
       <ToggleControl label={t.showProviderStatus} checked={theme.showProviderStatus} disabled={disabled} onChange={(value) => update((current) => ({ ...current, showProviderStatus: value }))} />
@@ -276,10 +278,16 @@ function LauncherPreview({ theme }: { theme: LauncherCustomThemeConfig }) {
   // Very large legal fonts remain inspectable through the preview scroll area.
   const scale = Math.min(1, 420 / theme.windowWidthPx);
   const scaled = (value: number) => `${value === 0 ? 0 : Math.max(1, Math.round(value * scale))}px`;
+  const previewLeftSpace = Math.round(theme.searchLeftSpacePx * scale);
+  const previewSideGap = Math.min(11, previewLeftSpace);
   Object.assign(style, {
     "--preview-window-width": `${Math.min(100, theme.windowWidthPx / 900 * 100)}%`,
     "--preview-radius": scaled(theme.windowRadiusPx),
     "--preview-search-size": scaled(theme.searchFontSizePx),
+    "--preview-search-border-width": scaled(theme.searchBorderWidthPx),
+    "--preview-search-side-gap": `${previewSideGap}px`,
+    "--preview-search-left-padding": `${previewLeftSpace - previewSideGap}px`,
+    "--preview-search-vertical-gap": scaled(theme.searchVerticalSpacePx),
     "--preview-row-primary-size": scaled(theme.normalPrimaryFontSizePx),
     "--preview-row-secondary-size": scaled(theme.normalSecondaryFontSizePx),
     "--preview-selected-primary-size": scaled(theme.selectedPrimaryFontSizePx),
@@ -292,14 +300,14 @@ function LauncherPreview({ theme }: { theme: LauncherCustomThemeConfig }) {
     { kind: "folder", title: t.previewFolderTitle, path: t.previewFolderPath, badge: t.previewFolderBadge },
     { kind: "file", title: t.previewFileTitle, path: t.previewFilePath, badge: t.previewFileBadge },
   ];
-  const rows = Array.from({ length: theme.maxResults }, (_, index) => ({ ...sampleRows[index % sampleRows.length], selected: index === 0 }));
+  const rows = Array.from({ length: Math.min(theme.maxResults, sampleRows.length) }, (_, index) => ({ ...sampleRows[index], selected: index === 0 }));
   return <><div className="appearance-launcher-preview" style={style} data-provider-status={theme.showProviderStatus} data-footer-hints={theme.showFooterHints}>
     <div className="appearance-live-search">{theme.showSearchIcon && <span aria-hidden="true">⌕</span>}<strong>{t.previewQuery}</strong>{theme.showLogo && <i aria-hidden="true">◇</i>}</div>
     <div className="appearance-live-provider" hidden={!theme.showProviderStatus}>{t.previewProviderStatus}</div>
     <div className="appearance-live-results">{rows.map((row, index) => <div key={`${row.kind}-${index}`} className={`appearance-live-row ${row.selected ? "selected" : ""}`}><PreviewIcon kind={row.kind} /><span><strong>{row.title}</strong><small>{row.path}</small></span>{theme.showSourceBadge && <em>{row.badge}</em>}</div>)}</div>
     <div className="appearance-live-footer" hidden={!theme.showFooterHints}>{t.previewFooterHints}</div>
   </div>
-    <p className="appearance-native-note">{t.previewLauncherDimensions.replace("{width}", String(theme.windowWidthPx)).replace("{count}", String(theme.maxResults))}<br />{t.nativeIconNote}</p>
+    <p className="appearance-native-note">{t.previewLauncherDimensions.replace("{width}", String(theme.windowWidthPx)).replace("{count}", String(theme.maxResults))} · {t.previewSampleRows.replace("{count}", String(rows.length))}<br />{t.nativeIconNote}</p>
   </>;
 }
 
@@ -604,17 +612,17 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     setNotice(t.resetTheme);
   };
   const importError = (targetScope: ThemeScope, value: unknown, error: unknown) => {
-    const schemas = targetScope === "launcher" ? ["suo-launcher-theme-v1", "suo-launcher-theme-v2"] : ["suo-settings-theme-v1"];
+    const schemas = targetScope === "launcher" ? ["suo-launcher-theme-v1", "suo-launcher-theme-v2", "suo-launcher-theme-v3"] : ["suo-settings-theme-v1"];
     const expectedSchema = schemas.join(" / ");
     const schema = value && typeof value === "object" && "schema" in value ? (value as { schema?: unknown }).schema : "";
     const version = value && typeof value === "object" && "version" in value ? (value as { version?: unknown }).version : undefined;
     const detail = error instanceof Error ? error.message.trim() : "";
     if (error instanceof SyntaxError) return t.invalidJson;
     if (schema === "suo-theme-v1") return t.legacySchema;
-    const wrongScope = targetScope === "launcher" ? schema === "suo-settings-theme-v1" : schema === "suo-launcher-theme-v1" || schema === "suo-launcher-theme-v2";
+    const wrongScope = targetScope === "launcher" ? schema === "suo-settings-theme-v1" : schema === "suo-launcher-theme-v1" || schema === "suo-launcher-theme-v2" || schema === "suo-launcher-theme-v3";
     if (wrongScope) return t.wrongScope.replace("{scope}", targetScope === "launcher" ? t.settingsScope : t.launcherScope);
     const knownSchema = typeof schema === "string" && schemas.includes(schema);
-    const expectedVersion = schema === "suo-launcher-theme-v2" ? 2 : 1;
+    const expectedVersion = schema === "suo-launcher-theme-v3" ? 3 : schema === "suo-launcher-theme-v2" ? 2 : 1;
     if (knownSchema && version !== expectedVersion) {
       return typeof version === "number"
         ? t.unsupportedThemeVersion.replace("{version}", `v${version}`).replace("{supported}", `v${expectedVersion}`)
