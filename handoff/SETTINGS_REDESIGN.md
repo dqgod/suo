@@ -1,8 +1,8 @@
 # 设置改版跨平台交接（`dev` 0.1.4 / 配置 v19）
 
-实现提交：`f6f0c25`（设置改版、极简黑、皮肤显隐与 v2 导入导出），`f9ca562`（窄窗口搜索结果对齐修复与回归；文档更新另行提交）。
+实现提交：`f6f0c25`（设置改版、极简黑、皮肤显隐与 v2 导入导出），`f9ca562`（窄窗口搜索结果对齐），`5ced20e`（紧凑高度和极简黑 560 px 默认宽度），`552655d`（皮肤选择区对齐 B 交互稿；文档更新另行提交）。
 
-状态（2026-09-28）：Windows 前端正式构建、137 项 Rust 测试（2 项系统目录集成测试忽略）、all-targets check、格式检查及正式 NSIS 安装包构建通过。界面回归包含搜索与设置两类极简黑，最新界面回归 42/42 通过，详见下表。macOS v19 尚未编译或实机验证。2026-09-23 的 macOS 0.1.4 本地包只含 v18，不能用于验收本轮改版。设计依据是 [`docs/PRODUCT_REQUIREMENTS.md`](../docs/PRODUCT_REQUIREMENTS.md) 和 [B「分栏工具」原型](../docs/ui-settings-redesign-proposal.html)；原型不是运行时代码。
+状态（2026-09-29）：Windows 前端正式构建、138 项 Rust 测试（2 项系统目录集成测试忽略）、all-targets check、格式检查及正式 NSIS 安装包构建通过。界面回归包含搜索与设置两类极简黑，最新界面回归 56/56 通过，详见下表。macOS v19 尚未编译或实机验证。2026-09-23 的 macOS 0.1.4 本地包只含 v18，不能用于验收本轮改版。设计依据是 [`docs/PRODUCT_REQUIREMENTS.md`](../docs/PRODUCT_REQUIREMENTS.md) 和 [B「分栏工具」原型](../docs/ui-settings-redesign-proposal.html)；原型不是运行时代码。
 
 ## 当前行为与不变量
 
@@ -16,13 +16,15 @@
 
 | 平台 | 已确认 | 待确认 |
 | --- | --- | --- |
-| Windows x64 | 前端构建；UI 回归 42/42；Rust 137 通过、2 忽略；all-targets check；fmt；正式 NSIS 安装包构建。隔离实例的数值草稿、Alt+F4 关闭保护、Esc 返回保留草稿及 Alt+Space 创建启动器窗口有原生控件树证据。 | 安装/升级/卸载；原生完整视觉、鼠标操作、焦点/搜索全过程、实际 DPI/多显示器；截图与点击工具失败，不能用浏览器回归代替。 |
+| Windows x64 | 前端构建；UI 回归 56/56；Rust 138 通过、2 忽略；all-targets check；fmt；正式 NSIS 安装包构建。隔离实例的数值草稿、Alt+F4 关闭保护、Esc 返回保留草稿及 Alt+Space 创建启动器窗口有原生控件树证据。 | 安装/升级/卸载；原生完整视觉、鼠标操作、焦点/搜索全过程、实际 DPI/多显示器；截图与点击工具失败，不能用浏览器回归代替。 |
 | macOS arm64 | v18 曾有本地安装与定向终端/字号实测，均为历史代码。 | v19 的 arm64 工具链、前端/UI/Rust、`.app` 构建及以下真实窗口验收，均未完成。 |
 
 ### 本轮验证细节
 
-- 修复 `max-width: 620px` 将搜索结果强制分为图标/文字两行的问题：窄窗口保持横向网格，过大图标等比适配；隐藏来源徽标时回车提示仍固定在最右列。新增“午夜 副本”与极简黑在 256/480/600/620/621/720 px 的几何断言，以及 255 px 图标的最窄窗口检查。修复前 600 px 用例复现失败，修复后完整套件 42/42 通过。Mac 实机须复核这些宽度。
-- 前端 `pnpm test:ui` 使用隔离的 Tauri 内存接口，不读取真实配置、凭据或运行用户脚本。覆盖 1180×720 / 680×520、字号 8/32/255 与非法值、命令草稿/保存失败/取消启用、皮肤库 16 项的搜索与滚动、两类极简黑的独立应用，以及实际 Launcher 组件的黑色输入框与结果区。最终 `pnpm test:ui` 42/42 通过（含实际搜索框组件的两个视口用例）。
+- 紧凑搜索框原先让 74 px 行高挤入含外框的 74 px 窗口，复现 `scrollHeight=74` / `clientHeight=72`。改为使用内容可用高度后默认无溢出；原生高度计入真实内外边框及大字号。极简黑默认窗口/搜索宽度为 560 px，午夜等其他内置仍为 720 px，显式窗口宽度和自定义主题宽度保持优先。浏览器验证 74 px 空框、输入展开/清空收起，以及 255 px 字号与 4 px 外框的 solid/none 内边框组合；Rust 验证对应的 338/330 px 高度及宽度优先级。生产配置只读确认参数，未写入或改动。
+- 外观选择区按 B 原型重构：简洁的“搜索界面 / 设置界面”分段切换、右侧当前使用状态，以及跨编辑/预览两栏的缩略图卡片（正在预览、名称/类型、真实数量、更换皮肤）。新增断言覆盖位置尺寸、主题颜色、预览与应用分离、scope 切换及大字号换行。完整套件 56/56，通过最终细节调整后的定向复核 8/8；截图保存在 `logs/native-validation-compact-picker/ui/`。
+- 修复 `max-width: 620px` 将搜索结果强制分为图标/文字两行的问题：窄窗口保持横向网格，过大图标等比适配；隐藏来源徽标时回车提示仍固定在最右列。新增“午夜 副本”与极简黑在 256/480/600/620/621/720 px 的几何断言，以及 255 px 图标的最窄窗口检查。修复前 600 px 用例复现失败，修复后完整套件 56/56 通过。Mac 实机须复核这些宽度。
+- 前端 `pnpm test:ui` 使用隔离的 Tauri 内存接口，不读取真实配置、凭据或运行用户脚本。覆盖 1180×720 / 680×520、字号 8/32/255 与非法值、命令草稿/保存失败/取消启用、皮肤库 16 项的搜索与滚动、两类极简黑的独立应用，以及实际 Launcher 组件的黑色输入框与结果区。最终 `pnpm test:ui` 56/56 通过（含实际搜索框组件的两个视口用例）。
 - 极简黑（`black`）两侧均为纯黑底、灰白文字、100% 不透明、0 模糊、0 阴影；搜索侧隐藏 Logo、放大镜、来源标签、来源状态栏和底部快捷键栏，Suo 自带结果字形去掉彩色渐变，原生应用图标保留。上下两栏通过皮肤制作中的通用开关控制，边框设置为 0 / none 同时移除输入框聚焦描边；旧皮肤的两栏仍默认显示。搜索皮肤导出升级到 `suo-launcher-theme-v2` / version 2，严格旧 v1 导入会补默认值；设置皮肤仍为 v1。复制为自定义皮肤和导入后，灰度配色仍保留中性编辑控件。
 - 原生检查使用 `Suo UI Validation` / `io.github.dqgod.suo.ui-validation` 独立产品名和配置路径。记录到宽度 720→680 后出现未保存状态且保存模式禁用；Alt+F4 出现“保留这次修改？”；Esc 返回后仍为 680；Alt+Space 后窗口列表新增启动器。未将这些观测描述为原生视觉全量通过。
 - Windows 截图工具返回 `FrameArrived timed out` / `window capture timed out`，点击返回 `coordinate input geometry is unavailable`；后续启动器输入尝试返回 `window is not a usable app window`，因此真实搜索输入、鼠标和焦点全过程未验收。窗口工具第一次启动还误匹配已安装的 Suo；终止该正式实例被自动审批拒绝，随后改用明确绝对路径启动隔离副本，未对正式实例进行测试性编辑。
@@ -41,10 +43,10 @@
 
 ## 本轮正式 Windows 构建
 
-- 安装包：`src-tauri/target/release/bundle/nsis/Suo_0.1.4_x64-setup.exe`，4,091,297 bytes，x64，产品名/版本 `Suo` / 0.1.4。
-- 安装包 SHA-256：`D3B70529ADF66323FE9D579E3D03FED9774B3D48C25736D7C998E492295E1881`。
-- 包内程序：`src-tauri/target/release/suo.exe`，15,683,072 bytes，x64，产品名 `Suo`，产品版本 0.1.4，标识 `io.github.dqgod.suo`。NSIS 打包会为程序写入 bundle 类型信息，故与此前 no-bundle 程序哈希不同。
-- 程序 SHA-256：`220E8F1AD7DC256F22DA6F4D3CF0461397C0B34F81F944BB870084AD0FD961BF`。
-- 最后构建日志：`logs/native-validation-alignment/tauri-nsis-build.log`，2026-09-28 22:52 完成，含 `f9ca562` 的窄窗口对齐修复。前端、release 与 `makensis` 均成功；本轮复用已经校验的官方 NSIS 工具缓存。此前安装包/程序副本保存在同目录 `previous/`，最新版本、大小及哈希以上文为准。未运行安装包，未独立解包验证。
-- Rust 测试日志 `logs/native-validation-alignment/cargo-test-single-job.log` 为 137 通过、2 忽略；格式检查通过，最新 all-targets check 日志在 `logs/native-validation-final/cargo-check-all-targets.log`。
+- 安装包：`src-tauri/target/release/bundle/nsis/Suo_0.1.4_x64-setup.exe`，4,088,573 bytes，x64，产品名/版本 `Suo` / 0.1.4。
+- 安装包 SHA-256：`99C5451C217ACDB7A23E640BB0241CD71186C26869D3C3189B07DEC0A38871D0`。
+- 包内程序：`src-tauri/target/release/suo.exe`，15,680,000 bytes，x64，产品名 `Suo`，产品版本 0.1.4，标识 `io.github.dqgod.suo`。NSIS 打包会为程序写入 bundle 类型信息，故与此前 no-bundle 程序哈希不同。
+- 程序 SHA-256：`0522DD34FBC5667CF6F60D80753ADACFF343797F3D7CB41CA55F43956219F58B`。
+- 最后构建日志：`logs/native-validation-compact-picker/tauri-nsis-build.log`，2026-09-29 11:09 完成，包含上述修复至 `552655d`。前端、release 与 `makensis` 均成功；本轮复用已经校验的官方 NSIS 工具缓存。此前安装包副本保存在同目录 `previous/`，最新版本、大小及哈希记录在 `artifacts.json` 并列于上文。未运行安装包，未独立解包验证。
+- Rust 测试日志 `logs/native-validation-compact-picker/cargo-test.log` 为 138 通过、2 忽略；格式检查通过，最新 all-targets check 日志在 `logs/native-validation-compact-picker/cargo-check.log`。
 - 本轮推送 `dev` 源码和文档，并应用户要求生成上述本地 Windows NSIS 安装包；不发布 GitHub Release，不向 Git 提交可执行文件。Mac 从最新 `origin/dev` 自行构建并执行上述清单；旧 0.1.4/v18 本地包不含这些改动。
