@@ -629,7 +629,7 @@ impl LauncherThemeConfig {
     pub fn launcher_width(&self) -> f64 {
         self.active_custom_theme()
             .map(|theme| f64::from(theme.window_width_px))
-            .unwrap_or(720.0)
+            .unwrap_or(if self.theme == "black" { 560.0 } else { 720.0 })
     }
 
     fn from_legacy(legacy: &LegacyAppearanceConfig) -> Self {
@@ -3170,6 +3170,7 @@ mod tests {
         config.launcher_theme.accent_color = "#707070".into();
         let normalized = normalize_and_validate(config).expect("black launcher is supported");
         assert_eq!(normalized.launcher_theme.theme, "black");
+        assert_eq!(normalized.launcher_width(), 560.0);
         assert_eq!(normalized.settings_theme.theme, "forest");
         let mut config = normalized;
         config.settings_theme.theme = "black".into();
@@ -3181,6 +3182,23 @@ mod tests {
         assert_eq!(loaded.settings_theme.theme, "black");
         assert!(loaded.launcher_theme.custom_themes.is_empty());
         assert!(loaded.settings_theme.custom_themes.is_empty());
+    }
+
+    #[test]
+    fn launcher_width_preserves_explicit_and_custom_values_over_builtin_defaults() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.launcher_width(), 720.0);
+        config.launcher_theme.theme = "black".into();
+        assert_eq!(config.launcher_width(), 560.0);
+        config.launcher.window_width_px = Some(840);
+        assert_eq!(config.launcher_width(), 840.0);
+        let mut theme = launcher_custom_theme("black-copy");
+        theme.window_width_px = 680;
+        config.launcher_theme.custom_themes.push(theme);
+        config.launcher_theme.theme = "custom:black-copy".into();
+        assert_eq!(config.launcher_width(), 840.0);
+        config.launcher.window_width_px = None;
+        assert_eq!(config.launcher_width(), 680.0);
     }
 
     fn base64_encode(bytes: &[u8]) -> String {

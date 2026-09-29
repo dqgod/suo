@@ -54,3 +54,65 @@ test("oversized launcher icons leave readable text in the narrowest window", asy
     expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   }
 });
+
+for (const [theme, width] of [["black", 560], ["midnight", 720]]) {
+  test(`compact empty launcher fits its native height without a scrollbar: ${theme}`, async ({ page }, testInfo) => {
+    const config = fixtureConfig();
+    config.launcher.compactWhenEmpty = true;
+    config.launcherTheme.theme = theme;
+    await page.setViewportSize({ width, height: 74 });
+    await installMockBridge(page, { config, windowLabel: "main", searchResults });
+    await page.goto("/");
+    const launcher = page.locator(".launcher");
+    await expect(launcher).toHaveClass(/compact-empty/);
+    expect(await launcher.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight }))).toEqual({ scroll: 72, client: 72 });
+    await expect(launcher).toHaveCSS("--launcher-width", `${width}px`);
+    await expect(launcher).toHaveCSS("--launcher-search-width", `${width}px`);
+    await expect(page.locator(".results")).toHaveCount(0);
+    const input = page.locator(".search-box input");
+    const inputBox = await input.boundingBox();
+    expect(inputBox.y).toBeGreaterThanOrEqual(0);
+    expect(inputBox.y + inputBox.height).toBeLessThanOrEqual(74);
+    if (theme === "black") await page.screenshot({ path: testInfo.outputPath("minimal-black-compact-560px.png") });
+    await page.setViewportSize({ width, height: 520 });
+    await input.fill("weixin");
+    await expect(page.getByRole("option")).toHaveCount(2);
+    await expect(launcher).not.toHaveClass(/compact-empty/);
+    await input.fill("");
+    await expect(launcher).toHaveClass(/compact-empty/);
+    await page.setViewportSize({ width, height: 74 });
+    expect(await launcher.evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
+    if (theme === "black") {
+      await page.evaluate(() => {
+        const next = window.__suoMock.config;
+        next.launcher.windowWidthPx = 840;
+        window.__suoMock.emit("app-config-updated", next);
+      });
+      await expect(launcher).toHaveCSS("--launcher-width", "840px");
+      await expect(launcher).toHaveCSS("--launcher-search-width", "840px");
+    }
+  });
+}
+
+for (const [borderStyle, height] of [["solid", 338], ["none", 330]]) {
+  test(`compact launcher fits large text and visible inner/outer borders: ${borderStyle}`, async ({ page }) => {
+    const config = fixtureConfig();
+    config.launcher.compactWhenEmpty = true;
+    config.launcherTheme.theme = "custom:large-search";
+    config.launcherTheme.customThemes = [{
+      ...launcherSkin("large-search", "Large search text"), searchFontSizePx: 255,
+      windowBorderWidthPx: 4, searchBorderWidthPx: 4, searchBorderStyle: borderStyle,
+    }];
+    // These are the corresponding native compact heights, including borders.
+    await page.setViewportSize({ width: 720, height });
+    await installMockBridge(page, { config, windowLabel: "main" });
+    await page.goto("/");
+    const launcher = page.locator(".launcher");
+    await expect(launcher).toHaveClass(/compact-empty/);
+    expect(await launcher.evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
+    const input = await page.locator(".search-box input").boundingBox();
+    expect(input.height).toBeGreaterThanOrEqual(255 * 1.15 + 8);
+    expect(input.y).toBeGreaterThanOrEqual(4);
+    expect(input.y + input.height).toBeLessThanOrEqual(height - 4);
+  });
+}

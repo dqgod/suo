@@ -152,7 +152,8 @@ button {
 }
 
 .launcher.compact-empty {
-  grid-template-rows: minmax(74px, max-content);
+  /* The native height includes the window border; fill its inner height. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .search-box {
