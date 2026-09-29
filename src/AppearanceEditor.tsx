@@ -800,7 +800,11 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     }
     void applyDraft();
   };
-  const editingSwatchStyle = { background: `linear-gradient(135deg, ${scope === "launcher" ? launcherPreview.windowBackground : settingsPreview.windowBackground}, ${scope === "launcher" ? launcherPreview.selectedRowBackground : settingsPreview.selectedNavBackground})` };
+  const editingSwatchStyle = {
+    "--appearance-swatch-background": scope === "launcher" ? launcherPreview.windowBackground : settingsPreview.windowBackground,
+    "--appearance-swatch-accent": scope === "launcher" ? launcherPreview.selectedRowBackground : settingsPreview.selectedNavBackground,
+    "--appearance-swatch-ink": scope === "launcher" ? launcherPreview.searchTextColor : settingsPreview.primaryTextColor,
+  } as CSSProperties;
   const libraryItems = [
     ...builtinThemeIds.map((id) => {
       const theme = scope === "launcher"
@@ -811,20 +815,21 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     ...editingCustomThemes.map((theme) => ({ selection: `custom:${theme.id}` as ThemeSelection, name: theme.name, kind: "custom" as const, swatch: "", style: { background: `linear-gradient(135deg, ${theme.windowBackground}, ${scope === "launcher" ? (theme as LauncherCustomThemeConfig).selectedRowBackground : (theme as SettingsCustomThemeConfig).selectedNavBackground})` } as CSSProperties })),
   ].filter((item) => (libraryFilter === "all" || item.kind === libraryFilter) && item.name.toLocaleLowerCase().includes(librarySearch.trim().toLocaleLowerCase()));
   return <RangeValidityContext.Provider value={reportValidity}><section className="appearance-editor" aria-label={t.ariaLabel}>
-    <section className={`appearance-scope-zone ${scope}`}>
-      <div>
+    <section className="appearance-scope-zone">
+      <div className="appearance-top">
         <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
-          {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={`${id} ${scope === id ? "active" : ""}`} onClick={() => chooseScope(id)}><span aria-hidden="true">{id === "launcher" ? "⌕" : "⚙"}</span><span><strong>{id === "launcher" ? t.launcherScope : t.settingsScope}</strong><small>{id === "launcher" ? t.launcherScopeHint : t.settingsScopeHint}</small></span><em>{scope === id ? t.designing : t.switchScope}</em></button>)}
+          {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-label={id === "launcher" ? t.launcherScope : t.settingsScope} aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={scope === id ? "active" : ""} onClick={() => chooseScope(id)}>{id === "launcher" ? r.launcherTab : r.settingsTab}</button>)}
         </nav>
+        <p className="appearance-active-theme" aria-live="polite"><span className="appearance-active-dot" aria-hidden="true" />{r.activeSkin.replace("{name}", themeName(activeSelection, scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes))}</p>
       </div>
+      <section className="appearance-theme-picker" aria-label={r.selectedSkin}>
+        <span className="appearance-theme-thumbnail" style={editingSwatchStyle} aria-hidden="true"><span /><i /><i /></span>
+        <span className="appearance-theme-copy"><small>{r.previewing}</small><span className="appearance-theme-identity"><strong>{editingName}</strong><span>{selectedCustom ? r.custom : r.builtin}</span></span></span>
+        <div className="appearance-theme-actions"><small>{r.libraryCount.replace("{count}", String(builtinThemeIds.length + editingCustomThemes.length))}</small><button type="button" disabled={disabled} onClick={() => { setLibraryFilter("all"); setLibrarySearch(""); setLibraryOpen(true); }}>{r.changeSkin}<span aria-hidden="true">›</span></button></div>
+      </section>
     </section>
     <div id={`appearance-${scope}-panel`} role="tabpanel" aria-labelledby={`appearance-${scope}-tab`} className="appearance-workbench">
       <section className="appearance-edit-panel">
-        <div className="appearance-theme-picker">
-          <span className={`appearance-theme-swatch ${selectedBuiltin ? `appearance-theme-swatch-${selectedBuiltin}` : ""}`} style={editingSwatchStyle} aria-hidden="true" />
-          <span className="appearance-theme-copy"><strong>{editingName}</strong><small>{selectedCustom ? r.custom : r.builtin}{editingIsActive ? ` · ${t.inUse}` : ` · ${r.previewing} · ${r.activeSkin.replace("{name}", themeName(activeSelection, scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes))}`}</small></span>
-          <button type="button" disabled={disabled} onClick={() => { setLibraryFilter("all"); setLibrarySearch(""); setLibraryOpen(true); }}>{r.changeSkin}</button>
-        </div>
         <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
         {selectedCustom ? <div className="appearance-custom-editor"><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
         <footer className="appearance-edit-footer"><span aria-live="polite">{notice || primaryActionHint}</span><button type="button" className={`primary ${canApplySavedInactiveTheme ? "apply" : ""}`} title={!hasThemeChanges && !canApplySavedInactiveTheme ? t.noThemeChanges : undefined} disabled={disabled || !!invalidIds.size || (!hasThemeChanges && !canApplySavedInactiveTheme)} onClick={runPrimaryAction}>{primaryActionLabel}</button></footer>

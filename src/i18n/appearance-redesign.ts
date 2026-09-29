@@ -1,4 +1,7 @@
 export const appearanceRedesign = {
+  launcherTab: "搜索界面",
+  settingsTab: "设置界面",
+  selectedSkin: "当前选择的皮肤",
   changeSkin: "更换皮肤",
   libraryTitle: "皮肤库",
   librarySearch: "搜索皮肤名称",
@@ -7,7 +10,7 @@ export const appearanceRedesign = {
   builtin: "内置",
   custom: "自定义",
   noResults: "没有匹配的皮肤。试试其他名称。",
-  previewing: "预览中",
+  previewing: "正在预览",
   libraryHint: "选择只更新预览，应用后才会生效。",
   libraryCount: "{count} 款皮肤",
   activeSkin: "当前使用：{name}",
