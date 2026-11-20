@@ -1,10 +1,15 @@
 # macOS Apple Silicon current handoff
 
-## 当前：`dev` 0.1.4 / 配置 v20，尚未在 macOS 验证
+## 当前：0.1.4 / 配置 v20，macOS arm64 本地构建
 
-设置改版、图标偏好、宽范围精确输入和 v20 迁移的当前清单与命令在 [`SETTINGS_REDESIGN.md`](SETTINGS_REDESIGN.md)。以下 2026-09-23 的 0.1.4 本地 `.app` 与 ZIP 来自**配置 v18 的旧提交**，不含本轮设置改版。不得将那次 arm64 编译、Terminal/字号实测或安装结果计为 v20 通过，也不要在旧二进制中打开并写入 v20 真实配置。
+2026-11-20，代码提交 `57e276f`。环境为 macOS 15.6.1、arm64 Node 和 `aarch64-apple-darwin` Rust 1.97.1。本次已完成：
 
-- [ ] 保留本机修改后更新 `dev`，核对 Node、Rust host 与最终 Mach-O 都是 arm64；按交接文件运行锁文件安装、前端构建、Chromium UI 测试、Rust 测试/all-targets check 与新 `.app` 构建。
+- `pnpm build`、`pnpm test:ui`（74/74，Chromium 1180×720、680×520 及启动器专项尺寸）、`cargo test --manifest-path src-tauri/Cargo.toml --locked`（135 通过，1 忽略）、`cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked`。
+- `pnpm tauri build --bundles app`。从 Mach-O 中核对最终 Vite 资源文件名，本机 ad-hoc 签名后用 `ditto` 打包、解包，再以 `codesign --verify --deep --strict` 验证。包名 `Suo_0.1.4_macOS_arm64_57e276f.zip`，SHA-256 为 `98869e78aa5c5afed93a88e5c3288a57478b2c66869b2cc2005caedb072cd4f7`，用于本机安装。
+- 搜索结果点击、保存失败重试、窗口关闭顺序、皮肤库焦点恢复、窄窗固定预览的界面证据来自隔离浏览器，细节见 [设置改版交接](SETTINGS_REDESIGN.md)。
+
+### 原生窗口待验项目
+
 - [ ] 复核极简黑在未设置显式宽度时为 560 px，显式宽度和已有自定义皮肤不被覆盖；开启空输入紧凑模式后 74 px 搜索框无多余滚动条，输入展开/清空收起正常；再测大字号与粗外框。外观页的分段切换、右侧当前使用状态及整行皮肤卡片须与 B 原型一致，并保持预览/应用边界。
 - [ ] 在搜索皮肤副本中把左侧留白 30→0 px、成对上下留白 9→0 px，确认真实紧凑窗口由 74→56 px 且文字上移、左右位置同步；0/none 隐藏边框后改颜色或调宽须实时显示，0–32 px 边界及 v1/v2→v3 主题文件兼容仍需在 macOS 实测。预览只显示示例结果，不出现模拟窗口内层滚动条；搜索框宽度超过主题窗口时两者同步增大。
 - [ ] 从新 `.app` 冷启动，完成 680×520 与常规窗口、8/32 px 字号、极端几何/混合 DPI、皮肤库与编辑草稿、手动/自动保存、原生关闭 dirty 对话框、平台材质、图标三样式、严格主题导入的实机复核；分别在搜索框与设置页应用“极简黑”，确认纯黑底、灰白文字、无模糊/阴影；复制为自定义搜索皮肤后，独立切换来源状态栏和底部快捷键栏。0 / none 时聚焦无描边；改颜色或调大宽度时即时可见，边框 32 px 不越界。左侧留白和成对上下留白随真实窗口及预览变化；v3 导出完整保存两个数值，严格旧 v1/v2 导入补 30/9 px，切换一侧不改变另一侧。
