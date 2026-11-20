@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import {
   builtinThemeIds,
   buildLauncherThemeBundle,
@@ -28,6 +28,7 @@ type ThemeScope = "launcher" | "settings";
 type AppearanceEditorProps = {
   launcherTheme: LauncherThemeConfig;
   settingsTheme: SettingsThemeConfig;
+  persistedThemes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig };
   onChange: (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => Promise<boolean>;
   saveSettingsManually: boolean;
   readOnly: boolean;
@@ -323,19 +324,56 @@ function SettingsPreview({ theme }: { theme: SettingsCustomThemeConfig }) {
   return <div className="appearance-settings-preview" style={style}><header><strong>{t.previewSettingsTitle}</strong><span>×</span></header><div><aside><span>{t.previewGeneral}</span><span>{t.previewSearch}</span><span>{t.previewCommands}</span><strong>{t.previewAppearance}</strong></aside><main><h3>{t.previewPageTitle}</h3><p>{t.previewPageCopy}</p><section><strong>{t.previewCardTitle}</strong><p>{t.previewCardCopy}</p><i /><i /><i /></section></main></div></div>;
 }
 
-export default function AppearanceEditor({ launcherTheme, settingsTheme, onChange, saveSettingsManually, readOnly, saving = false, onDirtyChange, resetToken }: AppearanceEditorProps) {
+// Fit the same live sample to the remaining editor space, even for large legal fonts.
+function CompactPreview({ name, children }: { name: string; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const frame = useRef<HTMLDivElement>(null);
+  const sample = useRef<HTMLDivElement>(null);
+  const id = useId();
+  useEffect(() => {
+    const outer = frame.current;
+    const inner = sample.current;
+    if (!expanded || !outer || !inner) return;
+    const fit = () => {
+      if (!inner.offsetHeight) return;
+      const scale = Math.min(outer.clientWidth / inner.offsetWidth, outer.clientHeight / inner.offsetHeight, 1);
+      inner.style.transform = `translateX(-50%) scale(${scale})`;
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(outer);
+    observer.observe(inner);
+    fit();
+    return () => observer.disconnect();
+  }, [expanded]);
+  return <div className="compact-preview">
+    <button type="button" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded(!expanded)}>
+      {r.livePreview} · {name}<span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
+    </button>
+    <div ref={frame} id={id} className="compact-preview-frame" hidden={!expanded}>
+      {expanded && <div ref={sample} className="compact-preview-sample">{children}</div>}
+    </div>
+  </div>;
+}
+
+export default function AppearanceEditor({ launcherTheme, settingsTheme, persistedThemes, onChange, saveSettingsManually, readOnly, saving = false, onDirtyChange, resetToken }: AppearanceEditorProps) {
   const [scope, setScope] = useState<ThemeScope>("launcher");
   const [workingLauncher, setWorkingLauncher] = useState(() => cloneLauncherScope(launcherTheme));
   const [workingSettings, setWorkingSettings] = useState(() => cloneSettingsScope(settingsTheme));
   const [editingLauncherTheme, setEditingLauncherTheme] = useState<ThemeSelection>(launcherTheme.theme);
   const [editingSettingsTheme, setEditingSettingsTheme] = useState<ThemeSelection>(settingsTheme.theme);
   const [notice, setNotice] = useState("");
+  // Drop the two-step save hint once a successful global save updates the persisted view.
+  useEffect(() => {
+    setNotice(current => current === t.activeThemeAddedToDraft || current === t.savedThemeToDraft ? "" : current);
+  }, [persistedThemes.launcherTheme, persistedThemes.settingsTheme]);
   const [importing, setImporting] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryWarning, setLibraryWarning] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<"all" | "builtin" | "custom">("all");
   const [librarySearch, setLibrarySearch] = useState("");
   const [invalidIds, setInvalidIds] = useState<Set<string>>(() => new Set());
+  const editPanel = useRef<HTMLElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const importRequestRef = useRef(0);
   const tabRefs = useRef<Record<ThemeScope, HTMLButtonElement | null>>({ launcher: null, settings: null });
@@ -428,7 +466,7 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
   const editingHasChanges = scope === "launcher" ? launcherEditingHasChanges : settingsEditingHasChanges;
   const dirty = JSON.stringify(workingLauncher.customThemes) !== launcherLibrarySignature
     || JSON.stringify(workingSettings.customThemes) !== settingsLibrarySignature
-    || editingLauncherTheme !== launcherTheme.theme || editingSettingsTheme !== settingsTheme.theme;
+    || invalidIds.size > 0;
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
 
   const commitThemes = async (themes: { launcherTheme: LauncherThemeConfig; settingsTheme: SettingsThemeConfig }) => {
@@ -492,12 +530,21 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     else setEditingSettingsTheme(`custom:${id}`);
     setNotice("");
   };
+  const returnToEdit = () => {
+    setLibraryOpen(false);
+    requestAnimationFrame(() => {
+      const panel = editPanel.current;
+      const field = panel?.querySelector<HTMLInputElement>('input[aria-invalid="true"]')
+        ?? panel?.querySelector<HTMLInputElement>(".appearance-custom-editor header input");
+      field?.focus();
+    });
+  };
   const chooseEditingTheme = (selection: ThemeSelection) => {
     const current = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
     if (selection === current) return true;
-    if (invalidIds.size) { setNotice(r.invalidValues); return false; }
+    if (invalidIds.size) { setLibraryWarning(r.invalidValues); return false; }
     if (editingHasChanges) {
-      setNotice(t.saveBeforeSwitchingTheme);
+      setLibraryWarning(t.saveBeforeSwitchingTheme);
       return false;
     }
     invalidateCurrentWallpaperRequest();
@@ -788,13 +835,16 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
     setNotice((!checksPass || sceneReview) ? `${savedNotice} ${t.savedWithReadabilityWarning}` : savedNotice);
   };
   const selectedBuiltin = scope === "launcher" ? (selectedLauncher ? null : editingLauncherTheme) : (selectedSettings ? null : editingSettingsTheme);
-  const activeSelection = scope === "launcher" ? launcherTheme.theme : settingsTheme.theme;
+  const draftScope = scope === "launcher" ? launcherTheme : settingsTheme;
+  const persistedScope = scope === "launcher" ? persistedThemes.launcherTheme : persistedThemes.settingsTheme;
+  const activeSelection = persistedScope.theme;
+  const pendingSelection = draftScope.theme !== activeSelection;
   const editingSelection = scope === "launcher" ? editingLauncherTheme : editingSettingsTheme;
   const editingCustomThemes = scope === "launcher" ? workingLauncher.customThemes : workingSettings.customThemes;
   const editingName = themeName(editingSelection, editingCustomThemes);
   const editingIsActive = editingSelection === activeSelection;
   const hasThemeChanges = editingHasChanges;
-  const canApplySavedInactiveTheme = !editingIsActive && !hasThemeChanges;
+  const canApplySavedInactiveTheme = editingSelection !== draftScope.theme && !hasThemeChanges;
   const primaryActionLabel = canApplySavedInactiveTheme
     ? t.applyTheme
     : !saveSettingsManually && editingIsActive ? t.saveAndApply : t.saveTheme;
@@ -828,23 +878,28 @@ export default function AppearanceEditor({ launcherTheme, settingsTheme, onChang
         <nav className="appearance-scope-tabs" role="tablist" aria-label={t.scopeTabs} onKeyDown={onScopeKeyDown}>
           {(["launcher", "settings"] as const).map((id) => <button ref={(node) => { tabRefs.current[id] = node; }} key={id} id={`appearance-${id}-tab`} type="button" role="tab" aria-label={id === "launcher" ? t.launcherScope : t.settingsScope} aria-selected={scope === id} aria-controls={`appearance-${id}-panel`} tabIndex={scope === id ? 0 : -1} className={scope === id ? "active" : ""} onClick={() => chooseScope(id)}>{id === "launcher" ? r.launcherTab : r.settingsTab}</button>)}
         </nav>
-        <p className="appearance-active-theme" aria-live="polite"><span className="appearance-active-dot" aria-hidden="true" />{r.activeSkin.replace("{name}", themeName(activeSelection, scope === "launcher" ? launcherTheme.customThemes : settingsTheme.customThemes))}</p>
+        <p className="appearance-active-theme" aria-live="polite"><span className="appearance-active-dot" aria-hidden="true" />{r.activeSkin.replace("{name}", themeName(activeSelection, persistedScope.customThemes))}
+          {pendingSelection && <span>{r.pendingSkin.replace("{name}", themeName(draftScope.theme, draftScope.customThemes))}</span>}
+        </p>
       </div>
       <section className="appearance-theme-picker" aria-label={r.selectedSkin}>
         <span className="appearance-theme-thumbnail" style={editingSwatchStyle} aria-hidden="true"><span /><i /><i /></span>
         <span className="appearance-theme-copy"><small>{r.previewing}</small><span className="appearance-theme-identity"><strong>{editingName}</strong><span>{selectedCustom ? r.custom : r.builtin}</span></span></span>
-        <div className="appearance-theme-actions"><small>{r.libraryCount.replace("{count}", String(builtinThemeIds.length + editingCustomThemes.length))}</small><button type="button" disabled={disabled} onClick={() => { setLibraryFilter("all"); setLibrarySearch(""); setLibraryOpen(true); }}>{r.changeSkin}<span aria-hidden="true">›</span></button></div>
+        <div className="appearance-theme-actions"><small>{r.libraryCount.replace("{count}", String(builtinThemeIds.length + editingCustomThemes.length))}</small><button type="button" disabled={disabled} onClick={() => { setLibraryWarning(""); setLibraryFilter("all"); setLibrarySearch(""); setLibraryOpen(true); }}>{r.changeSkin}<span aria-hidden="true">›</span></button></div>
       </section>
     </section>
     <div id={`appearance-${scope}-panel`} role="tabpanel" aria-labelledby={`appearance-${scope}-tab`} className="appearance-workbench">
-      <section className="appearance-edit-panel">
+      <section className="appearance-edit-panel" ref={editPanel}>
+        <CompactPreview name={editingName}>
+          {scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}
+        </CompactPreview>
         <div className="appearance-toolbar"><input ref={importRef} className="appearance-hidden-input" type="file" accept="application/json,.json" disabled={disabled} onChange={(event) => { const file = event.target.files?.[0]; if (file) importTheme(file); event.currentTarget.value = ""; }} /><button type="button" disabled={disabled} onClick={() => importRef.current?.click()}>{t.importTheme}</button><button type="button" disabled={saving || importing} onClick={exportTheme}>{t.exportTheme}</button><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createTheme}</button></div>
-        {selectedCustom ? <div className="appearance-custom-editor"><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
+        {selectedCustom ? <div className="appearance-custom-editor" key={resetToken}><header><label><span>{t.themeName}</span><input value={selectedCustom.name} maxLength={40} disabled={disabled} onChange={(event) => scope === "launcher" ? updateLauncher((theme) => ({ ...theme, name: event.target.value })) : updateSettings((theme) => ({ ...theme, name: event.target.value }))} /><small>{t.themeNameHint}</small></label><div><button type="button" disabled={disabled} onClick={resetTheme}>{t.restoreDefault}</button><button type="button" className="danger" disabled={disabled} onClick={deleteTheme}>{t.delete}</button></div></header>{scope === "launcher" ? <LauncherControls theme={selectedLauncher!} disabled={disabled} update={updateLauncher} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} /> : <SettingsControls theme={selectedSettings!} disabled={disabled} update={updateSettings} onWallpaper={loadWallpaper} onRemoveWallpaper={removeWallpaper} />}</div> : <div className="appearance-builtin-empty"><p>{t.builtinReadOnly.replace("{name}", builtinLabels[selectedBuiltin as keyof typeof builtinLabels] ?? t.midnight)}</p><button type="button" className="primary" disabled={disabled} onClick={createTheme}>{t.createFromBuiltin}</button></div>}
         <footer className="appearance-edit-footer"><span aria-live="polite">{notice || primaryActionHint}</span><button type="button" className={`primary ${canApplySavedInactiveTheme ? "apply" : ""}`} title={!hasThemeChanges && !canApplySavedInactiveTheme ? t.noThemeChanges : undefined} disabled={disabled || !!invalidIds.size || (!hasThemeChanges && !canApplySavedInactiveTheme)} onClick={runPrimaryAction}>{primaryActionLabel}</button></footer>
       </section>
       <aside className="appearance-preview-panel" aria-label={t.previewAriaLabel}><header><div><strong>{scope === "launcher" ? t.previewLauncher : t.previewSettings}：{editingName}</strong><small>{editingIsActive ? t.previewEditingActive : t.previewEditingInactive}</small></div><span className={contrastVerified ? "ok" : "warning"}>{contrastVerified ? t.contrastPass : checksPass ? t.contrastSceneReview : t.contrastAdjust}</span></header><div className="appearance-preview-canvas">{scope === "launcher" ? <LauncherPreview theme={launcherPreview} /> : <SettingsPreview theme={settingsPreview} />}</div><ContrastAudit checks={checks} sceneReview={sceneReview} /></aside>
     </div>
-    <SettingsDialog open={libraryOpen} title={r.libraryTitle} onClose={() => setLibraryOpen(false)} className="appearance-library-dialog" footer={<div className="appearance-library-footer"><span role="status">{r.libraryCount.replace("{count}", String(libraryItems.length))}</span><span>{r.libraryHint}</span></div>}>
+    <SettingsDialog open={libraryOpen} title={r.libraryTitle} onClose={() => setLibraryOpen(false)} className="appearance-library-dialog" footer={<div className="appearance-library-footer"><span role="status">{r.libraryCount.replace("{count}", String(libraryItems.length))}</span>{libraryWarning ? <><span role="alert">{libraryWarning}</span><button type="button" onClick={returnToEdit}>{r.returnToEdit}</button></> : <span>{r.libraryHint}</span>}</div>}>
       <div className="appearance-library-toolbar"><input data-dialog-autofocus type="search" aria-label={r.librarySearch} placeholder={r.librarySearch} value={librarySearch} onChange={(event) => setLibrarySearch(event.target.value)} /><div className="appearance-library-filters" role="group" aria-label={r.libraryFilter}>{(["all", "builtin", "custom"] as const).map((filter) => <button key={filter} type="button" aria-pressed={libraryFilter === filter} onClick={() => setLibraryFilter(filter)}>{r[filter]}</button>)}</div></div>
       <div className="appearance-library-results" aria-label={r.libraryTitle}>{libraryItems.length ? libraryItems.map((item) => <button key={item.selection} type="button" aria-pressed={editingSelection === item.selection} onClick={() => { if (chooseEditingTheme(item.selection)) setLibraryOpen(false); }}><span className={`appearance-theme-swatch appearance-theme-swatch-${item.swatch}`} style={item.style} aria-hidden="true" /><span><strong>{item.name}</strong><small>{item.kind === "builtin" ? r.builtin : r.custom}{item.selection === activeSelection ? ` · ${t.inUse}` : ""}</small></span>{editingSelection === item.selection && <em>{r.previewing}</em>}</button>) : <p className="appearance-library-empty">{r.noResults}</p>}</div>
     </SettingsDialog>

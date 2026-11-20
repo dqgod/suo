@@ -118,7 +118,7 @@ button {
 .launcher {
   position: relative;
   display: grid;
-  grid-template-rows: minmax(var(--launcher-search-row-min-height), max-content) var(--launcher-provider-row-size, minmax(42px, max-content)) minmax(0, 1fr) var(--launcher-footer-row-size, minmax(44px, max-content));
+  grid-template-rows: minmax(var(--launcher-search-row-min-height), max-content) var(--launcher-provider-row-size, minmax(42px, max-content)) minmax(min(120px, 35vh), 1fr) var(--launcher-footer-row-size, minmax(44px, max-content));
   width: 100%;
   height: 100%;
   overflow: hidden auto;
@@ -316,7 +316,7 @@ button {
 }
 
 .results {
-  min-height: min(120px, 35vh);
+  min-height: 0;
   overflow: hidden auto;
   padding: 7px 10px;
   scrollbar-width: thin;
@@ -679,3 +679,13 @@ kbd {
 :root[data-launcher-show-footer-hints="false"] .launcher > footer { display:none; }
 :root[data-launcher-search-border-enabled="false"] .search-box,
 :root[data-launcher-search-border-enabled="false"] .search-box:focus-within { box-shadow:none; }
+
+/* On short expanded windows give the first result priority over auxiliary rows. */
+@media (max-height: 235px) {
+  .launcher { --launcher-footer-row-size: 0px; }
+  .launcher > footer { display: none; }
+}
+@media (max-height: 195px) {
+  .launcher { --launcher-provider-row-size: 0px; }
+  .launcher > .provider-row { display: none; }
+}

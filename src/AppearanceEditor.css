@@ -313,3 +313,27 @@
 .appearance-live-provider { border-bottom:1px solid var(--preview-window-border); }
 .appearance-live-footer { border-top:1px solid var(--preview-window-border); }
 .appearance-preview-canvas > .appearance-native-note { color:var(--settings-secondary-text); }
+
+.appearance-active-theme { flex-wrap: wrap; }
+.compact-preview { display: none; }
+@media (max-width: 1040px) {
+  .appearance-edit-panel { overflow: clip; }
+  .compact-preview {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--settings-border);
+    background: var(--settings-card-bg);
+  }
+  .compact-preview > button { display: flex; width: 100%; align-items: center; justify-content: space-between; }
+  .compact-preview-frame { position: relative; height: min(18vh, 140px); margin-top: 4px; overflow: hidden; background: var(--settings-content-bg); }
+  .compact-preview-sample { position: absolute; top: 0; left: 50%; width: 420px; transform-origin: top center; }
+  .compact-preview-sample .appearance-launcher-preview,
+  .compact-preview-sample .appearance-settings-preview,
+  .compact-preview-sample .appearance-settings-preview > div { min-height: 0; }
+  .compact-preview-sample .appearance-live-row:nth-child(n+3),
+  .compact-preview-sample .appearance-native-note { display: none; }
+  .settings-scroll:has(.compact-preview button[aria-expanded="true"]) { scroll-padding-top: calc(min(18vh, 140px) + 54px); }
+}

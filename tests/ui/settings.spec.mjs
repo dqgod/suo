@@ -207,18 +207,24 @@ test("Complete Edit validates then persists in automatic mode", async ({ page })
 });
 
 test("native close request protects a dirty draft and Escape keeps editing", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const hideCount = () => page.evaluate(() => window.__suoMock.calls.filter(call => call.command === "hide_settings").length);
   await boot(page);
   await page.getByRole("group", { name: "Suo 图标样式" }).getByRole("button", { name: "主题单色" }).click();
   await expect.poll(() => page.evaluate(() => window.__suoMock.calls.some((call) => call.command === "plugin:event|listen" && call.args.event === "settings-close-requested"))).toBe(true);
   await page.evaluate(() => window.__suoMock.emit("settings-close-requested"));
   const dialog = page.getByRole("dialog", { name: "保留这次修改？" });
   await expect(dialog).toBeVisible();
+  expect(await hideCount()).toBe(0);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
+  expect(await hideCount()).toBe(0);
   await expect(page.getByRole("group", { name: "Suo 图标样式" }).getByRole("button", { name: "主题单色" })).toHaveAttribute("aria-pressed", "true");
   await page.evaluate(() => window.__suoMock.emit("settings-close-requested"));
   await dialog.getByRole("button", { name: "放弃并关闭" }).click();
-  await expect.poll(() => page.evaluate(() => window.__suoMock.calls.some((call) => call.command === "hide_settings"))).toBe(true);
+  await expect.poll(hideCount).toBe(1);
+  expect(errors).toEqual([]);
   expect(await page.evaluate(() => window.__suoMock.config.settingsIconStyle)).toBe("transparentColor");
 });
 

@@ -116,3 +116,19 @@ for (const [borderStyle, height] of [["solid", 338], ["none", 330]]) {
     expect(input.y + input.height).toBeLessThanOrEqual(height - 4);
   });
 }
+
+test("first result remains clickable at the minimum expanded height", async ({page}) => {
+  const config = fixtureConfig();
+  config.launcher.windowHeightPx = 160;
+  await page.setViewportSize({ width: 720, height: 160 });
+  await installMockBridge(page, {config, windowLabel: "main", searchResults});
+  await page.goto("/");
+  await page.locator(".search-box input").fill("weixin");
+  const first = page.getByRole("option").first();
+  await first.click({trial: true});
+  const rect = await first.boundingBox();
+  expect(rect.y + rect.height).toBeLessThanOrEqual(160);
+  await expect(page.locator(".launcher > footer")).toBeHidden();
+  await page.setViewportSize({width: 720, height: 520});
+  await expect(page.locator(".launcher > footer")).toBeVisible();
+});

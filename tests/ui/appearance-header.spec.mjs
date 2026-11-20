@@ -87,3 +87,60 @@ test("chooser wraps at minimum width with a large settings font", async ({ page 
   expect(result.cardRight).toBeLessThanOrEqual(result.viewport + 1);
   await expect(page.getByRole("button", { name: "更换皮肤" })).toBeVisible();
 });
+
+test("browsing is clean and manual Apply becomes active only after a successful save", async ({page}) => {
+  await openAppearance(page);
+  await page.getByRole("button", {name: "更换皮肤"}).click();
+  await page.getByRole("dialog").getByRole("button", {name: /极简黑/}).click();
+  await expect(page.getByRole("checkbox", {name: "统一保存设置"})).toBeEnabled();
+  await page.locator(".settings-titlebar button").click();
+  await expect.poll(() => page.evaluate(() => window.__suoMock.calls.filter(c => c.command === "hide_settings").length)).toBe(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.locator(".appearance-edit-footer .primary").click();
+  const header = page.locator(".appearance-active-theme");
+  await expect(header).toContainText("当前使用：午夜");
+  await expect(header).toContainText("待保存：极简黑");
+  await page.evaluate(() => { window.__suoMock.failNextSave = true; });
+  await page.getByRole("button", {name: "保存设置"}).click();
+  await expect(page.getByRole("alert")).toContainText("Mock save failed");
+  await expect(header).toContainText("当前使用：午夜");
+  await page.getByRole("button", {name: "保存设置"}).click();
+  await expect(header).toHaveText("当前使用：极简黑");
+  await expect(page.locator(".appearance-edit-footer")).not.toContainText("点击“保存设置”后生效");
+});
+
+test("blocked skin selection explains the next action inside the dialog", async ({page}) => {
+  const config = fixtureConfig();
+  config.launcherTheme.theme = "custom:launcher-test";
+  await openAppearance(page, config);
+  const font = page.getByRole("spinbutton", {name: "输入文字大小精确数值"});
+  await font.fill("32");
+  await page.getByRole("button", {name: "更换皮肤"}).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", {name: /纸张/}).click();
+  await expect(dialog.getByRole("alert")).toContainText("当前皮肤有未保存修改");
+  await dialog.getByRole("button", {name: "返回编辑"}).click();
+  await expect(dialog).toBeHidden();
+  await expect(font).toHaveValue("32");
+  await expect(page.locator(".appearance-custom-editor header input")).toBeFocused();
+});
+
+test("pinned narrow preview updates while editing and collapses without losing edits", async ({page}) => {
+  const config = fixtureConfig();
+  config.launcherTheme.theme = "custom:launcher-test";
+  await openAppearance(page, config);
+  await page.setViewportSize({width: 680, height: 520});
+  const preview = page.locator(".compact-preview");
+  await preview.getByRole("button").click();
+  const font = page.getByRole("spinbutton", {name: "输入文字大小精确数值"});
+  await font.fill("36");
+  await expect(preview.locator(".appearance-live-search")).toHaveCSS("--preview-search-size", "21px");
+  await font.evaluate(el => el.scrollIntoView({block: "center"}));
+  const frame = await preview.boundingBox();
+  const field = await font.boundingBox();
+  expect(frame.y).toBeGreaterThanOrEqual(0);
+  expect(frame.y + frame.height).toBeLessThanOrEqual(field.y);
+  await preview.getByRole("button").click();
+  await expect(preview.locator(".compact-preview-frame")).toBeHidden();
+  await expect(font).toHaveValue("36");
+});

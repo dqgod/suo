@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import SettingsDialog from "./SettingsDialog";
 import { settingsRedesign as ui } from "./i18n/settings-redesign";
@@ -424,12 +424,16 @@ function Settings() {
     } else await hideWindow();
   }, [hasUnsaved, saving, autoSaving, changingConfigLocation, discardDrafts, hideWindow]);
 
+  const closeRequestHandler = useRef(close);
+  useLayoutEffect(() => { closeRequestHandler.current = close; }, [close]);
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen("settings-close-requested", () => void close()).then((off) => { if (disposed) off(); else unlisten = off; });
+    void listen("settings-close-requested", () => {
+      if (!disposed) void closeRequestHandler.current();
+    }).then((off) => { if (disposed) off(); else unlisten = off; });
     return () => { disposed = true; unlisten?.(); };
-  }, [close]);
+  }, []);
 
   const guardEditorChange = (run: () => void) => {
     if (editorDirty || credentialsDirty) setPendingAction({ kind: "switch", run });
@@ -1450,6 +1454,7 @@ function Settings() {
 
               <div hidden={section !== "appearance"}>
                 <AppearanceEditor
+                  persistedThemes={view?.config ?? draft}
                   onDirtyChange={setAppearanceDirty}
                   resetToken={appearanceResetToken}
                   launcherTheme={draft.launcherTheme}

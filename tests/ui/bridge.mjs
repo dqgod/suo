@@ -83,10 +83,20 @@ export async function installMockBridge(page, options = {}) {
       credentialStoreError: null, configLoadWarning: null, needsLegacyPreferencesMigration: false,
       configReadOnly: false,
     });
+    function unregisterListener(event, id) {
+      const entry = listeners.get(id);
+      if (entry?.event === event) {
+        callbacks.delete(entry.handler);
+        listeners.delete(id);
+      }
+    }
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener };
     window.__suoMock = {
       calls, saves, get config() { return clone(current); }, failNextSave: false,
       emit(event, payload = null) {
-        for (const callbackId of listeners.get(event) ?? []) callbacks.get(callbackId)?.({ event, payload, id: 1, windowLabel: "settings" });
+        for (const [id, entry] of listeners) {
+          if (entry.event === event) callbacks.get(entry.handler)?.({ event, payload, id, windowLabel });
+        }
       },
     };
     window.__TAURI_INTERNALS__ = {
@@ -96,10 +106,10 @@ export async function installMockBridge(page, options = {}) {
         calls.push({ command, args: clone(args) });
         if (command === "plugin:event|listen") {
           const id = ++eventId;
-          listeners.set(args.event, [...(listeners.get(args.event) ?? []), args.handler]);
+          listeners.set(id, { event: args.event, handler: args.handler });
           return id;
         }
-        if (command === "plugin:event|unlisten") return undefined;
+        if (command === "plugin:event|unlisten") return unregisterListener(args.event, args.eventId);
         if (command === "get_app_config") return view();
         if (command === "get_index_status") return { indexing: false, indexedFileCount: 0 };
         if (command === "cancel_search") return { actionEpoch: args.generation };
