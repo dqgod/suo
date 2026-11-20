@@ -8,6 +8,12 @@
 - `pnpm tauri build --bundles app`。从 Mach-O 中核对最终 Vite 资源文件名，本机 ad-hoc 签名后用 `ditto` 打包、解包，再以 `codesign --verify --deep --strict` 验证。包名 `Suo_0.1.4_macOS_arm64_57e276f.zip`，SHA-256 为 `98869e78aa5c5afed93a88e5c3288a57478b2c66869b2cc2005caedb072cd4f7`，用于本机安装。
 - 搜索结果点击、保存失败重试、窗口关闭顺序、皮肤库焦点恢复、窄窗固定预览的界面证据来自隔离浏览器，细节见 [设置改版交接](SETTINGS_REDESIGN.md)。
 
+### 本机安装结果
+
+从上述 ZIP 替换 `/Applications/Suo.app` 后，以 LaunchServices 后台冷启动，确认运行路径为 `/Applications/Suo.app/Contents/MacOS/suo`，可执行文件 SHA-256 为 `8b2921e95a29f38f009db699cbdfe68b56fa2f547711688e648b04ff36d2a6bd`。应用目录的签名复验通过，下载目录下的 ZIP 与构建产物哈希一致。
+
+旧 App 与升级前配置保存在本机私有目录 `~/Library/Application Support/Suo-pre-v20-y8vfbzex/`，分别为 `Suo-before-update.zip` 和 `default/`。启动后磁盘上的 config.json 仍为 v18，与其 .bak 均逐字节匹配安装前的副本。本轮未通过保存设置触发真实配置回写。
+
 ### 原生窗口待验项目
 
 - [ ] 复核极简黑在未设置显式宽度时为 560 px，显式宽度和已有自定义皮肤不被覆盖；开启空输入紧凑模式后 74 px 搜索框无多余滚动条，输入展开/清空收起正常；再测大字号与粗外框。外观页的分段切换、右侧当前使用状态及整行皮肤卡片须与 B 原型一致，并保持预览/应用边界。
